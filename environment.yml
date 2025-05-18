@@ -1,0 +1,19 @@
+name: zap-it
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.10
+  - numpy
+  - pillow
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pip
+  - pip:
+      - opencv-python-headless
+      - transformers
+      - matplotlib
+      - detectron2
+      - pyyaml
+      - git+https://github.com/facebookresearch/SAM2.git
