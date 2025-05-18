@@ -1,18 +1,20 @@
 """
 zap-it-visualization.py
 
-Holds visualization utilities: from quick alpha-blended overlays to
-detectron2-based panoptic rendering for final results.
+Holds visualization utilities for:
+  - alpha-blended SAM overlays
+  - detectron2-based panoptic rendering
+  - geometry-based lines/circles in an outline-only triple-pass style, but with infinite lines.
 """
 
+import math
 import numpy as np
 import torch
+import cv2
 from PIL import Image
-from skimage.segmentation import find_boundaries
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import cv2
 
 from detectron2.structures import Instances, BitMasks
 from detectron2.utils.visualizer import Visualizer, ColorMode
@@ -26,14 +28,12 @@ def render_annotated(image_np, masks, alpha=0.5):
     """
     out = image_np.astype(np.float32, copy=True)
     sorted_masks = sorted(masks, key=lambda x: x["area"], reverse=True)
-
     for ann in sorted_masks:
         seg = ann["segmentation"]
         if not np.any(seg):
             continue
         color = np.random.randint(0, 256, size=(3,), dtype=np.uint8)
-        old_px = out[seg, :]
-        out[seg, :] = alpha * color + (1.0 - alpha) * old_px
+        out[seg, :] = alpha*color + (1.0 - alpha)*out[seg, :]
 
     np.clip(out, 0, 255, out=out)
     return out.astype(np.uint8)
@@ -42,34 +42,30 @@ def render_annotated(image_np, masks, alpha=0.5):
 def build_2x2_composite(base_np, annotated_np, mask_rand_np, masked_np):
     """
     Build a 2x2 layout => top-left=base, top-right=annotated,
-                          bottom-left=mask_rand, bottom-right=masked
+                          bottom-left=mask_rand, bottom-right=masked.
     """
     h, w = base_np.shape[:2]
-
-    from PIL import Image
     def rez(img):
         return Image.fromarray(img).resize((w, h), Image.Resampling.LANCZOS)
 
-    top_left = np.array(rez(base_np))
-    top_right = np.array(rez(annotated_np))
-    bot_left = np.array(rez(mask_rand_np))
-    bot_right = np.array(rez(masked_np))
-
-    top = np.hstack((top_left, top_right))
-    bottom = np.hstack((bot_left, bot_right))
+    tl = np.array(rez(base_np))
+    tr = np.array(rez(annotated_np))
+    bl = np.array(rez(mask_rand_np))
+    br = np.array(rez(masked_np))
+    top = np.hstack((tl, tr))
+    bottom = np.hstack((bl, br))
     return np.vstack((top, bottom))
 
 
-def build_composite_for_masks(orig_np, mask_list, alpha, verbosity, log_print_func=None, return_extra=False):
+def build_composite_for_masks(orig_np, mask_list, alpha, verbosity,
+                              log_print_func=None, return_extra=False):
     """
     Creates a 2x2 composite of:
       [0,0]: original
       [0,1]: annotated
       [1,0]: random color
       [1,1]: masked original
-    If return_extra=True => also return 'annotated' array for possible usage.
-
-    Debug printing optional via log_print_func.
+    If return_extra=True => also return 'annotated' array.
     """
     if log_print_func and verbosity >= 2:
         log_print_func("  => [build_composite_for_masks] building annotated overlay...", 2, verbosity)
@@ -94,7 +90,6 @@ def build_composite_for_masks(orig_np, mask_list, alpha, verbosity, log_print_fu
 
     if log_print_func and verbosity >= 2:
         log_print_func("  => [build_composite_for_masks] building 2x2 now...", 2, verbosity)
-
     composite_2x2 = build_2x2_composite(orig_np, annotated, mask_rand_pre, masked_pre)
 
     if return_extra:
@@ -106,13 +101,12 @@ def build_composite_for_masks(orig_np, mask_list, alpha, verbosity, log_print_fu
 def build_panoptic_final(orig_np, final_masks):
     """
     Creates a detectron2-based "panoptic" overlay from the final masks.
-    Each distinct clip_label is mapped to an ID, drawn in color.
+    Each distinct clip_label => assigned an ID => color-coded.
     """
     if not final_masks:
         return orig_np
 
     H, W = orig_np.shape[:2]
-
     labels = [m.get("clip_label", "unknown") for m in final_masks]
     unique_labels = sorted(set(labels))
     label_to_id = {lbl: i for i, lbl in enumerate(unique_labels)}
@@ -140,51 +134,121 @@ def build_panoptic_final(orig_np, final_masks):
 
     v = Visualizer(orig_np, metadata=meta, instance_mode=ColorMode.SEGMENTATION)
     out_vis = v.draw_instance_predictions(inst)
-    final_img = out_vis.get_image()
-    return final_img
+    return out_vis.get_image()
 
 
-def draw_geometry_on_final(final_img, geometry_data, geometry_cfg, log_print_func=None, verbosity=1):
+def draw_geometry_on_final(final_img, geometry_data, geometry_cfg,
+                           log_print_func=None, verbosity=1):
     """
-    Draw lines in green (with black outline) and intersection circles in red (with black outline),
-    using the radius = 1/100 * diagonal of the image. 
-    We'll do everything in place on final_img, or return a copy.
+    Use standard Hough lines => (rho, theta). Extend each line fully across the image.
+    Then draw triple outline. Intersection circles also triple ring, with no fill.
     """
-    # Possibly clone the final_img if you don't want to modify in place
     out_img = final_img.copy()
-
     H, W = out_img.shape[:2]
-    diag = np.sqrt(H*H + W*W)
-    circle_r = int(diag / 100.0)
-    if circle_r < 2:
-        circle_r = 2  # minimal radius
 
-    # We define some colors: black= (0,0,0), green= (0,255,0), red=(0,0,255)
-    black = (0,0,0)
-    green = (0,255,0)
-    red = (0,0,255)
+    diag_len = math.sqrt(H*H + W*W)
+    base_r = int(diag_len * 0.01)
+    if base_r < 8:
+        base_r = 8
 
-    for obj_data in geometry_data:
-        lines_list = obj_data["lines"]
-        inters_list = obj_data["intersections"]
+    # Convert final_img from RGB to BGR for cv2 drawing
+    bgr = out_img[..., ::-1].copy()
 
-        # Draw lines: for each line, we do black => green => black "outline"
-        # In practice, we might do several thick polylines. 
-        # We'll do it with thickness=3 in black, then thickness=2 in green, then thickness=1 in black, etc.
-        for (x1, y1, x2, y2) in lines_list:
-            cv2.line(out_img, (x1,y1), (x2,y2), black, thickness=5)
-            cv2.line(out_img, (x1,y1), (x2,y2), green, thickness=3)
-            # optional final black outline on top edges => skip or do thickness=1 ?
+    # triple-line thickness
+    thick_out = 5
+    thick_mid = 3
+    thick_in = 1
 
-        # Draw intersections: we do the same multi-thickness approach but with circles
-        for (ix, iy) in inters_list:
-            center_pt = (int(ix), int(iy))
-            # black outer
-            cv2.circle(out_img, center_pt, circle_r+1, black, thickness=-1)
-            # red main
-            cv2.circle(out_img, center_pt, circle_r, red, thickness=-1)
-            # black inner
-            if circle_r >= 2:
-                cv2.circle(out_img, center_pt, circle_r-1, black, thickness=-1)
+    # ring thickness = 2 => ring only
+    ring_thick = 2
 
-    return out_img
+    def extend_infinite_line(rho, theta, width, height):
+        """
+        Convert (rho,theta) in polar coords => two intersection points with the image boundary.
+        We'll solve for up to two corners where the infinite line hits the rectangle edges.
+        """
+        # lines in normal form: x*cos(theta) + y*sin(theta) = rho
+        # We'll check intersection with x=0, x=width-1, y=0, y=height-1
+        # Then pick the two valid intersection points that yield the max distance.
+        cosT = math.cos(theta)
+        sinT = math.sin(theta)
+
+        def intersect_x(xv):
+            #  xv*cosT + y*sinT = rho => y = (rho - xv*cosT)/sinT
+            if abs(sinT) < 1e-9:
+                return None
+            yv = (rho - xv*cosT)/sinT
+            if 0<=yv<=height-1:
+                return (xv, int(round(yv)))
+            return None
+
+        def intersect_y(yv):
+            #  x*cosT + yv*sinT = rho => x = (rho - yv*sinT)/cosT
+            if abs(cosT)<1e-9:
+                return None
+            xv = (rho - yv*sinT)/cosT
+            if 0<=xv<=width-1:
+                return (int(round(xv)), yv)
+            return None
+
+        pts = []
+        c = intersect_x(0);          # left
+        if c: pts.append(c)
+        c = intersect_x(width-1);    # right
+        if c: pts.append(c)
+        c = intersect_y(0);          # top
+        if c: pts.append(c)
+        c = intersect_y(height-1);   # bottom
+        if c: pts.append(c)
+
+        # remove duplicates if any
+        unique = list(set(pts))
+        if len(unique)<2:
+            # not enough => return center approach
+            return (0,0,0,0)
+
+        # pick best pair => largest distance
+        bestDist = -1
+        bestPair = (0,0,0,0)
+        for i in range(len(unique)):
+            for j in range(i+1, len(unique)):
+                (ax, ay) = unique[i]
+                (bx, by) = unique[j]
+                dd = (bx-ax)**2 + (by-ay)**2
+                if dd>bestDist:
+                    bestDist = dd
+                    bestPair = (ax,ay,bx,by)
+        return bestPair
+
+    # 1) lines => triple pass
+    for obj in geometry_data:
+        lines_list = obj["lines"]  # each is (rho, theta)
+        for (rho, th) in lines_list:
+            # get extended coords
+            x1,y1,x2,y2 = extend_infinite_line(rho, th, W, H)
+            # outer black
+            cv2.line(bgr, (x1,y1), (x2,y2), (0,0,0), thick_out, cv2.LINE_AA)
+            # middle red
+            cv2.line(bgr, (x1,y1), (x2,y2), (0,0,255), thick_mid, cv2.LINE_AA)
+            # inner black
+            cv2.line(bgr, (x1,y1), (x2,y2), (0,0,0), thick_in, cv2.LINE_AA)
+
+    # 2) intersection circles => triple ring
+    for obj in geometry_data:
+        inters = obj["intersections"]  # each is a point (x,y)
+        for (ix, iy) in inters:
+            cx, cy = int(round(ix)), int(round(iy))
+            if cx<0 or cx>=W or cy<0 or cy>=H:
+                continue
+            # outer ring => radius=base_r => black
+            cv2.circle(bgr, (cx, cy), base_r, (0,0,0), thickness=ring_thick, lineType=cv2.LINE_AA)
+            # mid ring => radius=base_r-3 => red
+            if (base_r-3)>0:
+                cv2.circle(bgr, (cx, cy), base_r-3, (0,0,255), thickness=ring_thick, lineType=cv2.LINE_AA)
+            # inner ring => radius=base_r-6 => black
+            if (base_r-6)>0:
+                cv2.circle(bgr, (cx, cy), base_r-6, (0,0,0), thickness=ring_thick, lineType=cv2.LINE_AA)
+
+    # convert BGR->RGB
+    out_rgb = bgr[..., ::-1]
+    return out_rgb
