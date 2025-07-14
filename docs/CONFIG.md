@@ -35,6 +35,20 @@ clip:
       a white rectangular sign with a black number
 ```
 
+## blip3 (optional)
+Zero-shot verification with the BLIP-3 VQA model. Each key matches a CLIP label
+and provides a question along with substrings representing the true and false
+answers. Masks answering with the false string are re-labelled as `negative`.
+
+```yaml
+blip3:
+  goat:
+    question: "Is there an animal in the image? Yes or no!"
+    trueresult: "Yes"
+    falseresult: "No"
+    debug: true
+```
+
 ## geometry (optional)
 Canny and Hough settings for line detection if geometry analysis is enabled.
 
