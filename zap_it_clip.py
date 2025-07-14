@@ -24,12 +24,26 @@ class ClipFilter:
         self.padding = clip_config.get("padding", 20)
         self.log_print = log_print_func if log_print_func else (lambda *a, **k: None)
 
-        # parse label categories => "label name: prompt1, prompt2,..."
+        # parse label categories from config
+        # new format: clip: {labels: {goat: "prompt1\nprompt2", ...}}
+        # legacy format: clip: {label "goat": "prompt1,prompt2", ...}
         self.class_map = {}
+
+        labels_cfg = clip_config.get("labels", None)
+        if isinstance(labels_cfg, dict):
+            for cname, val in labels_cfg.items():
+                if not isinstance(val, str):
+                    continue
+                flat = val.replace("\n", ",")
+                prompts = [p.strip() for p in flat.split(",") if p.strip()]
+                self.class_map[cname] = prompts
+
+        # fall back to legacy keys
         for key, val in clip_config.items():
             if isinstance(key, str) and key.lower().startswith("label "):
                 cname = key.split("label ", 1)[1].strip()
-                prompts = [p.strip() for p in val.split(",") if p.strip()]
+                flat = str(val).replace("\n", ",")
+                prompts = [p.strip() for p in flat.split(",") if p.strip()]
                 self.class_map[cname] = prompts
 
         # Flatten prompts => build text embeddings
