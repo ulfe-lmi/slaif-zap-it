@@ -8,6 +8,11 @@ SAM2 generates segmentation masks given an input image. The pipeline can run it 
 ## CLIP – Contrastive Language–Image Pre-training
 When prompts are provided, CLIP performs zero-shot classification of each mask. The best label among the prompts is attached to the mask and used to filter the results.
 
+## BLIP‑3 – Verification
+After CLIP, cropped masks can optionally be verified with the BLIP‑3 VQA model.
+Each mask is questioned using a yes/no prompt. If the model's answer contains the
+configured false string, the mask is re-labelled as `negative` and discarded.
+
 ## Post‑Segmentation Filtering
 After SAM2, masks can be discarded based on area or bounding-box size. This keeps only relevant regions before classification or visualization.
 

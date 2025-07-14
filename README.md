@@ -24,6 +24,7 @@ ZAP-IT is a high level computer‑vision pipeline built from foundational models
 - `zap_it_config.py` – loads and fixes the YAML configuration.
 - `zap_it_sam2.py` – wraps the SAM2 segmentation model for single-pass or tiled processing.
 - `zap_it_clip.py` – optional CLIP-based zero-shot classification for each mask.
+- `zap_it_blip3.py` – optional BLIP-3 verification after classification.
 - `zap_it_postseg_processing.py` – filters masks by size and bounding-box limits.
 - `zap_it_visualization.py` – builds summary composites and panoptic overlays.
 - `zap_it_geometry.py` – optional line-based geometry analysis with Canny/Hough.

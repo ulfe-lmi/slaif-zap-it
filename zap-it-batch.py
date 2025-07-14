@@ -26,6 +26,7 @@ import torch
 from zap_it_config import load_config
 from zap_it_sam2 import process_single_pass, process_tiled
 from zap_it_clip import ClipFilter
+from zap_it_blip3 import Blip3Filter
 from zap_it_postseg_processing import filter_by_area_bbox
 from zap_it_visualization import build_composite_for_masks, build_panoptic_final
 
@@ -79,6 +80,7 @@ def process_folder(base_dir, mask_generator, config, verbosity=1):
     # Grab sub-configs
     prep = config.get("preprocessing", {})
     clip_cfg = config.get("clip", {})
+    blip3_cfg = config.get("blip3", {})
     sam2_cfg = config.get("mask_generator", {})
     tile_cfg = config.get("tiled", {})
     alpha_val = config["alpha"]
@@ -109,6 +111,16 @@ def process_folder(base_dir, mask_generator, config, verbosity=1):
     if clip_cfg:
         clip_filter = ClipFilter(
             clip_cfg,
+            device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+            verbosity=verbosity,
+            log_print_func=log_print
+        )
+
+    # Optional BLIP3 verification
+    blip3_filter = None
+    if blip3_cfg:
+        blip3_filter = Blip3Filter(
+            blip3_cfg,
             device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
             verbosity=verbosity,
             log_print_func=log_print
@@ -240,6 +252,13 @@ def process_folder(base_dir, mask_generator, config, verbosity=1):
             log_print("[clip_filter] => classification done, now final label filter...", 1, verbosity)
         else:
             masked_after_clip = filtered_for_clip
+
+        # Optional BLIP3 verification step
+        if blip3_filter:
+            log_print("[blip3_filter] => verifying masks...", 1, verbosity)
+            masked_after_clip = blip3_filter.filter_masks(
+                masked_after_clip, orig_np, out_dir, os.path.splitext(fname)[0]
+            )
 
         # G) final label-based filter => keep only masks in keep_labels
         final_masks = []
