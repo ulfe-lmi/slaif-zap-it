@@ -1,5 +1,5 @@
 """
-zap-it-blip3.py
+zap_it_blip3.py
 
 Holds the Blip3QA class — a lightweight wrapper around the open‑source
 BLIP‑3 / XGen‑MM vision‑language model for visual question answering.
