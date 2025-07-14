@@ -21,7 +21,19 @@ Filters masks by area and bounding-box size after segmentation.
 Controls tile size and overlap if tiling is used instead of resizing.
 
 ## clip (optional)
-Zero-shot classification prompts for CLIP. Each `label "name"` line defines prompts that map to that label.
+Zero-shot classification prompts for CLIP. Prompts are grouped under `labels` with each key being the desired class name.
+
+```yaml
+clip:
+  padding: 40
+  debug: true
+  labels:
+    goat: |
+      a Boer goat in a grassy field,
+      a white goat with reddish ears
+    sign: |
+      a white rectangular sign with a black number
+```
 
 ## geometry (optional)
 Canny and Hough settings for line detection if geometry analysis is enabled.
