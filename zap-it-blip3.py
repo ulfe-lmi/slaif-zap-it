@@ -142,3 +142,83 @@ class Blip3QA:
         )
         # the model returns "<|end|>" after the answer — strip everything after it
         return text.split("<|end|>")[0].strip()
+
+
+class Blip3Filter:
+    """Zero-shot verification of masks using a BLIP-3 question-answering model."""
+    def __init__(self, blip_config: dict, device="cuda", verbosity: int = 1, log_print_func=None):
+        self.device = torch.device(device if torch.cuda.is_available() else "cpu")
+        self.verbosity = verbosity
+        self.log_print = log_print_func or (lambda *a, **k: None)
+
+        # separate model options from label questions
+        self.label_cfg = {}
+        model_cfg = {}
+        for k, v in blip_config.items():
+            if isinstance(v, dict):
+                self.label_cfg[k] = v
+            else:
+                model_cfg[k] = v
+
+        self.qa = Blip3QA(model_cfg, device=device, verbosity=verbosity, log_print_func=self.log_print)
+
+    def filter_masks(self, masks, image_np, out_dir, fname_stem):
+        """Verify masks and relabel failures as 'negative'."""
+        if not self.label_cfg:
+            return masks
+
+        import os
+        import numpy as np
+        from PIL import Image
+
+        H, W = image_np.shape[:2]
+        for idx, m in enumerate(masks):
+            lbl = m.get("clip_label")
+            cfg = self.label_cfg.get(lbl)
+            if not cfg:
+                continue
+            seg = m.get("segmentation")
+            rr, cc = np.where(seg)
+            if len(rr) == 0:
+                continue
+            y_min, y_max = rr.min(), rr.max()
+            x_min, x_max = cc.min(), cc.max()
+            cx = (x_min + x_max) // 2
+            cy = (y_min + y_max) // 2
+            w_box = x_max - x_min + 1
+            h_box = y_max - y_min + 1
+            patch_w = max(w_box, 128)
+            patch_h = max(h_box, 128)
+            x0 = max(0, cx - patch_w // 2)
+            y0 = max(0, cy - patch_h // 2)
+            x1 = min(W, x0 + patch_w)
+            y1 = min(H, y0 + patch_h)
+            x0 = max(0, x1 - patch_w)
+            y0 = max(0, y1 - patch_h)
+            patch = image_np[y0:y1, x0:x1, :]
+
+            question = cfg.get("question", "")
+            answer = self.qa.answer(Image.fromarray(patch), question)
+            m["blip3_answer"] = answer
+
+            if cfg.get("debug", False):
+                safe_lbl = lbl.replace(" ", "_")
+                patch_file = f"{fname_stem}_blip3_{idx:04d}_{safe_lbl}.jpg"
+                Image.fromarray(patch).save(os.path.join(out_dir, patch_file), "JPEG")
+                txt_file = patch_file.replace('.jpg', '.txt')
+                with open(os.path.join(out_dir, txt_file), 'w') as f:
+                    f.write(answer)
+                self.log_print(f"[Blip3Filter debug] => wrote {patch_file}", 2, self.verbosity)
+
+            ans_l = answer.lower()
+            true_s = str(cfg.get("trueresult", "")).lower()
+            false_s = str(cfg.get("falseresult", "")).lower()
+            if false_s and false_s in ans_l:
+                m["clip_label"] = "negative"
+            elif true_s and true_s in ans_l:
+                pass
+            else:
+                # no clear signal => keep original label
+                pass
+
+        return masks
