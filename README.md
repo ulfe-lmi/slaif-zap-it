@@ -23,6 +23,8 @@ ZAP-IT is a high level computer‑vision pipeline built from foundational models
    ```bash
    python zap-it-batch.py --config configs/example.yaml --dir path/to/images --randomize
    ```
+5. To process images on multiple GPUs simultaneously provide `--ngpu` with the
+   desired number, e.g. `--ngpu 2` will handle two images in parallel.
 
 ## Repository Layout
 
