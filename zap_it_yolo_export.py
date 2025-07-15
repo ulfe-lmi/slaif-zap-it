@@ -18,18 +18,22 @@ from __future__ import annotations
 import argparse
 import os
 import random
-from typing import Iterable, List, Tuple
+from typing import Callable, Iterable, List, Tuple
 
 import numpy as np
 from PIL import Image
 import yaml
+from datetime import datetime
 
 
 # -----------------------------------------------------------------------------
 # utility
 # -----------------------------------------------------------------------------
 
-def compute_tile_positions_rect(h: int, w: int, tw: int, th: int, overlap: float) -> List[Tuple[int, int, int, int]]:
+
+def compute_tile_positions_rect(
+    h: int, w: int, tw: int, th: int, overlap: float
+) -> List[Tuple[int, int, int, int]]:
     """Return a list of ``(x0, y0, x1, y1)`` rectangles covering ``w``x``h``."""
     step_x = max(1, int(tw * (1 - overlap)))
     step_y = max(1, int(th * (1 - overlap)))
@@ -50,13 +54,28 @@ def compute_tile_positions_rect(h: int, w: int, tw: int, th: int, overlap: float
 # main class
 # -----------------------------------------------------------------------------
 
+
 class YoloDatasetExporter:
     """Builds a YOLO detection dataset under ``results/yolo``."""
 
-    def __init__(self, config: dict) -> None:
+    def __init__(
+        self, config: dict, verbosity: int = 1, log_print_func: Callable | None = None
+    ) -> None:
         yolo_cfg = config.get("export_yolo_det")
         if not yolo_cfg:
             raise ValueError("export_yolo_det section missing in config")
+
+        self.verbosity = verbosity
+        self.log_print_func = log_print_func
+
+        def _log(msg: str, level: int = 1) -> None:
+            if self.log_print_func is not None:
+                self.log_print_func(msg, level, self.verbosity)
+            elif self.verbosity >= level:
+                print(msg, flush=True)
+
+        # store method as bound method
+        self._log = _log
 
         labels_str = yolo_cfg.get("labels", "")
         self.labels = [s.strip() for s in labels_str.split(",") if s.strip()]
@@ -73,17 +92,21 @@ class YoloDatasetExporter:
         for sub in ["images/train", "images/val", "labels/train", "labels/val"]:
             os.makedirs(os.path.join(self.results_root, sub), exist_ok=True)
 
+        data_dict = {
+            "train": "images/train",
+            "val": "images/val",
+            "nc": len(self.labels),
+            "names": self.labels,
+        }
         dataset_yaml = os.path.join(self.results_root, "dataset.yaml")
         with open(dataset_yaml, "w", encoding="utf-8") as f:
-            yaml.safe_dump(
-                {
-                    "train": "images/train",
-                    "val": "images/val",
-                    "nc": len(self.labels),
-                    "names": self.labels,
-                },
-                f,
-            )
+            yaml.safe_dump(data_dict, f)
+        self._log(f"[YoloDatasetExporter] wrote {dataset_yaml}", 2)
+
+        data_yaml = os.path.join(self.results_root, "data.yaml")
+        with open(data_yaml, "w", encoding="utf-8") as f:
+            yaml.safe_dump(data_dict, f)
+        self._log(f"[YoloDatasetExporter] wrote {data_yaml}", 2)
 
         self.tile_id = 0
 
@@ -106,9 +129,11 @@ class YoloDatasetExporter:
             offset_x, offset_y = rx, ry
 
         h_roi, w_roi = image_np.shape[:2]
-        tiles = compute_tile_positions_rect(h_roi, w_roi, self.tile_w, self.tile_h, self.overlap)
+        tiles = compute_tile_positions_rect(
+            h_roi, w_roi, self.tile_w, self.tile_h, self.overlap
+        )
 
-        for (x0, y0, x1, y1) in tiles:
+        for x0, y0, x1, y1 in tiles:
             tile_np = image_np[y0:y1, x0:x1, :]
             lines = []
             for m in masks:
@@ -138,9 +163,15 @@ class YoloDatasetExporter:
             img_out = os.path.join(self.results_root, "images", set_name, base + ".jpg")
             lbl_out = os.path.join(self.results_root, "labels", set_name, base + ".txt")
             Image.fromarray(tile_np).save(img_out, "JPEG", quality=95)
+            self._log(
+                f"[{datetime.now().strftime('%H:%M:%S')}] wrote image {img_out}", 2
+            )
             with open(lbl_out, "w", encoding="utf-8") as f:
                 for ln in lines:
                     f.write(ln + "\n")
+            self._log(
+                f"[{datetime.now().strftime('%H:%M:%S')}] wrote labels {lbl_out}", 2
+            )
             self.tile_id += 1
 
 
@@ -148,7 +179,10 @@ class YoloDatasetExporter:
 # stand-alone driver (uses the same pipeline as zap-it-batch)
 # -----------------------------------------------------------------------------
 
-def run_export_over_folder(base_dir: str, config: dict, randomize: bool = False, verbosity: int = 1) -> None:
+
+def run_export_over_folder(
+    base_dir: str, config: dict, randomize: bool = False, verbosity: int = 1
+) -> None:
     """Convenience wrapper to build a dataset directly from a folder of images."""
     from zap_it_sam2 import process_tiled, process_single_pass
     from zap_it_postseg_processing import filter_by_area_bbox
@@ -158,7 +192,7 @@ def run_export_over_folder(base_dir: str, config: dict, randomize: bool = False,
     from sam2.build_sam import build_sam2_hf
     import torch
 
-    exporter = YoloDatasetExporter(config)
+    exporter = YoloDatasetExporter(config, verbosity=verbosity)
 
     prep = config.get("preprocessing", {})
     roi_val = prep.get("roi")
@@ -176,8 +210,14 @@ def run_export_over_folder(base_dir: str, config: dict, randomize: bool = False,
     blip3_cfg = config.get("blip3", {})
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    clip_filter = ClipFilter(clip_cfg, device=device, verbosity=verbosity) if clip_cfg else None
-    blip3_filter = Blip3Filter(blip3_cfg, device=device, verbosity=verbosity) if blip3_cfg else None
+    clip_filter = (
+        ClipFilter(clip_cfg, device=device, verbosity=verbosity) if clip_cfg else None
+    )
+    blip3_filter = (
+        Blip3Filter(blip3_cfg, device=device, verbosity=verbosity)
+        if blip3_cfg
+        else None
+    )
 
     mg_cfg = config.get("mask_generator", {})
     model = build_sam2_hf("facebook/sam2-hiera-large")
@@ -214,22 +254,41 @@ def run_export_over_folder(base_dir: str, config: dict, randomize: bool = False,
             roi_np = image_np
 
         if resize_val is None:
-            masks = process_tiled(roi_np, mask_generator, config["alpha"], tile_size, overlap, verbosity=verbosity)
+            masks = process_tiled(
+                roi_np,
+                mask_generator,
+                config["alpha"],
+                tile_size,
+                overlap,
+                verbosity=verbosity,
+            )
         else:
             rv = float(resize_val)
             if abs(rv - 1.0) < 1e-7:
-                masks = process_single_pass(roi_np, mask_generator, config["alpha"], verbosity=verbosity)
+                masks = process_single_pass(
+                    roi_np, mask_generator, config["alpha"], verbosity=verbosity
+                )
             else:
                 new_w = int(roi_np.shape[1] * rv)
                 new_h = int(roi_np.shape[0] * rv)
-                res = np.array(Image.fromarray(roi_np).resize((new_w, new_h), Image.Resampling.LANCZOS))
-                masks = process_single_pass(res, mask_generator, config["alpha"], verbosity=verbosity)
+                res = np.array(
+                    Image.fromarray(roi_np).resize(
+                        (new_w, new_h), Image.Resampling.LANCZOS
+                    )
+                )
+                masks = process_single_pass(
+                    res, mask_generator, config["alpha"], verbosity=verbosity
+                )
 
         masks = filter_by_area_bbox(masks, post_max, max_w, max_h, verbosity=verbosity)
         if clip_filter:
-            masks = clip_filter.filter_masks(masks, roi_np, exporter.results_root, os.path.splitext(fname)[0])
+            masks = clip_filter.filter_masks(
+                masks, roi_np, exporter.results_root, os.path.splitext(fname)[0]
+            )
         if blip3_filter:
-            masks = blip3_filter.filter_masks(masks, roi_np, exporter.results_root, os.path.splitext(fname)[0])
+            masks = blip3_filter.filter_masks(
+                masks, roi_np, exporter.results_root, os.path.splitext(fname)[0]
+            )
 
         exporter.process_image(image_np, masks, roi_val=roi_val)
 
@@ -239,11 +298,20 @@ def run_export_over_folder(base_dir: str, config: dict, randomize: bool = False,
 # -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Export YOLO detection dataset from ZAP-IT pipeline")
+    parser = argparse.ArgumentParser(
+        description="Export YOLO detection dataset from ZAP-IT pipeline"
+    )
     parser.add_argument("--dir", required=True, help="Directory with .jpg images")
     parser.add_argument("--config", required=True, help="Path to config YAML")
-    parser.add_argument("--randomize", action="store_true", help="Process images in random order")
-    parser.add_argument("--verbose", default="some", choices=["none", "some", "full"], help="Verbosity level")
+    parser.add_argument(
+        "--randomize", action="store_true", help="Process images in random order"
+    )
+    parser.add_argument(
+        "--verbose",
+        default="some",
+        choices=["none", "some", "full"],
+        help="Verbosity level",
+    )
     args = parser.parse_args()
 
     from zap_it_config import load_config
