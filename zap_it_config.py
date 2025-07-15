@@ -7,6 +7,23 @@ Add or refine any config-specific utilities here.
 
 import yaml
 
+
+def _print_enabled_modules(config: dict, verbosity: int = 1) -> None:
+    """Print a short summary of which optional modules are enabled."""
+    modules = {
+        "SAM2 mask generator": True,
+        "CLIP filter": bool(config.get("clip")),
+        "BLIP3 verification": bool(config.get("blip3")),
+        "Geometry analysis": bool(config.get("geometry")),
+        "YOLO export": bool(config.get("export_yolo_det")),
+    }
+
+    if verbosity >= 1:
+        print("[config] Module overview:")
+        for name, flag in modules.items():
+            status = "enabled" if flag else "disabled"
+            print(f"  - {name}: {status}")
+
 def load_config(config_path, verbosity_level="some"):
     """
     Load and parse the YAML config file in one step. Also do minor housekeeping:
@@ -38,5 +55,7 @@ def load_config(config_path, verbosity_level="some"):
     if roi_val is False:
         prep_cfg["roi"] = None
         raw_config["preprocessing"] = prep_cfg
+
+    _print_enabled_modules(raw_config, vb)
 
     return raw_config, vb
