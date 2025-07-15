@@ -17,11 +17,12 @@ ZAP-IT is a high level computer‑vision pipeline built from foundational models
    python zap-it-batch.py --config configs/example.yaml --dir path/to/images --verbose full
    ```
    The output images and JSON metadata are written to `output/` inside the given folder.
-4. To create a YOLO detection dataset run:
+4. If the configuration contains an `export_yolo_det` section the batch script
+   will also build a YOLO formatted dataset under `results/yolo/`.
+   You can randomise the processing order of images with `--randomize`:
    ```bash
-   python zap_it_yolo_export.py --config configs/example.yaml --dir path/to/images --randomize
+   python zap-it-batch.py --config configs/example.yaml --dir path/to/images --randomize
    ```
-   The dataset is written under `results/yolo/`.
 
 ## Repository Layout
 
@@ -33,7 +34,7 @@ ZAP-IT is a high level computer‑vision pipeline built from foundational models
 - `zap_it_postseg_processing.py` – filters masks by size and bounding-box limits.
 - `zap_it_visualization.py` – builds summary composites and panoptic overlays.
 - `zap_it_geometry.py` – optional line-based geometry analysis with Canny/Hough.
-- `zap_it_yolo_export.py` – exports a YOLO formatted dataset.
+- `zap_it_yolo_export.py` – helpers for exporting YOLO datasets.
 - `configs/` – example YAML files.
 - `assets/` – logos and banner image used in this README.
 
