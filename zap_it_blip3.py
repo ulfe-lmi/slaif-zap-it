@@ -152,6 +152,7 @@ class Blip3Filter:
         self.log_print = log_print_func or (lambda *a, **k: None)
 
         # separate model options from label questions
+        # keep insertion order of labels for predictable processing
         self.label_cfg = {}
         model_cfg = {}
         for k, v in blip_config.items():
@@ -163,7 +164,7 @@ class Blip3Filter:
         self.qa = Blip3QA(model_cfg, device=device, verbosity=verbosity, log_print_func=self.log_print)
 
     def filter_masks(self, masks, image_np, out_dir, fname_stem):
-        """Verify masks and relabel failures as 'negative'."""
+        """Verify masks and optionally reclassify using BLIP-3 answers."""
         if not self.label_cfg:
             return masks
 
@@ -172,11 +173,24 @@ class Blip3Filter:
         from PIL import Image
 
         H, W = image_np.shape[:2]
+
+        # pre-split rules into 'any' (score based) and label specific
+        any_rules = []
+        label_rules = {}
+        for key, rule in self.label_cfg.items():
+            if isinstance(key, str) and key.startswith("any,"):
+                try:
+                    thr = float(key.split(",", 1)[1])
+                except ValueError:
+                    continue
+                any_rules.append((thr, key, rule))
+            else:
+                label_rules[key] = rule
+
         for idx, m in enumerate(masks):
             lbl = m.get("clip_label")
-            cfg = self.label_cfg.get(lbl)
-            if not cfg:
-                continue
+            score = float(m.get("clip_score", 0.0))
+
             seg = m.get("segmentation")
             rr, cc = np.where(seg)
             if len(rr) == 0:
@@ -197,6 +211,47 @@ class Blip3Filter:
             y0 = max(0, y1 - patch_h)
             patch = image_np[y0:y1, x0:x1, :]
 
+            processed = False
+
+            # --- score-based 'any' rules ---------------------------------
+            for thr, key, cfg in any_rules:
+                if score > thr:
+                    continue
+                question = cfg.get("question", "")
+                answer = self.qa.answer(Image.fromarray(patch), question)
+                m["blip3_answer"] = answer
+
+                if cfg.get("debug", False):
+                    safe_lbl = key.replace(" ", "_")
+                    patch_file = f"{fname_stem}_blip3_{idx:04d}_{safe_lbl}.jpg"
+                    Image.fromarray(patch).save(os.path.join(out_dir, patch_file), "JPEG")
+                    txt_file = patch_file.replace('.jpg', '.txt')
+                    with open(os.path.join(out_dir, txt_file), 'w') as f:
+                        f.write(answer)
+                    self.log_print(f"[Blip3Filter debug] => wrote {patch_file}", 2, self.verbosity)
+
+                ans_l = answer.lower()
+                true_s = str(cfg.get("trueresult", "")).lower()
+                false_s = str(cfg.get("falseresult", "")).lower()
+                if false_s and false_s in ans_l:
+                    m["clip_label"] = "negative"
+                    processed = True
+                    break
+                elif true_s and true_s in ans_l:
+                    new_cat = cfg.get("newcategory")
+                    if new_cat:
+                        m["clip_label"] = new_cat
+                    processed = True
+                    break
+
+            if processed:
+                continue
+
+            # --- label specific rules ------------------------------------
+            cfg = label_rules.get(lbl)
+            if not cfg:
+                continue
+
             question = cfg.get("question", "")
             answer = self.qa.answer(Image.fromarray(patch), question)
             m["blip3_answer"] = answer
@@ -216,7 +271,9 @@ class Blip3Filter:
             if false_s and false_s in ans_l:
                 m["clip_label"] = "negative"
             elif true_s and true_s in ans_l:
-                pass
+                new_cat = cfg.get("newcategory")
+                if new_cat:
+                    m["clip_label"] = new_cat
             else:
                 # no clear signal => keep original label
                 pass

@@ -39,6 +39,11 @@ clip:
 Zero-shot verification with the BLIP-3 VQA model. Each key matches a CLIP label
 and provides a question along with substrings representing the true and false
 answers. Masks answering with the false string are re-labelled as `negative`.
+If `newcategory` is set, a positive answer overwrites the label with that value.
+Keys starting with `any,` treat the number after the comma as a CLIP score
+threshold. When a mask's CLIP score is below that threshold the associated
+question is asked and the label can be changed to `newcategory` based on the
+answer.
 
 ```yaml
 blip3:
@@ -46,6 +51,21 @@ blip3:
     question: "Is there an animal in the image? Yes or no!"
     trueresult: "Yes"
     falseresult: "No"
+    newcategory: goat
+    debug: true
+
+  sign:
+    question: "Is there anything that could be interpreted as a white sign in the image? Yes or no!"
+    trueresult: "Yes"
+    falseresult: "No"
+    newcategory: sign
+    debug: true
+
+  any,0.1:
+    question: "Is there an animal in the image? Yes or no!"
+    trueresult: "Yes"
+    falseresult: "No"
+    newcategory: goat
     debug: true
 ```
 
