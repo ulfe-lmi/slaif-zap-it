@@ -22,7 +22,7 @@
 preprocessing:
   roi: "5,1825,5348,1092"  # If set to "False" => entire image is the ROI
   resize: 1.0             # 1.0 => single-pass at native scale
-  debug: true             # Saves ROI debug image
+  debug: false            # Saves ROI debug image
 
 ################################################################################
 # SAM2 MASK GENERATOR PARAMETERS
@@ -75,7 +75,7 @@ mask_generator:
   crop_overlap_ratio: 0.4
   box_nms_thresh: 0.3
   multimask_output: true
-  debug: true
+  debug: false
 
 ################################################################################
 # POST-SAM2 PROCESSING
@@ -90,7 +90,7 @@ postsam2processing:
   maxsize: 60000
   max_w: 300
   max_h: 200
-  debug: true
+  debug: false
 
 ################################################################################
 # TILING PARAMETERS
@@ -109,24 +109,325 @@ tiled:
 ################################################################################
 # CLIP FILTER (OPTIONAL)
 #
-# This is a zero-shot classification approach: each mask patch is passed to CLIP,
-# which chooses the best prompt from user-defined sets. If that best label is in
-# the "positive" set, we keep it; else we discard it.
+# Zero-shot *classification* workflow:
+#   1.  Each mask patch is cropped (optionally enlarged by `padding`)
+#       and fed to CLIP.
+#   2.  CLIP compares that crop against every prompt string under
+#       `labels:`.  The label whose prompt scores highest is the winner.
+#   3.  If the winning label is not "negative", we keep the patch;
+#       otherwise the patch is discarded.
 #
-# "padding": number of pixels to expand the bounding box around each mask so
-#            CLIP sees some context.
+# YAML structure
+# --------------
+# clip:                            ← top-level key
+#   padding: 40                    ← pixels to expand every bounding box
+#   debug:   true                  ← if true, save each crop as a .jpg whose
+#                                     filename contains the best-matching prompt
+#   labels:                        ← dictionary of label → prompt list
+#     goat: |                      ← label name
+#       prompt 1,                  ← keep the trailing commas if your code
+#       prompt 2,                    expects them when splitting
+#       prompt 3,
+#     sign: |
+#       prompt A,
+#       prompt B,
+#     negative: |                  ← any patch classified as "negative"
+#       prompt X,
+#       prompt Y,
 #
-# Then we have lines like 'label "goat": "prompt1, prompt2"' which define all
-# the prompts for that label. If no label "..." lines are present, we skip CLIP entirely.
-#
-# debug: if true, saves each mask patch as a separate .jpg with best prompt in the name
+# Notes
+# -----
+# • If `labels:` is omitted or empty, the CLIP stage is skipped entirely.
+# • Use literal block style (`|`) so commas and newlines are preserved exactly.
+# • Trailing commas are optional for YAML but may be required by your parser;
+#   keep them if your downstream code splits on commas.
 ################################################################################
+
+
 clip:
   padding: 40
-  label "goat": "a Boer goat in a grassy field,a white Boer goat with a brown head,a farm goat grazing in tall grass,a white goat with reddish ears,a Boer goat walking through a pasture,a muscular white goat with brown markings,a Boer goat eating plants in a test plot,a young Boer goat resting,a domestic Boer goat on green grass,a short-haired Boer goat with curved horns,a white livestock goat with a red head,a goat among wildflowers,a Boer goat behind a fence,a white and brown goat seen from a distance,a Boer goat grazing near a signpost,a brown-headed Boer goat walking,a goat with long ears and white body,a Boer goat partially hidden by tall grass,a white Boer goat among numbered plots,a baby Boer goat standing in grass,a white goat in an experimental field,a herd of Boer goats grazing,a single Boer goat with horns,a white goat with a brown face,a farm animal of the Boer breed,a Boer goat near an electric fence,a white-bodied goat on green grass,a grazing Boer goat with visible ears,a Boer goat standing still,a domestic goat of the Boer breed,a white goat facing away in tall weeds,a Boer goat looking toward the camera,a reddish-headed goat on pasture,a Boer goat with large ears and a short tail,a white and red goat beside a fence,a Boer goat in a rural test environment,a horned goat in a farm enclosure,a Boer goat walking away,a young Boer goat in a fenced grassy area,a goat’s back visible in tall grass,a goat in the shade near fencing,a white goat walking past signposts,a goat grazing between numbered posts,a brown and white goat in the middle of the pasture,a short white goat with long ears,a goat standing still on dense weeds,a Boer goat with horns grazing calmly,a goat bending down to eat flowers,a white goat profile with brown face,a Boer goat turning its head,a wide-bodied Boer goat chewing,a grazing animal with a white coat,a goat standing near other goats,a goat next to a white signpost,a Boer goat crossing the test plot trail,a goat hiding partially behind a pole,a white Boer goat surrounded by grass flowers,a grazing goat in overgrown vegetation,a goat resting with legs folded under,a white goat in the middle of an experiment site"
-  label "sign": "a white rectangular sign with a black number,a plastic sign with a large digit,a white sign showing a number,a small white number card on a stick,a numbered white rectangle in tall grass,a sign with printed digits in a field,a labeled plot sign on a post,a white board with handwritten number,a laminated card with a bold number,a plastic rectangle labeled with digits,a white square card with visible numerals,a sign stuck in the ground with a number,a test plot marker with a number label,a paper label with a single black digit,a small board showing numeric text,a number marker sign above vegetation,a flat white plate with numbers,a printed sign showing a field number,a weathered sign with a legible number,a square white field marker with digits,a plastic card label in a fenced pasture,a numeric sign in an agricultural test zone,a white field card with black print,a mounted plastic number tag,a white laminated plot number sign,a research sign with a single visible digit,a signpost with a clearly marked number,a small digit label for a pasture section,a numbered placard staked in soil,a white ID sign above the grass line,a thick paper field label with digits,a pole-mounted sign with a test plot number,a card showing trial ID in a pasture,a grassy field tag with black digits,a plastic experiment marker with large numbers,a white surface sign with stenciled print,a square board with pasture ID number,a research board displaying a field number,a stiff card label with numeric digits,a rigid white plate used to show plot numbers,a simple sign with a test digit,a thick tag mounted on a post,a printed rectangle ID card for field use,a white label card placed at ground level,a low sign bearing a bold field number,a labeled field marker in experimental grass,a short pole with mounted numeric sign,a white tag showing an agricultural zone number,a white sign in a fenced research area,a small board displaying test plot digits,a number display on a flat white background"
-  label "negative": "a patch of wildflowers,tall green grass,a white clover patch,clusters of small white flowers,white flower blossoms in the weeds,a bunch of wild daisies,a cluster of tall grass flowers,small flowering plants near a sign,a patch of yellow blooms,white petals scattered on grass,a section of grass with white dots,a group of light-colored flowers,a blurred area of white blossoms,a clump of dandelion seeds,green weeds with floral tops,a bush with white flowers,flower heads on thin stems,a dense patch of flowering weeds,a grassy hill,an empty pasture,a section of pasture with no signs,a grassy area without any animals,a clump of weeds with no numbers,striped lawn texture,a grassy corner with no signage,a flat area of turf,a grassy patch with uneven color,a shiny leaf cluster,a mound of clover,a patch of matted grass,an area of short turf,an uneven patch of overgrown grass,a leaf-covered area,green mossy ground,flower-covered grass near fencing,a white stem sticking out of the soil,a dark patch in the field,an electric wire running through the field,a red marker flag,a mesh of horizontal wires,a vertical fence stake without a label,a bare stick in the ground,a pole with no sign attached,a post driven into the soil,a white pole without a number,a vertical rod among weeds,a wooden stake with no marking,a plain post in the middle of grass,a metal rod standing alone,a tall stake without label,a wire fence intersection,a dark vertical object in the ground,a plastic pipe in a field,a dirt patch with no objects,a broken fence rod,a blurry object between wires,a plastic fragment in the grass,a piece of trash in the weeds,a fallen stick in the field,a long object on the ground,a tree branch lying on pasture,a small rock surrounded by vegetation,a stone in a grassy hole,a plastic tie or string in grass,a knotted bundle of fencing,a root clump sticking out,a patch of soil with dead grass,animal tracks in soft dirt,shadows crossing the fence,a shadow line in the vegetation,a patch of grass with sunlight glare,a darkened green square,a bump in the grass with no label,a leaf pattern mistaken for a number,a group of overlapping stems,a fence wire casting a number-like shadow,a cluster of plants forming a strange shape,a bent weed forming a loop,a pale patch in the turf,a pattern of lines in green weeds,a group of white stems with no sign,a stick partially buried in the ground,a soil patch among overgrown weeds,a blurry corner with grass glare,a flickering patch of clover,a pile of mulch,a small branch shaped like a tag,a random line on the ground,a dot cluster that looks like a digit,a gap in the fence wire,a grass shadow looking like a sign,a short reed sticking up,a dot on the pole with no label,a white blur next to a weed,a strip of sunlit fence,a bright moss-covered bump"
   debug: true
+  labels:
+    goat: |
+      a Boer goat in a grassy field,
+      a white Boer goat with a brown head,
+      a farm goat grazing in tall grass,
+      a white goat with reddish ears,
+      a Boer goat walking through a pasture,
+      a muscular white goat with brown markings,
+      a Boer goat eating plants in a test plot,
+      a young Boer goat resting,
+      a domestic Boer goat on green grass,
+      a short-haired Boer goat with curved horns,
+      a white livestock goat with a red head,
+      a goat among wildflowers,
+      a Boer goat behind a fence,
+      a white and brown goat seen from a distance,
+      a Boer goat grazing near a signpost,
+      a brown-headed Boer goat walking,
+      a goat with long ears and white body,
+      a Boer goat partially hidden by tall grass,
+      a white Boer goat among numbered plots,
+      a baby Boer goat standing in grass,
+      a white goat in an experimental field,
+      a herd of Boer goats grazing,
+      a single Boer goat with horns,
+      a white goat with a brown face,
+      a farm animal of the Boer breed,
+      a Boer goat near an electric fence,
+      a white-bodied goat on green grass,
+      a grazing Boer goat with visible ears,
+      a Boer goat standing still,
+      a domestic goat of the Boer breed,
+      a white goat facing away in tall weeds,
+      a Boer goat looking toward the camera,
+      a reddish-headed goat on pasture,
+      a Boer goat with large ears and a short tail,
+      a white and red goat beside a fence,
+      a Boer goat in a rural test environment,
+      a horned goat in a farm enclosure,
+      a Boer goat walking away,
+      a young Boer goat in a fenced grassy area,
+      a goat’s back visible in tall grass,
+      a goat in the shade near fencing,
+      a white goat walking past signposts,
+      a goat grazing between numbered posts,
+      a brown and white goat in the middle of the pasture,
+      a short white goat with long ears,
+      a goat standing still on dense weeds,
+      a Boer goat with horns grazing calmly,
+      a goat bending down to eat flowers,
+      a white goat profile with brown face,
+      a Boer goat turning its head,
+      a wide-bodied Boer goat chewing,
+      a grazing animal with a white coat,
+      a goat standing near other goats,
+      a goat next to a white signpost,
+      a Boer goat crossing the test plot trail,
+      a goat hiding partially behind a pole,
+      a white Boer goat surrounded by grass flowers,
+      a grazing goat in overgrown vegetation,
+      a goat resting with legs folded under,
+      a white goat in the middle of an experiment site,
+      a white goat partially hidden behind the grass
+    negative: |
+      a white rectangular sign with a black number,
+      a plastic sign with a large digit,
+      a white sign showing a number,
+      a small white number card on a stick,
+      a numbered white rectangle in tall grass,
+      a sign with printed digits in a field,
+      a labeled plot sign on a post,
+      a white board with handwritten number,
+      a laminated card with a bold number,
+      a plastic rectangle labeled with digits,
+      a white square card with visible numerals,
+      a sign stuck in the ground with a number,
+      a test plot marker with a number label,
+      a paper label with a single black digit,
+      a small board showing numeric text,
+      a number marker sign above vegetation,
+      a flat white plate with numbers,
+      a printed sign showing a field number,
+      a weathered sign with a legible number,
+      a square white field marker with digits,
+      a plastic card label in a fenced pasture,
+      a numeric sign in an agricultural test zone,
+      a white field card with black print,
+      a mounted plastic number tag,
+      a white laminated plot number sign,
+      a research sign with a single visible digit,
+      a signpost with a clearly marked number,
+      a small digit label for a pasture section,
+      a numbered placard staked in soil,
+      a white ID sign above the grass line,
+      a thick paper field label with digits,
+      a pole-mounted sign with a test plot number,
+      a card showing trial ID in a pasture,
+      a grassy field tag with black digits,
+      a plastic experiment marker with large numbers,
+      a white surface sign with stenciled print,
+      a square board with pasture ID number,
+      a research board displaying a field number,
+      a stiff card label with numeric digits,
+      a rigid white plate used to show plot numbers,
+      a simple sign with a test digit,
+      a thick tag mounted on a post,
+      a printed rectangle ID card for field use,
+      a white label card placed at ground level,
+      a low sign bearing a bold field number,
+      a labeled field marker in experimental grass,
+      a short pole with mounted numeric sign,
+      a white tag showing an agricultural zone number,
+      a white sign in a fenced research area,
+      a small board displaying test plot digits,
+      a number display on a flat white background,
+      a patch of wildflowers,
+      tall green grass,
+      a white clover patch,
+      clusters of small white flowers,
+      white flower blossoms in the weeds,
+      a bunch of wild daisies,
+      a cluster of tall grass flowers,
+      small flowering plants near a sign,
+      a patch of yellow blooms,
+      white petals scattered on grass,
+      a section of grass with white dots,
+      a group of light-colored flowers,
+      a blurred area of white blossoms,
+      a clump of dandelion seeds,
+      green weeds with floral tops,
+      a bush with white flowers,
+      flower heads on thin stems,
+      a dense patch of flowering weeds,
+      a grassy hill,
+      an empty pasture,
+      a section of pasture with no signs,
+      a grassy area without any animals,
+      a clump of weeds with no numbers,
+      striped lawn texture,
+      a grassy corner with no signage,
+      a flat area of turf,
+      a grassy patch with uneven color,
+      a shiny leaf cluster,
+      a mound of clover,
+      a patch of matted grass,
+      an area of short turf,
+      an uneven patch of overgrown grass,
+      a leaf-covered area,
+      green mossy ground,
+      flower-covered grass near fencing,
+      a white stem sticking out of the soil,
+      a dark patch in the field,
+      an electric wire running through the field,
+      a red marker flag,
+      a mesh of horizontal wires,
+      a vertical fence stake without a label,
+      a bare stick in the ground,
+      a pole with no sign attached,
+      a post driven into the soil,
+      a white pole without a number,
+      a vertical rod among weeds,
+      a wooden stake with no marking,
+      a plain post in the middle of grass,
+      a metal rod standing alone,
+      a tall stake without label,
+      a wire fence intersection,
+      a dark vertical object in the ground,
+      a plastic pipe in a field,
+      a dirt patch with no objects,
+      a broken fence rod,
+      a blurry object between wires,
+      a plastic fragment in the grass,
+      a piece of trash in the weeds,
+      a fallen stick in the field,
+      a long object on the ground,
+      a tree branch lying on pasture,
+      a small rock surrounded by vegetation,
+      a stone in a grassy hole,
+      a plastic tie or string in grass,
+      a knotted bundle of fencing,
+      a root clump sticking out,
+      a patch of soil with dead grass,
+      animal tracks in soft dirt,
+      shadows crossing the fence,
+      a shadow line in the vegetation,
+      a patch of grass with sunlight glare,
+      a darkened green square,
+      a bump in the grass with no label,
+      a leaf pattern mistaken for a number,
+      a group of overlapping stems,
+      a fence wire casting a number-like shadow,
+      a cluster of plants forming a strange shape,
+      a bent weed forming a loop,
+      a pale patch in the turf,
+      a pattern of lines in green weeds,
+      a group of white stems with no sign,
+      a stick partially buried in the ground,
+      a soil patch among overgrown weeds,
+      a blurry corner with grass glare,
+      a flickering patch of clover,
+      a pile of mulch,
+      a small branch shaped like a tag,
+      a random line on the ground,
+      a dot cluster that looks like a digit,
+      a gap in the fence wire,
+      a grass shadow looking like a sign,
+      a short reed sticking up,
+      a dot on the pole with no label,
+      a white blur next to a weed,
+      a strip of sunlit fence,
+      a bright moss-covered bump
+  debug: true
+
+###############################################################################
+# BLIP3 FILTER (OPTIONAL)
+#
+# Zero-shot verification workflow:
+#   1.  For every mask patch, build a bounding box. If the original box is
+#       smaller than 128 × 128 px, expand it so the patch sits centered inside
+#       a 128 × 128 box.
+#   2.  Crop that area and send it to BLIP-3 along with a yes-/no question.
+#   3.  BLIP-3’s textual answer is parsed:
+#          • if it CONTAINS the string in `trueresult`, verification passes ✔
+#          • if it CONTAINS the string in `falseresult`, verification fails ✖
+#
+# YAML structure
+# --------------
+# blip3:                        ← top-level key
+#   goat:                       ← label name (dict key)
+#     question:    "…?"         ← yes-/no question posed to BLIP-3
+#     trueresult:  "Yes"        ← substring interpreted as *true*
+#     falseresult: "No"         ← substring interpreted as *false*
+#     newcategory: "goat"	not relevant here
+#     debug:       true         ← save cropped images and answers if true
+#
+#   sign:
+#     question:    "…?"
+#     trueresult:  "Yes"
+#     falseresult: "No"
+#     newcategory: "sign"	not relevant here
+#     debug:       true
+#
+#   sign:
+#     question:    "Is it an animal in the image, yes or no!"
+#     trueresult:  "Yes"
+#     falseresult: "No"
+#     newcategory: "goat"	not relevant here
+#     debug:       true
+#
+# The labels (keys) can contain special key/label which starts with "any," and
+# is followed by a number! These trigger special processing for patches that
+# have been classified, regardless of CLIP label - if the score from CLIP is
+# lower than the number (e.g. "any,0.1" means any patch that has been classified
+# in the upper example either as goat or as sign, but has score of 0.1 or less
+# qualifies for the potential reclassification with BLIP3. If BLIP3 provides 
+# trueresult ("Yes" here in the above example) then the image is re-classified
+# to the category specified by newcategory!
+#
+# Notes
+# -----
+# • Add more labels simply by inserting new keys under `blip3`.
+# • Patches that fail verification are automatically re-labeled as "negative".
+###############################################################################
+
+
+blip3:
+  goat:
+    question: "Is there an animal in the image? Yes or no!"
+    trueresult: "Yes"
+    falseresult: "No"
+    newcategory: goat
+    debug: false
+
+  any,0.2:
+    question: "Is there an animal in the image? Yes or no!"
+    trueresult: "Yes"
+    falseresult: "No"
+    newcategory: goat
+    debug: false
+
+
 
 ################################################################################
 # VISUALIZATION
@@ -145,16 +446,19 @@ clip:
 visualization:
   labels: "goat"
   alpha: 0.75
-  composite-sam2: true
-  composite-clip: true
+  composite-sam2: false
+  composite-clip: false
   final: true
 
-################################################################################
-# Export YOLO detection dataset
-################################################################################
+
+# Export yolo detections into dataset
+# labels could be "goat,sign" etc
+# trainsplit is given as percentage of the images that are to be in the train part, e.g. 80 = 80% means
+# 80% of all images will be placed in the train folder and 20 test folder
+# sample_roi: whether images are sampled only inside defined ROI (usually that makes a lot of sense)
 export_yolo_det:
   labels: "goat"
   trainsplit: 80
   sample_roi: true
   sample_dimension: "1024,768"
-
+  
