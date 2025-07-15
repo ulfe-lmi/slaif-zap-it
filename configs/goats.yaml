@@ -148,4 +148,13 @@ visualization:
   composite-sam2: true
   composite-clip: true
   final: true
-  
+
+################################################################################
+# Export YOLO detection dataset
+################################################################################
+export_yolo_det:
+  labels: "goat"
+  trainsplit: 80
+  sample_roi: true
+  sample_dimension: "1024,768"
+
