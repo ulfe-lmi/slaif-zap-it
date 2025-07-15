@@ -19,6 +19,7 @@ import argparse
 import shutil
 import json
 import random
+import multiprocessing as mp
 import numpy as np
 from PIL import Image, ImageOps
 import torch
@@ -61,20 +62,37 @@ def prepare_dirs(base_dir, verbosity=1):
     return out_dir
 
 
-def process_folder(base_dir, mask_generator, config, verbosity=1, randomize=False, yolo_exporter=None):
+def process_folder(
+    base_dir,
+    mask_generator,
+    config,
+    verbosity=1,
+    randomize=False,
+    yolo_exporter=None,
+    images=None,
+    out_dir=None,
+    skip_prepare=False,
+    device=None,
+):
     """
     For each .jpg in base_dir:
      - ROI + single/tile => SAM2 => post-sam2 => clip => final label filter
      - If geometry config => do canny/hough on each final mask => write TSV => draw lines/circles
      - Build composites + panoptic => save JSON, summary
     """
-    out_dir = prepare_dirs(base_dir, verbosity)
+    if out_dir is None:
+        out_dir = prepare_dirs(base_dir, verbosity)
+    elif not skip_prepare:
+        out_dir = prepare_dirs(base_dir, verbosity)
 
-    images = [
-        f for f in os.listdir(base_dir)
-        if f.lower().endswith(".jpg") and os.path.isfile(os.path.join(base_dir, f))
-    ]
-    images.sort()
+    if images is None:
+        images = [
+            f for f in os.listdir(base_dir)
+            if f.lower().endswith(".jpg") and os.path.isfile(os.path.join(base_dir, f))
+        ]
+        images.sort()
+    else:
+        images = list(images)
     if randomize:
         random.shuffle(images)
     if not images:
@@ -115,7 +133,7 @@ def process_folder(base_dir, mask_generator, config, verbosity=1, randomize=Fals
     if clip_cfg:
         clip_filter = ClipFilter(
             clip_cfg,
-            device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+            device=device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu"),
             verbosity=verbosity,
             log_print_func=log_print
         )
@@ -125,7 +143,7 @@ def process_folder(base_dir, mask_generator, config, verbosity=1, randomize=Fals
     if blip3_cfg:
         blip3_filter = Blip3Filter(
             blip3_cfg,
-            device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+            device=device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu"),
             verbosity=verbosity,
             log_print_func=log_print
         )
@@ -386,32 +404,15 @@ def process_folder(base_dir, mask_generator, config, verbosity=1, randomize=Fals
         log_print("[process_folder] => done with image.\n",1,verbosity)
 
 
-def segment_images(base_dir, recursive=False, parsed_config=None, verbosity_level="some", randomize=False):
-    """
-    Main entry point. Expects 'parsed_config' from load_config.
-    Builds SAM2 model + mask generator, then calls process_folder.
-    """
-    if not parsed_config:
-        raise ValueError("No parsed config provided to segment_images.")
-
-    if verbosity_level=="none":
-        vb=0
-    elif verbosity_level=="full":
-        vb=2
-    else:
-        vb=1
-
-    mg_cfg = parsed_config["mask_generator"]
-
-    yolo_exporter = None
-    if parsed_config.get("export_yolo_det"):
-        from zap_it_yolo_export import YoloDatasetExporter
-        yolo_exporter = YoloDatasetExporter(parsed_config)
-
+def _worker_process(gpu_idx, images, base_dir, config, verbosity, out_dir):
+    """Worker helper for multi-GPU processing."""
     import torch
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    mg_cfg = config["mask_generator"]
 
-    print("[segment_images] Building SAM2 model...")
+    device = torch.device(f"cuda:{gpu_idx}" if torch.cuda.device_count() > gpu_idx else "cpu")
+    if verbosity >= 1:
+        print(f"[worker {gpu_idx}] Building SAM2 model on {device}...")
+
     model = build_sam2_hf("facebook/sam2-hiera-large")
     model.eval().to(device)
 
@@ -428,11 +429,103 @@ def segment_images(base_dir, recursive=False, parsed_config=None, verbosity_leve
         multimask_output=mg_cfg["multimask_output"]
     )
 
-    if recursive:
-        for root, dirs, files in os.walk(base_dir):
-            process_folder(root, mask_generator, parsed_config, verbosity=vb, randomize=randomize, yolo_exporter=yolo_exporter)
+    yolo_exporter = None
+    if config.get("export_yolo_det"):
+        from zap_it_yolo_export import YoloDatasetExporter
+        yolo_exporter = YoloDatasetExporter(config)
+
+    process_folder(
+        base_dir,
+        mask_generator,
+        config,
+        verbosity=verbosity,
+        randomize=False,
+        yolo_exporter=yolo_exporter,
+        images=images,
+        out_dir=out_dir,
+        skip_prepare=True,
+        device=device,
+    )
+
+
+def process_folder_parallel(base_dir, config, ngpu, verbosity, randomize=False, recursive=False):
+    """Process images in ``base_dir`` using ``ngpu`` processes."""
+    out_dir = prepare_dirs(base_dir, verbosity)
+
+    images = [
+        f for f in os.listdir(base_dir)
+        if f.lower().endswith(".jpg") and os.path.isfile(os.path.join(base_dir, f))
+    ]
+    images.sort()
+    if randomize:
+        random.shuffle(images)
+    if not images:
+        log_print(f"No .jpg found in {base_dir}", 1, verbosity)
+        return
+
+    chunks = [images[i::ngpu] for i in range(ngpu)]
+
+    procs = []
+    for idx, subset in enumerate(chunks):
+        if not subset:
+            continue
+        p = mp.Process(target=_worker_process, args=(idx, subset, base_dir, config, verbosity, out_dir))
+        p.start()
+        procs.append(p)
+
+    for p in procs:
+        p.join()
+
+def segment_images(base_dir, recursive=False, parsed_config=None, verbosity_level="some", randomize=False, ngpu=1):
+    """
+    Main entry point. Expects 'parsed_config' from load_config.
+    Builds SAM2 model + mask generator, then calls process_folder.
+    """
+    if not parsed_config:
+        raise ValueError("No parsed config provided to segment_images.")
+
+    if verbosity_level=="none":
+        vb=0
+    elif verbosity_level=="full":
+        vb=2
     else:
-        process_folder(base_dir, mask_generator, parsed_config, verbosity=vb, randomize=randomize, yolo_exporter=yolo_exporter)
+        vb=1
+
+    mg_cfg = parsed_config["mask_generator"]
+
+    if ngpu <= 1:
+        yolo_exporter = None
+        if parsed_config.get("export_yolo_det"):
+            from zap_it_yolo_export import YoloDatasetExporter
+            yolo_exporter = YoloDatasetExporter(parsed_config)
+
+        import torch
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        print("[segment_images] Building SAM2 model...")
+        model = build_sam2_hf("facebook/sam2-hiera-large")
+        model.eval().to(device)
+
+        mask_generator = SAM2AutomaticMaskGenerator(
+            model,
+            points_per_side=mg_cfg["points_per_side"],
+            pred_iou_thresh=mg_cfg["pred_iou_thresh"],
+            stability_score_thresh=mg_cfg["stability_score_thresh"],
+            min_mask_region_area=mg_cfg["min_mask_region_area"],
+            crop_n_layers=mg_cfg["crop_n_layers"],
+            crop_n_points_downscale_factor=mg_cfg["crop_n_points_downscale_factor"],
+            crop_overlap_ratio=mg_cfg["crop_overlap_ratio"],
+            box_nms_thresh=mg_cfg["box_nms_thresh"],
+            multimask_output=mg_cfg["multimask_output"]
+        )
+
+        if recursive:
+            for root, dirs, files in os.walk(base_dir):
+                process_folder(root, mask_generator, parsed_config, verbosity=vb, randomize=randomize, yolo_exporter=yolo_exporter, device=device)
+        else:
+            process_folder(base_dir, mask_generator, parsed_config, verbosity=vb, randomize=randomize, yolo_exporter=yolo_exporter, device=device)
+    else:
+        process_folder_parallel(base_dir, parsed_config, ngpu, vb, randomize=randomize, recursive=recursive)
 
 
 if __name__=="__main__":
@@ -443,7 +536,11 @@ if __name__=="__main__":
     parser.add_argument("--recursive", action="store_true", help="Process subdirectories.")
     parser.add_argument("--verbose", default="some", choices=["none","some","full"], help="Verbosity level.")
     parser.add_argument("--randomize", action="store_true", help="Process images in random order")
+    parser.add_argument("--ngpu", type=int, default=1, help="Number of GPUs to use in parallel")
     args = parser.parse_args()
+
+    if args.ngpu > 1:
+        mp.set_start_method("spawn", force=True)
 
     if not os.path.isdir(args.dir):
         print(f"Error: {args.dir} is not a valid directory.", file=sys.stderr)
@@ -459,7 +556,8 @@ if __name__=="__main__":
         recursive=args.recursive,
         parsed_config=config_dict,
         verbosity_level=args.verbose,
-        randomize=args.randomize
+        randomize=args.randomize,
+        ngpu=args.ngpu
     )
 
     print("Done.")
