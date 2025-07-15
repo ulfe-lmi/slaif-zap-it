@@ -18,6 +18,7 @@ import os
 import argparse
 import shutil
 import json
+import random
 import numpy as np
 from PIL import Image, ImageOps
 import torch
@@ -60,7 +61,7 @@ def prepare_dirs(base_dir, verbosity=1):
     return out_dir
 
 
-def process_folder(base_dir, mask_generator, config, verbosity=1):
+def process_folder(base_dir, mask_generator, config, verbosity=1, randomize=False, yolo_exporter=None):
     """
     For each .jpg in base_dir:
      - ROI + single/tile => SAM2 => post-sam2 => clip => final label filter
@@ -69,10 +70,13 @@ def process_folder(base_dir, mask_generator, config, verbosity=1):
     """
     out_dir = prepare_dirs(base_dir, verbosity)
 
-    images = sorted([
+    images = [
         f for f in os.listdir(base_dir)
         if f.lower().endswith(".jpg") and os.path.isfile(os.path.join(base_dir, f))
-    ])
+    ]
+    images.sort()
+    if randomize:
+        random.shuffle(images)
     if not images:
         log_print(f"No .jpg found in {base_dir}", 1, verbosity)
         return
@@ -376,10 +380,13 @@ def process_folder(base_dir, mask_generator, config, verbosity=1):
             Image.fromarray(final_2x4).save(out_sum,quality=95)
             log_print(f"[visualization] => wrote summary => {out_sum}",1,verbosity)
 
+        if yolo_exporter is not None:
+            yolo_exporter.process_image(orig_np, final_masks, roi_val=roi_val)
+
         log_print("[process_folder] => done with image.\n",1,verbosity)
 
 
-def segment_images(base_dir, recursive=False, parsed_config=None, verbosity_level="some"):
+def segment_images(base_dir, recursive=False, parsed_config=None, verbosity_level="some", randomize=False):
     """
     Main entry point. Expects 'parsed_config' from load_config.
     Builds SAM2 model + mask generator, then calls process_folder.
@@ -395,6 +402,11 @@ def segment_images(base_dir, recursive=False, parsed_config=None, verbosity_leve
         vb=1
 
     mg_cfg = parsed_config["mask_generator"]
+
+    yolo_exporter = None
+    if parsed_config.get("export_yolo_det"):
+        from zap_it_yolo_export import YoloDatasetExporter
+        yolo_exporter = YoloDatasetExporter(parsed_config)
 
     import torch
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -418,9 +430,9 @@ def segment_images(base_dir, recursive=False, parsed_config=None, verbosity_leve
 
     if recursive:
         for root, dirs, files in os.walk(base_dir):
-            process_folder(root, mask_generator, parsed_config, verbosity=vb)
+            process_folder(root, mask_generator, parsed_config, verbosity=vb, randomize=randomize, yolo_exporter=yolo_exporter)
     else:
-        process_folder(base_dir, mask_generator, parsed_config, verbosity=vb)
+        process_folder(base_dir, mask_generator, parsed_config, verbosity=vb, randomize=randomize, yolo_exporter=yolo_exporter)
 
 
 if __name__=="__main__":
@@ -430,6 +442,7 @@ if __name__=="__main__":
     parser.add_argument("--config", required=True, help="Path to config.yaml")
     parser.add_argument("--recursive", action="store_true", help="Process subdirectories.")
     parser.add_argument("--verbose", default="some", choices=["none","some","full"], help="Verbosity level.")
+    parser.add_argument("--randomize", action="store_true", help="Process images in random order")
     args = parser.parse_args()
 
     if not os.path.isdir(args.dir):
@@ -445,7 +458,8 @@ if __name__=="__main__":
         base_dir=args.dir,
         recursive=args.recursive,
         parsed_config=config_dict,
-        verbosity_level=args.verbose
+        verbosity_level=args.verbose,
+        randomize=args.randomize
     )
 
     print("Done.")
