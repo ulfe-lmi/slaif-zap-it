@@ -432,7 +432,7 @@ def _worker_process(gpu_idx, images, base_dir, config, verbosity, out_dir):
     yolo_exporter = None
     if config.get("export_yolo_det"):
         from zap_it_yolo_export import YoloDatasetExporter
-        yolo_exporter = YoloDatasetExporter(config)
+        yolo_exporter = YoloDatasetExporter(config, verbosity=verbosity, log_print_func=log_print)
 
     process_folder(
         base_dir,
@@ -497,7 +497,7 @@ def segment_images(base_dir, recursive=False, parsed_config=None, verbosity_leve
         yolo_exporter = None
         if parsed_config.get("export_yolo_det"):
             from zap_it_yolo_export import YoloDatasetExporter
-            yolo_exporter = YoloDatasetExporter(parsed_config)
+            yolo_exporter = YoloDatasetExporter(parsed_config, verbosity=vb, log_print_func=log_print)
 
         import torch
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
