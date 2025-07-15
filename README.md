@@ -18,7 +18,8 @@ ZAP-IT is a high level computer‑vision pipeline built from foundational models
    ```
    The output images and JSON metadata are written to `output/` inside the given folder.
 4. If the configuration contains an `export_yolo_det` section the batch script
-   will also build a YOLO formatted dataset under `results/yolo/`.
+   will also build a YOLO formatted dataset under a `yolo/` directory placed
+   alongside the `output/` folder inside the given images directory.
    You can randomise the processing order of images with `--randomize`:
    ```bash
    python zap-it-batch.py --config configs/example.yaml --dir path/to/images --randomize
