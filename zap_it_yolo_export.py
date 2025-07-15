@@ -9,7 +9,8 @@ pipeline.  It can also be invoked as a standalone script for convenience.
 The exporter divides each image (optionally restricted to the ROI) into
 (possibly overlapping) tiles.  For each tile the provided masks are
 converted into YOLO bounding box text files and the tile image is stored
-under ``results/yolo`` following the directory structure expected by
+under a ``yolo`` directory placed alongside the ``output`` folder within
+the processed image directory, following the structure expected by
 Ultralytics YOLO.
 """
 
@@ -34,19 +35,32 @@ from datetime import datetime
 def compute_tile_positions_rect(
     h: int, w: int, tw: int, th: int, overlap: float
 ) -> List[Tuple[int, int, int, int]]:
-    """Return a list of ``(x0, y0, x1, y1)`` rectangles covering ``w``x``h``."""
+    """Return a list of ``(x0, y0, x1, y1)`` tiles covering ``w``x``h``.
+
+    The tiles all have identical size ``tw``×``th``.  If ``w`` or ``h`` are
+    not multiples of the tile size the tiles near the right/bottom edges are
+    shifted so that their extent stays within the image while keeping the same
+    dimensions.  ``overlap`` specifies the fraction of overlap between
+    neighbouring tiles.
+    """
     step_x = max(1, int(tw * (1 - overlap)))
     step_y = max(1, int(th * (1 - overlap)))
-    positions = []
-    y = 0
-    while y < h:
-        x = 0
-        y_end = min(y + th, h)
-        while x < w:
-            x_end = min(x + tw, w)
-            positions.append((x, y, x_end, y_end))
-            x += step_x
-        y += step_y
+
+    max_x0 = max(0, w - tw)
+    max_y0 = max(0, h - th)
+
+    xs = list(range(0, max_x0 + 1, step_x))
+    ys = list(range(0, max_y0 + 1, step_y))
+    if xs[-1] != max_x0:
+        xs.append(max_x0)
+    if ys[-1] != max_y0:
+        ys.append(max_y0)
+
+    positions: List[Tuple[int, int, int, int]] = []
+    for y0 in ys:
+        for x0 in xs:
+            positions.append((x0, y0, x0 + tw, y0 + th))
+
     return positions
 
 
@@ -56,10 +70,14 @@ def compute_tile_positions_rect(
 
 
 class YoloDatasetExporter:
-    """Builds a YOLO detection dataset under ``results/yolo``."""
+    """Builds a YOLO detection dataset under ``<base_dir>/yolo``."""
 
     def __init__(
-        self, config: dict, verbosity: int = 1, log_print_func: Callable | None = None
+        self,
+        config: dict,
+        base_dir: str,
+        verbosity: int = 1,
+        log_print_func: Callable | None = None,
     ) -> None:
         yolo_cfg = config.get("export_yolo_det")
         if not yolo_cfg:
@@ -88,7 +106,7 @@ class YoloDatasetExporter:
         self.tile_h = th
         self.overlap = float(config.get("tiled", {}).get("overlap", 0.0))
 
-        self.results_root = os.path.join("results", "yolo")
+        self.results_root = os.path.join(base_dir, "yolo")
         for sub in ["images/train", "images/val", "labels/train", "labels/val"]:
             os.makedirs(os.path.join(self.results_root, sub), exist_ok=True)
 
@@ -192,7 +210,7 @@ def run_export_over_folder(
     from sam2.build_sam import build_sam2_hf
     import torch
 
-    exporter = YoloDatasetExporter(config, verbosity=verbosity)
+    exporter = YoloDatasetExporter(config, base_dir, verbosity=verbosity)
 
     prep = config.get("preprocessing", {})
     roi_val = prep.get("roi")
