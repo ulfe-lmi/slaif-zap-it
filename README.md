@@ -25,6 +25,8 @@ ZAP-IT is a high level computer‑vision pipeline built from foundational models
    ```
 5. To process images on multiple GPUs simultaneously provide `--ngpu` with the
    desired number, e.g. `--ngpu 2` will handle two images in parallel.
+6. Upon loading the YAML configuration the script prints a short summary of
+   which optional modules are enabled (CLIP, BLIP3, geometry, YOLO export, etc.).
 
 ## Repository Layout
 
