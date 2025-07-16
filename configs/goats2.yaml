@@ -20,7 +20,7 @@
 #     reference, named with a "-roiXX.jpg" suffix.
 ################################################################################
 preprocessing:
-  roi: "5,1825,5348,1092"  # If set to "False" => entire image is the ROI
+  roi: "3,1644,5565,1210"  # If set to "False" => entire image is the ROI
   resize: 1.0             # 1.0 => single-pass at native scale
   debug: false            # Saves ROI debug image
 
