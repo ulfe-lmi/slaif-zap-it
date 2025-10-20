@@ -1,0 +1,150 @@
+################################################################################
+# PREPROCESSING
+#
+# This section controls how we select which portion of the image to process
+# and whether or not we rescale that portion (instead of using tiling).
+#
+# "roi": "x,y,w,h"
+#   - The rectangular subregion of the image to process. If set to "False",
+#     the entire image is used (no sub-crop).
+#   - Example: "5,1825,5348,1092" means: from (x=5, y=1825), width=5348, height=1092.
+#
+# "resize": factor
+#   - If given a numeric factor < 1.0, we downscale that ROI and do a single-pass
+#     SAM2 segmentation on the resized region.
+#   - If = 1.0, we do single-pass SAM2 at the native scale (no tiling).
+#   - If omitted altogether, we switch to tiling mode.
+#
+# "debug": true/false
+#   - If true, the script will save a debug image of the ROI region for
+#     reference, named with a "-roiXX.jpg" suffix.
+################################################################################
+preprocessing:
+  roi: "False"            # Use full frame
+  resize: 1.0             # 1.0 => single-pass at native scale
+  debug: true             # Save ROI debug image
+
+################################################################################
+# SAM2 MASK GENERATOR PARAMETERS
+#
+# These parameters control how SAM2 automatically generates masks:
+#
+# points_per_side:
+#   The grid resolution used by SAM2. Larger => more thorough detection but
+#   more GPU memory/time. If set to None/0, a different mode is used.
+#
+# pred_iou_thresh:
+#   Discard masks with lower predicted IoU than this threshold.
+#   Lower => keep more masks, higher => keep fewer but presumably better.
+#
+# stability_score_thresh:
+#   Discard masks with a lower stability score. Lower => keep more, higher => keep fewer.
+#
+# min_mask_region_area:
+#   Ignores extremely small masks below this pixel area.
+#
+# crop_n_layers:
+#   How many internal cropping scales SAM2 uses. >1 => multi-scale. More thorough but slower.
+#
+# crop_n_points_downscale_factor:
+#   For multi-scale crops, how the sampling grid changes for each scale.
+#   E.g. factor=2 => at each successive crop scale, the sampling is halved.
+#
+# crop_overlap_ratio:
+#   Overlap fraction between multi-scale crops. E.g. 0.4 => 40% overlap.
+#
+# box_nms_thresh:
+#   Non-maximum suppression threshold (IoU) for bounding boxes among all candidate masks.
+#   Lower => more aggressive merging, higher => less merging.
+#
+# multimask_output:
+#   If true, returns multiple mask candidates per grid point if relevant.
+#   Tends to produce more results but more duplicates.
+#
+# debug:
+#   If true, it will save each raw mask patch after SAM2 is done, to help debug
+#   the segmentation results before any CLIP classification.
+################################################################################
+mask_generator:
+  points_per_side: 128        # ~10px grid spacing at 1280w — dense enough to hit the ball
+  pred_iou_thresh: 0.60       # slightly looser to keep tiny masks
+  stability_score_thresh: 0.60
+  min_mask_region_area: 50    # allow very small ball regions
+  crop_n_layers: 3            # multi-scale for tiny/far objects
+  crop_n_points_downscale_factor: 2
+  crop_overlap_ratio: 0.5
+  box_nms_thresh: 0.20        # less merging so nearby small masks survive
+  multimask_output: true
+  debug: true
+
+################################################################################
+# POST-SAM2 PROCESSING
+#
+# After SAM2 has produced masks, we can filter them further by:
+#   maxsize:  discard masks whose area > maxsize in pixels
+#   max_w:    discard masks whose bounding box width > max_w
+#   max_h:    discard masks whose bounding box height > max_h
+#   debug:    if true, saves each final mask patch after these filters as well
+################################################################################
+postsam2processing:
+  maxsize: 120000
+  max_w: 400
+  max_h: 500
+  debug: true
+
+################################################################################
+# TILING PARAMETERS
+#
+# If we do not specify "resize" in preprocessing (or if "resize" is None),
+# we switch to a tiling approach. For example:
+#   tile_size: 1024 => each tile is 1024×1024
+#   overlap: 0.2    => each tile overlaps the next by 20%
+# Tiling is useful if the image or ROI is large and we don't have enough
+# GPU memory to handle it in a single pass at native resolution.
+################################################################################
+tiled:
+  tile_size: 1024
+  overlap: 0.2
+
+################################################################################
+# CLIP FILTER (OPTIONAL)
+#
+# This is a zero-shot classification approach: each mask patch is passed to CLIP,
+# which chooses the best prompt from user-defined sets. If that best label is in
+# the "positive" set, we keep it; else we discard it.
+#
+# "padding": number of pixels to expand the bounding box around each mask so
+#            CLIP sees some context.
+#
+# Then we have lines like 'label "goat": "prompt1, prompt2"' which define all
+# the prompts for that label. If no label "..." lines are present, we skip CLIP entirely.
+#
+# debug: if true, saves each mask patch as a separate .jpg with best prompt in the name
+################################################################################
+clip:
+  padding: 20
+  label "soccer_player": "a football player on a grass pitch, a soccer player wearing team kit, a footballer running on the field, a player in jersey and shorts, a goalkeeper in front of goal, a defender in striped kit, a midfielder in yellow kit, a striker moving toward the ball, a woman footballer on green turf, a player standing on the pitch, a footballer jogging on grass, a soccer athlete wearing socks and boots, a player shadow on grass, a footballer off the ball, a soccer player with number on back, a player marking an opponent, a player in motion on a soccer field, a footballer in penalty area, a player near midfield circle, a footballer near the touchline, a soccer player inside the box, a player wearing shin guards and cleats, a referee-looking person should be excluded, a player from aerial broadcast view, a small distant footballer on grass, a team member in colored jersey, a footballer in defensive line, a player spacing on the pitch, a footballer waiting for pass, a player standing in formation"
+  label "soccer_ball": "a white soccer ball, a football on the grass, a small round ball on pitch, a black and white patterned soccer ball, a ball near the penalty area, a ball inside the box, a ball rolling on green turf, a spherical football on field, a small white dot like a ball, a match ball near a player, a ball near the touchline, a ball by the goalkeeper, a ball between two players, a ball on the center side, a ball in open play, a ball near midfield, a ball close to the arc, a ball on the penalty spot region, a ball near corner area, a round object used in soccer, a brightly lit white ball, a tiny soccer ball from far camera, a ball casting a small shadow, a ball away from players, a stationary soccer ball on grass, a kicked football traveling on pitch, a ball at the edge of the box, a ball near the goal line, a ball in the six-yard box, a ball around the center circle"
+  label "negative": "green grass pitch, mowing stripes on turf, center circle line, halfway line, penalty area lines, goal box lines, corner arc, goalposts, crossbar, goal net, advertising boards, stadium seats, track, camera overlay score, timer box, scoreboard, touchline, technical area, coaches and staff on sidelines, substitutes bench, assistant referee, main referee in turquoise, photographers, ball boys, tunnel, stadium wall, stairs, handrails, dugout, TV graphics, shadows on grass, white paint marks, water spots on turf, sideline equipment, cones, bottles, jackets, camera tripod, microphone, cables, anything that is not a soccer player or a soccer ball"
+  debug: true
+
+################################################################################
+# VISUALIZATION
+#
+# "labels": e.g. "goat,sign"
+#   The final set of clip_labels we actually want to keep. If a mask's best
+#   label isn't in this list, we discard it. 
+#
+# "alpha": how transparent the color overlay is when rendering "annotated" images.
+#   0 => fully transparent, 1 => fully opaque.
+#
+# "composite-sam2": if true, build a "pre" 2x2 summary image from all SAM2 masks
+# "composite-clip": if true, build a "post" 2x2 summary image from final kept masks
+# "final": if true, also build a detectron2-based "panoptic" overlay -final.jpg
+################################################################################
+visualization:
+  labels: "soccer_player,soccer_ball"
+  alpha: 0.75
+  composite-sam2: true
+  composite-clip: true
+  final: true
