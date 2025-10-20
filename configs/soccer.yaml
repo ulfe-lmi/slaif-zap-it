@@ -20,7 +20,7 @@
 #     reference, named with a "-roiXX.jpg" suffix.
 ################################################################################
 preprocessing:
-  roi: "False"            # Use full frame
+  roi: "False"            # Use full 1280x720 frame
   resize: 1.0             # 1.0 => single-pass at native scale
   debug: true             # Save ROI debug image
 
@@ -66,11 +66,11 @@ preprocessing:
 #   the segmentation results before any CLIP classification.
 ################################################################################
 mask_generator:
-  points_per_side: 128        # ~10px grid spacing at 1280w — dense enough to hit the ball
-  pred_iou_thresh: 0.60       # slightly looser to keep tiny masks
+  points_per_side: 128        # dense grid (~10 px at 1280w) to catch the small ball
+  pred_iou_thresh: 0.60       # looser to retain tiny masks
   stability_score_thresh: 0.60
-  min_mask_region_area: 50    # allow very small ball regions
-  crop_n_layers: 3            # multi-scale for tiny/far objects
+  min_mask_region_area: 50    # players ~20x40 px, ball smaller => allow small regions
+  crop_n_layers: 3            # multi-scale helps with distant players/ball
   crop_n_points_downscale_factor: 2
   crop_overlap_ratio: 0.5
   box_nms_thresh: 0.20        # less merging so nearby small masks survive
@@ -123,10 +123,61 @@ tiled:
 ################################################################################
 clip:
   padding: 20
-  label "soccer_player": "a football player on a grass pitch, a soccer player wearing team kit, a footballer running on the field, a player in jersey and shorts, a goalkeeper in front of goal, a defender in striped kit, a midfielder in yellow kit, a striker moving toward the ball, a woman footballer on green turf, a player standing on the pitch, a footballer jogging on grass, a soccer athlete wearing socks and boots, a player shadow on grass, a footballer off the ball, a soccer player with number on back, a player marking an opponent, a player in motion on a soccer field, a footballer in penalty area, a player near midfield circle, a footballer near the touchline, a soccer player inside the box, a player wearing shin guards and cleats, a referee-looking person should be excluded, a player from aerial broadcast view, a small distant footballer on grass, a team member in colored jersey, a footballer in defensive line, a player spacing on the pitch, a footballer waiting for pass, a player standing in formation"
-  label "soccer_ball": "a white soccer ball, a football on the grass, a small round ball on pitch, a black and white patterned soccer ball, a ball near the penalty area, a ball inside the box, a ball rolling on green turf, a spherical football on field, a small white dot like a ball, a match ball near a player, a ball near the touchline, a ball by the goalkeeper, a ball between two players, a ball on the center side, a ball in open play, a ball near midfield, a ball close to the arc, a ball on the penalty spot region, a ball near corner area, a round object used in soccer, a brightly lit white ball, a tiny soccer ball from far camera, a ball casting a small shadow, a ball away from players, a stationary soccer ball on grass, a kicked football traveling on pitch, a ball at the edge of the box, a ball near the goal line, a ball in the six-yard box, a ball around the center circle"
+  label "soccer_player": "a football player on a grass pitch, a soccer player wearing team kit, a footballer running on the field, a player in jersey and shorts, a goalkeeper in front of goal, a defender in striped kit, a midfielder in yellow kit, a striker moving toward the ball, a woman footballer on green turf, a player standing on the pitch, a footballer jogging on grass, a soccer athlete wearing socks and boots, a player shadow on grass, a footballer off the ball, a soccer player with number on back, a player marking an opponent, a player in motion on a soccer field, a footballer in penalty area, a player near midfield circle, a footballer near the touchline, a soccer player inside the box, a player wearing shin guards and cleats, a player from aerial broadcast view, a small distant footballer on grass, a team member in colored jersey, a footballer in defensive line, a player spacing on the pitch, a footballer waiting for pass, a player standing in formation"
+  label "soccer_ball": "a white soccer ball, a football on the grass, a small round ball on pitch, a black and white patterned soccer ball, a ball near the penalty area, a ball inside the box, a ball rolling on green turf, a spherical football on field, a small white dot like a ball, a match ball near a player, a ball near the touchline, a ball by the goalkeeper, a ball between two players, a ball on the center side, a ball in open play, a ball near midfield, a ball close to the arc, a ball on the penalty spot region, a ball near corner area, a round object used in soccer, a tiny soccer ball from far camera, a ball casting a small shadow, a stationary soccer ball on grass, a kicked football traveling on pitch, a ball at the edge of the box, a ball near the goal line, a ball in the six-yard box, a ball around the center circle"
   label "negative": "green grass pitch, mowing stripes on turf, center circle line, halfway line, penalty area lines, goal box lines, corner arc, goalposts, crossbar, goal net, advertising boards, stadium seats, track, camera overlay score, timer box, scoreboard, touchline, technical area, coaches and staff on sidelines, substitutes bench, assistant referee, main referee in turquoise, photographers, ball boys, tunnel, stadium wall, stairs, handrails, dugout, TV graphics, shadows on grass, white paint marks, water spots on turf, sideline equipment, cones, bottles, jackets, camera tripod, microphone, cables, anything that is not a soccer player or a soccer ball"
   debug: true
+
+###############################################################################
+# BLIP3 FILTER (OPTIONAL)
+#
+# Zero-shot verification workflow:
+#   1.  For every mask patch, build a bounding box. If the original box is
+#       smaller than 128 × 128 px, expand it so the patch sits centered inside
+#       a 128 × 128 box.
+#   2.  Crop that area and send it to BLIP-3 along with a yes/no question.
+#   3.  BLIP-3’s textual answer is parsed:
+#          • if it CONTAINS the string in `trueresult`, verification passes ✔
+#          • if it CONTAINS the string in `falseresult`, verification fails ✖
+#
+# The labels (keys) can contain a special key starting with "any," followed by a
+# number. That rule applies to ANY CLIP-classified patch whose CLIP score is
+# ≤ that number — if BLIP-3 returns `trueresult`, the patch is reclassified as
+# `newcategory`.
+#
+# Notes
+# -----
+# • Add more labels by inserting new keys under `blip3`.
+# • Patches that fail verification are automatically re-labeled as "negative".
+###############################################################################
+blip3:
+  soccer_player:
+    question: "Is there a soccer player (human athlete) in this crop? Yes or no!"
+    trueresult: "Yes"
+    falseresult: "No"
+    newcategory: soccer_player
+    debug: false
+
+  soccer_ball:
+    question: "Is there a soccer ball in the image? Yes or no!"
+    trueresult: "Yes"
+    falseresult: "No"
+    newcategory: soccer_ball
+    debug: false
+
+  any,0.15:
+    question: "Is there a soccer ball in the image? Yes or no!"
+    trueresult: "Yes"
+    falseresult: "No"
+    newcategory: soccer_ball
+    debug: false
+
+  any,0.25:
+    question: "Is there a soccer player (human athlete) in this crop? Yes or no!"
+    trueresult: "Yes"
+    falseresult: "No"
+    newcategory: soccer_player
+    debug: false
 
 ################################################################################
 # VISUALIZATION
