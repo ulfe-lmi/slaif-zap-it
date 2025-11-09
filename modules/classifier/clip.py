@@ -1,33 +1,26 @@
-"""
-zap-it-clip.py
-
-Holds the CLIPFilter class or other CLIP-based zero-shot classification tools.
-"""
+"""CLIP-based classifier module with unified interface."""
+from __future__ import annotations
 
 import os
+from typing import Any, Dict, List, Tuple
+
 import numpy as np
 import torch
 from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
 
-class ClipFilter:
-    """
-    A small class that:
-      1) loads a CLIP model & processor
-      2) uses user-provided textual prompts => zero-shot classification
-      3) for each mask => crops => run classify => store clip_label
-    """
-    def __init__(self, clip_config, device="cuda", verbosity=1, log_print_func=None):
+
+class _ClipFilter:
+    """Lightweight wrapper around a CLIP model for zero-shot classification."""
+
+    def __init__(self, clip_config: Dict[str, Any], device="cuda", verbosity=1, log_print_func=None):
         self.verbosity = verbosity
         self.device = device
         self.debug = bool(clip_config.get("debug", False))
         self.padding = clip_config.get("padding", 20)
         self.log_print = log_print_func if log_print_func else (lambda *a, **k: None)
 
-        # parse label categories from config
-        # new format: clip: {labels: {goat: "prompt1\nprompt2", ...}}
-        # legacy format: clip: {label "goat": "prompt1,prompt2", ...}
-        self.class_map = {}
+        self.class_map: Dict[str, List[str]] = {}
 
         labels_cfg = clip_config.get("labels", None)
         if isinstance(labels_cfg, dict):
@@ -38,7 +31,6 @@ class ClipFilter:
                 prompts = [p.strip() for p in flat.split(",") if p.strip()]
                 self.class_map[cname] = prompts
 
-        # fall back to legacy keys
         for key, val in clip_config.items():
             if isinstance(key, str) and key.lower().startswith("label "):
                 cname = key.split("label ", 1)[1].strip()
@@ -46,15 +38,14 @@ class ClipFilter:
                 prompts = [p.strip() for p in flat.split(",") if p.strip()]
                 self.class_map[cname] = prompts
 
-        # Flatten prompts => build text embeddings
-        self.class_idx = []
-        self.all_prompts = []
+        self.class_idx: List[str] = []
+        self.all_prompts: List[str] = []
         for cname, p_list in self.class_map.items():
             for prompt in p_list:
                 self.all_prompts.append(prompt)
                 self.class_idx.append(cname)
 
-        self.log_print("[CLIPFilter] loading clip-vit-base-patch32", 1, self.verbosity)
+        self.log_print("[_ClipFilter] loading clip-vit-base-patch32", 1, self.verbosity)
         self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
         self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
         self.model.eval()
@@ -67,10 +58,7 @@ class ClipFilter:
         else:
             self.text_embeds = None
 
-    def classify_single(self, patch, mask_idx):
-        """
-        For a single patch => compute CLIP embedding => find best label => return label & score & prompt
-        """
+    def classify_single(self, patch: np.ndarray, mask_idx: int):
         import time
         t0 = time.time()
 
@@ -90,16 +78,12 @@ class ClipFilter:
 
         t1 = time.time()
         self.log_print(
-            f"[CLIPFilter] mask={mask_idx}, best_label='{best_label}', score={best_score:.4f}, time={t1-t0:.2f}s",
+            f"[_ClipFilter] mask={mask_idx}, best_label='{best_label}', score={best_score:.4f}, time={t1-t0:.2f}s",
             2, self.verbosity
         )
         return (best_label, best_score, best_prompt)
 
     def filter_masks(self, masks, image_np, out_dir, fname_stem):
-        """
-        For each mask => do classify_single => store clip_label, clip_score.
-        If debug => also store patch with the best prompt in the filename.
-        """
         if self.text_embeds is None or self.text_embeds.numel() == 0 or not masks:
             return masks
 
@@ -128,6 +112,43 @@ class ClipFilter:
                 patch_file = f"{fname_stem}_patch{i}_{safe_prompt}.jpg"
                 patch_path = os.path.join(out_dir, patch_file)
                 Image.fromarray(patch).save(patch_path, "JPEG")
-                self.log_print(f"[CLIPFilter debug] => wrote debug patch: {patch_file}", 2, self.verbosity)
+                self.log_print(f"[_ClipFilter debug] => wrote debug patch: {patch_file}", 2, self.verbosity)
 
         return masks
+
+
+def run(state: Dict[str, Any] | None,
+        params: Dict[str, Any],
+        images,
+        *,
+        verbosity: int = 1,
+        log_print_func=None) -> Tuple[Dict[str, Any], Any, Dict[str, Any]]:
+    """Run CLIP classification using the unified module interface."""
+    log = log_print_func or (lambda *a, **k: None)
+    if state is None:
+        state = {}
+
+    clip_filter: _ClipFilter | None = state.get("clip_filter")
+    if clip_filter is None:
+        clip_cfg = params.get("config", {})
+        device = params.get("device", "cuda")
+        clip_filter = _ClipFilter(clip_cfg, device=device, verbosity=verbosity, log_print_func=log)
+        state["clip_filter"] = clip_filter
+
+    image_np = images[0] if isinstance(images, (list, tuple)) else images
+
+    masks = params.get("masks")
+    if masks is None:
+        raise ValueError("CLIP classifier requires 'masks' in params")
+
+    out_dir = params.get("out_dir")
+    fname_stem = params.get("fname_stem", "image")
+
+    processed_masks = clip_filter.filter_masks(masks, image_np, out_dir, fname_stem)
+    meta = {
+        "num_masks": len(processed_masks) if processed_masks is not None else 0,
+    }
+    return state, processed_masks, meta
+
+
+__all__ = ["run"]
