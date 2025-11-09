@@ -1,5 +1,5 @@
 """
-zap-it-visualization.py
+modules.output.visualization
 
 Holds visualization utilities for:
   - alpha-blended SAM overlays
