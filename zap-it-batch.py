@@ -21,7 +21,7 @@ import json
 import random
 import multiprocessing as mp
 import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image
 import torch
 
 # Our modules:
@@ -29,8 +29,15 @@ from zap_it_config import load_config
 from modules.segmenter import run_sam2
 from modules.classifier import run_clip
 from modules.verifier import run_blip3
+from modules.input.images import (
+    list_images,
+    load_image,
+    apply_roi,
+    resize_image,
+    save_roi_debug,
+)
 from zap_it_postseg_processing import filter_by_area_bbox
-from zap_it_visualization import build_composite_for_masks, build_panoptic_final
+from modules.output.visualization import build_composite_for_masks, build_panoptic_final
 
 # NEW: geometry code is in a separate file
 from zap_it_geometry import apply_geometry_on_mask, draw_geometry_on_image
@@ -86,11 +93,7 @@ def process_folder(
         out_dir = prepare_dirs(base_dir, verbosity)
 
     if images is None:
-        images = [
-            f for f in os.listdir(base_dir)
-            if f.lower().endswith(".jpg") and os.path.isfile(os.path.join(base_dir, f))
-        ]
-        images.sort()
+        images = list_images(base_dir)
     else:
         images = list(images)
     if randomize:
@@ -133,57 +136,36 @@ def process_folder(
         log_print(f"\n[process_folder] => Handling image: {fname}", 1, verbosity)
         img_path = os.path.join(base_dir, fname)
 
-        image = Image.open(img_path).convert("RGB")
-        image = ImageOps.exif_transpose(image)
-        orig_np = np.array(image)
+        _, orig_np = load_image(img_path)
         H_orig, W_orig = orig_np.shape[:2]
         log_print(f" => Original shape = {W_orig}x{H_orig}", 1, verbosity)
 
         # A) ROI
+        partial_np, (x, y, x2, y2) = apply_roi(orig_np, roi_val)
         if roi_val:
-            x, y, w, h = [int(v) for v in roi_val.split(",")]
-            x2 = min(x + w, W_orig)
-            y2 = min(y + h, H_orig)
-            partial_np = orig_np[y:y2, x:x2, :]
-            log_print(f" => ROI=({x},{y},{w},{h}) => partial shape={partial_np.shape[1]}x{partial_np.shape[0]}", 1, verbosity)
-        else:
-            x, y = 0, 0
-            x2, y2 = W_orig, H_orig
-            partial_np = orig_np
+            log_print(
+                f" => ROI=({roi_val}) => partial shape={partial_np.shape[1]}x{partial_np.shape[0]}",
+                1,
+                verbosity,
+            )
 
         if prep_debug and roi_val:
             roi_file = f"{os.path.splitext(fname)[0]}-roi01.jpg"
             roi_path = os.path.join(out_dir, roi_file)
-            Image.fromarray(partial_np).save(roi_path, "JPEG")
+            save_roi_debug(partial_np, roi_path)
             log_print(f" => saved ROI debug => {roi_file}", 1, verbosity)
 
         # B) segmentation with optional resizing
-        if resize_val is None:
-            resized_np = partial_np
-            log_print(" => Single pass @native (no resize)", 1, verbosity)
+        resized_np, resize_info = resize_image(partial_np, resize_val)
+        if resize_info["mode"] == "native":
+            log_print(" => Single pass @native", 1, verbosity)
         else:
-            rv = float(resize_val)
-            if abs(rv - 1.0) < 1e-7:
-                log_print(" => Single pass @native", 1, verbosity)
-                resized_np = partial_np
-            elif rv < 1.0:
-                new_w = int(partial_np.shape[1] * rv)
-                new_h = int(partial_np.shape[0] * rv)
-                log_print(f" => downscaled => {new_w}x{new_h} (factor={rv:.2f})", 1, verbosity)
-                resized_np = np.array(
-                    Image.fromarray(partial_np).resize(
-                        (new_w, new_h), Image.Resampling.LANCZOS
-                    )
-                )
-            else:
-                new_w = int(partial_np.shape[1] * rv)
-                new_h = int(partial_np.shape[0] * rv)
-                log_print(f" => upscaled => {new_w}x{new_h} (factor={rv:.2f})", 1, verbosity)
-                resized_np = np.array(
-                    Image.fromarray(partial_np).resize(
-                        (new_w, new_h), Image.Resampling.LANCZOS
-                    )
-                )
+            new_w, new_h = resize_info["size"]
+            log_print(
+                f" => {resize_info['mode']} => {new_w}x{new_h} (factor={resize_info['factor']:.2f})",
+                1,
+                verbosity,
+            )
 
         segmenter_params = {
             "mask_generator": mask_generator,
@@ -434,7 +416,7 @@ def _worker_process(gpu_idx, images, base_dir, config, verbosity, out_dir):
 
     yolo_exporter = None
     if config.get("export_yolo_det"):
-        from zap_it_yolo_export import YoloDatasetExporter
+        from modules.output.yolo import YoloDatasetExporter
         yolo_exporter = YoloDatasetExporter(config, base_dir, verbosity=verbosity, log_print_func=log_print)
 
     process_folder(
@@ -455,11 +437,7 @@ def process_folder_parallel(base_dir, config, ngpu, verbosity, randomize=False, 
     """Process images in ``base_dir`` using ``ngpu`` processes."""
     out_dir = prepare_dirs(base_dir, verbosity)
 
-    images = [
-        f for f in os.listdir(base_dir)
-        if f.lower().endswith(".jpg") and os.path.isfile(os.path.join(base_dir, f))
-    ]
-    images.sort()
+    images = list_images(base_dir)
     if randomize:
         random.shuffle(images)
     if not images:
@@ -499,7 +477,7 @@ def segment_images(base_dir, recursive=False, parsed_config=None, verbosity_leve
     if ngpu <= 1:
         yolo_exporter = None
         if parsed_config.get("export_yolo_det"):
-            from zap_it_yolo_export import YoloDatasetExporter
+            from modules.output.yolo import YoloDatasetExporter
             yolo_exporter = YoloDatasetExporter(parsed_config, base_dir, verbosity=vb, log_print_func=log_print)
 
         import torch

@@ -1,5 +1,5 @@
 """
-zap_it_yolo_export.py
+modules.output.yolo
 
 Helper to export a detection dataset in YOLO format.  The main
 :class:`YoloDatasetExporter` is designed to be reused by ``zap-it-batch.py``
