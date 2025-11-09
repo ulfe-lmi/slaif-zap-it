@@ -8,7 +8,7 @@ Steps in summary:
  1) Load config from zap_it_config.py
  2) Build SAM2 mask generator
  3) For each image:
-    a) ROI or entire => single-pass or tiled => produce partial masks
+    a) ROI or entire => optional resize => produce partial masks
     b) Scale partial => global => post-sam2 filters => clip => final label filter
     c) Optionally do geometry on each final mask if "geometry" is in config
     d) Produce summary composites, panoptic overlay, JSON, etc.
@@ -26,7 +26,7 @@ import torch
 
 # Our modules:
 from zap_it_config import load_config
-from zap_it_sam2 import process_single_pass, process_tiled
+from zap_it_sam2 import process_single_pass
 from zap_it_clip import ClipFilter
 from zap_it_blip3 import Blip3Filter
 from zap_it_postseg_processing import filter_by_area_bbox
@@ -76,7 +76,7 @@ def process_folder(
 ):
     """
     For each .jpg in base_dir:
-     - ROI + single/tile => SAM2 => post-sam2 => clip => final label filter
+     - ROI + optional resize => SAM2 => post-sam2 => clip => final label filter
      - If geometry config => do canny/hough on each final mask => write TSV => draw lines/circles
      - Build composites + panoptic => save JSON, summary
     """
@@ -104,7 +104,6 @@ def process_folder(
     clip_cfg = config.get("clip", {})
     blip3_cfg = config.get("blip3", {})
     sam2_cfg = config.get("mask_generator", {})
-    tile_cfg = config.get("tiled", {})
     alpha_val = config["alpha"]
     postsam2_cfg = config.get("postsam2processing", {})
     vis_cfg = config.get("visualization", {})
@@ -120,9 +119,6 @@ def process_folder(
     composite_sam2 = bool(vis_cfg.get("composite-sam2", False))
     composite_clip = bool(vis_cfg.get("composite-clip", False))
     final_flag = bool(vis_cfg.get("final", False))
-
-    tile_size = tile_cfg.get("tile_size", 1024)
-    overlap = tile_cfg.get("overlap", 0.2)
 
     roi_val = prep.get("roi", None)
     resize_val = prep.get("resize", None)
@@ -176,48 +172,41 @@ def process_folder(
             Image.fromarray(partial_np).save(roi_path, "JPEG")
             log_print(f" => saved ROI debug => {roi_file}", 1, verbosity)
 
-        # B) single-pass or tiled
+        # B) segmentation with optional resizing
         if resize_val is None:
-            log_print(" => Tiling approach, no resize", 1, verbosity)
-            partial_masks = process_tiled(
-                partial_np, mask_generator, alpha_val, tile_size, overlap,
-                verbosity=verbosity, log_print_func=log_print
-            )
+            resized_np = partial_np
+            log_print(" => Single pass @native (no resize)", 1, verbosity)
         else:
             rv = float(resize_val)
             if abs(rv - 1.0) < 1e-7:
                 log_print(" => Single pass @native", 1, verbosity)
-                partial_masks = process_single_pass(
-                    partial_np, mask_generator, alpha_val,
-                    verbosity=verbosity, log_print_func=log_print
-                )
+                resized_np = partial_np
             elif rv < 1.0:
                 new_w = int(partial_np.shape[1] * rv)
                 new_h = int(partial_np.shape[0] * rv)
                 log_print(f" => downscaled => {new_w}x{new_h} (factor={rv:.2f})", 1, verbosity)
-                partial_res = np.array(Image.fromarray(partial_np).resize((new_w,new_h), Image.Resampling.LANCZOS))
-                partial_masks = process_single_pass(
-                    partial_res, mask_generator, alpha_val,
-                    verbosity=verbosity, log_print_func=log_print
+                resized_np = np.array(
+                    Image.fromarray(partial_np).resize(
+                        (new_w, new_h), Image.Resampling.LANCZOS
+                    )
                 )
             else:
                 new_w = int(partial_np.shape[1] * rv)
                 new_h = int(partial_np.shape[0] * rv)
                 log_print(f" => upscaled => {new_w}x{new_h} (factor={rv:.2f})", 1, verbosity)
-                partial_res = np.array(Image.fromarray(partial_np).resize((new_w,new_h), Image.Resampling.LANCZOS))
-                partial_masks = process_single_pass(
-                    partial_res, mask_generator, alpha_val,
-                    verbosity=verbosity, log_print_func=log_print
+                resized_np = np.array(
+                    Image.fromarray(partial_np).resize(
+                        (new_w, new_h), Image.Resampling.LANCZOS
+                    )
                 )
 
+        partial_masks = process_single_pass(
+            resized_np, mask_generator, alpha_val,
+            verbosity=verbosity, log_print_func=log_print
+        )
+
         # C) scale partial => global
-        if resize_val is None:
-            H_res, W_res = partial_np.shape[:2]
-        else:
-            if abs(float(resize_val) - 1.0) < 1e-7:
-                H_res, W_res = partial_np.shape[:2]
-            else:
-                H_res, W_res = partial_res.shape[:2]
+        H_res, W_res = resized_np.shape[:2]
 
         scaleX = (x2 - x) / float(W_res)
         scaleY = (y2 - y) / float(H_res)

@@ -26,11 +26,6 @@ postsam2processing:
   max_h: 400
   debug: false
 
-tiled:
-  # (Not used when resize is set—but provided for reference)
-  tile_size: 1024
-  overlap: 0.2
-
 clip:
   clip:
   padding: 20
