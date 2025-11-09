@@ -3,7 +3,7 @@
 ZAP-IT combines several well known algorithms and models to form a complete pipeline.
 
 ## SAM2 – Segment Anything Model 2
-SAM2 generates segmentation masks given an input image. The pipeline can run it in a single pass or over overlapping tiles for large images. Parameters such as point density and IoU thresholds are configurable in the YAML file.
+SAM2 generates segmentation masks given an input image. The pipeline runs it in a single pass, optionally on a resized version of the image or ROI. Parameters such as point density and IoU thresholds are configurable in the YAML file.
 
 ## CLIP – Contrastive Language–Image Pre-training
 When prompts are provided, CLIP performs zero-shot classification of each mask. The best label among the prompts is attached to the mask and used to filter the results.
