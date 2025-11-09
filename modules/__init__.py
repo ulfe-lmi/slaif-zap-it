@@ -1,3 +1,3 @@
 """Collection of reusable model modules for ZAP-IT."""
 
-__all__ = ["segmenter", "classifier", "verifier"]
+__all__ = ["segmenter", "classifier", "verifier", "input", "output"]
