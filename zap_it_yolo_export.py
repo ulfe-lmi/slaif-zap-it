@@ -6,12 +6,12 @@ Helper to export a detection dataset in YOLO format.  The main
 so that YOLO annotations can be produced while running the standard
 pipeline.  It can also be invoked as a standalone script for convenience.
 
-The exporter divides each image (optionally restricted to the ROI) into
-(possibly overlapping) tiles.  For each tile the provided masks are
-converted into YOLO bounding box text files and the tile image is stored
-under a ``yolo`` directory placed alongside the ``output`` folder within
-the processed image directory, following the structure expected by
-Ultralytics YOLO.
+Each processed image (optionally restricted to the configured ROI) is
+converted into a YOLO sample.  The exporter writes the cropped image (if an
+ROI is used) alongside the bounding boxes derived from the final masks under
+a ``yolo`` directory placed alongside the ``output`` folder within the
+processed image directory, following the structure expected by Ultralytics
+YOLO.
 """
 
 from __future__ import annotations
@@ -19,49 +19,12 @@ from __future__ import annotations
 import argparse
 import os
 import random
-from typing import Callable, Iterable, List, Tuple
+from typing import Callable, Iterable
 
 import numpy as np
 from PIL import Image
 import yaml
 from datetime import datetime
-
-
-# -----------------------------------------------------------------------------
-# utility
-# -----------------------------------------------------------------------------
-
-
-def compute_tile_positions_rect(
-    h: int, w: int, tw: int, th: int, overlap: float
-) -> List[Tuple[int, int, int, int]]:
-    """Return a list of ``(x0, y0, x1, y1)`` tiles covering ``w``x``h``.
-
-    The tiles all have identical size ``tw``×``th``.  If ``w`` or ``h`` are
-    not multiples of the tile size the tiles near the right/bottom edges are
-    shifted so that their extent stays within the image while keeping the same
-    dimensions.  ``overlap`` specifies the fraction of overlap between
-    neighbouring tiles.
-    """
-    step_x = max(1, int(tw * (1 - overlap)))
-    step_y = max(1, int(th * (1 - overlap)))
-
-    max_x0 = max(0, w - tw)
-    max_y0 = max(0, h - th)
-
-    xs = list(range(0, max_x0 + 1, step_x))
-    ys = list(range(0, max_y0 + 1, step_y))
-    if xs[-1] != max_x0:
-        xs.append(max_x0)
-    if ys[-1] != max_y0:
-        ys.append(max_y0)
-
-    positions: List[Tuple[int, int, int, int]] = []
-    for y0 in ys:
-        for x0 in xs:
-            positions.append((x0, y0, x0 + tw, y0 + th))
-
-    return positions
 
 
 # -----------------------------------------------------------------------------
@@ -100,11 +63,6 @@ class YoloDatasetExporter:
         self.label_to_idx = {lbl: idx for idx, lbl in enumerate(self.labels)}
         self.train_split = float(yolo_cfg.get("trainsplit", 80)) / 100.0
         self.sample_roi = bool(yolo_cfg.get("sample_roi", False))
-        dim_str = yolo_cfg.get("sample_dimension", "1024,1024")
-        tw, th = [int(v) for v in dim_str.split(",")]
-        self.tile_w = tw
-        self.tile_h = th
-        self.overlap = float(config.get("tiled", {}).get("overlap", 0.0))
 
         self.results_root = os.path.join(base_dir, "yolo")
         for sub in ["images/train", "images/val", "labels/train", "labels/val"]:
@@ -126,7 +84,7 @@ class YoloDatasetExporter:
             yaml.safe_dump(data_dict, f)
         self._log(f"[YoloDatasetExporter] wrote {data_yaml}", 2)
 
-        self.tile_id = 0
+        self.sample_id = 0
 
     # ------------------------------------------------------------------
     def process_image(
@@ -135,7 +93,7 @@ class YoloDatasetExporter:
         masks: Iterable[dict],
         roi_val: str | None = None,
     ) -> None:
-        """Export tiles and annotations for one image."""
+        """Export one image (optionally cropped to the ROI) and its annotations."""
         h_img, w_img = image_np.shape[:2]
         offset_x, offset_y = 0, 0
 
@@ -143,54 +101,43 @@ class YoloDatasetExporter:
             rx, ry, rw, rh = [int(v) for v in str(roi_val).split(",")]
             x2 = min(rx + rw, w_img)
             y2 = min(ry + rh, h_img)
-            image_np = image_np[ry:y2, rx:x2, :]
+            sample_np = image_np[ry:y2, rx:x2, :]
             offset_x, offset_y = rx, ry
+        else:
+            sample_np = image_np
 
-        h_roi, w_roi = image_np.shape[:2]
-        tiles = compute_tile_positions_rect(
-            h_roi, w_roi, self.tile_w, self.tile_h, self.overlap
-        )
+        h_sample, w_sample = sample_np.shape[:2]
 
-        for x0, y0, x1, y1 in tiles:
-            tile_np = image_np[y0:y1, x0:x1, :]
-            lines = []
-            for m in masks:
-                label = m.get("clip_label")
-                if self.labels and label not in self.labels:
-                    continue
-                seg = m["segmentation"]
-                gx0 = offset_x + x0
-                gy0 = offset_y + y0
-                gx1 = offset_x + x1
-                gy1 = offset_y + y1
-                sub = seg[gy0:gy1, gx0:gx1]
-                if not np.any(sub):
-                    continue
-                rr, cc = np.where(sub)
-                y_min, y_max = rr.min(), rr.max()
-                x_min, x_max = cc.min(), cc.max()
-                cx = (x_min + x_max) / 2.0 / (x1 - x0)
-                cy = (y_min + y_max) / 2.0 / (y1 - y0)
-                bw = (x_max - x_min + 1) / (x1 - x0)
-                bh = (y_max - y_min + 1) / (y1 - y0)
-                cls_idx = self.label_to_idx.get(label, 0)
-                lines.append(f"{cls_idx} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}")
+        lines = []
+        for m in masks:
+            label = m.get("clip_label")
+            if self.labels and label not in self.labels:
+                continue
+            seg = m["segmentation"]
+            sub = seg[offset_y : offset_y + h_sample, offset_x : offset_x + w_sample]
+            if not np.any(sub):
+                continue
+            rr, cc = np.where(sub)
+            y_min, y_max = rr.min(), rr.max()
+            x_min, x_max = cc.min(), cc.max()
+            cx = (x_min + x_max) / 2.0 / w_sample
+            cy = (y_min + y_max) / 2.0 / h_sample
+            bw = (x_max - x_min + 1) / w_sample
+            bh = (y_max - y_min + 1) / h_sample
+            cls_idx = self.label_to_idx.get(label, 0)
+            lines.append(f"{cls_idx} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}")
 
-            set_name = "train" if random.random() < self.train_split else "val"
-            base = f"tile_{self.tile_id:06d}"
-            img_out = os.path.join(self.results_root, "images", set_name, base + ".jpg")
-            lbl_out = os.path.join(self.results_root, "labels", set_name, base + ".txt")
-            Image.fromarray(tile_np).save(img_out, "JPEG", quality=95)
-            self._log(
-                f"[{datetime.now().strftime('%H:%M:%S')}] wrote image {img_out}", 2
-            )
-            with open(lbl_out, "w", encoding="utf-8") as f:
-                for ln in lines:
-                    f.write(ln + "\n")
-            self._log(
-                f"[{datetime.now().strftime('%H:%M:%S')}] wrote labels {lbl_out}", 2
-            )
-            self.tile_id += 1
+        set_name = "train" if random.random() < self.train_split else "val"
+        base = f"sample_{self.sample_id:06d}"
+        img_out = os.path.join(self.results_root, "images", set_name, base + ".jpg")
+        lbl_out = os.path.join(self.results_root, "labels", set_name, base + ".txt")
+        Image.fromarray(sample_np).save(img_out, "JPEG", quality=95)
+        self._log(f"[{datetime.now().strftime('%H:%M:%S')}] wrote image {img_out}", 2)
+        with open(lbl_out, "w", encoding="utf-8") as f:
+            for ln in lines:
+                f.write(ln + "\n")
+        self._log(f"[{datetime.now().strftime('%H:%M:%S')}] wrote labels {lbl_out}", 2)
+        self.sample_id += 1
 
 
 # -----------------------------------------------------------------------------
@@ -202,7 +149,7 @@ def run_export_over_folder(
     base_dir: str, config: dict, randomize: bool = False, verbosity: int = 1
 ) -> None:
     """Convenience wrapper to build a dataset directly from a folder of images."""
-    from zap_it_sam2 import process_tiled, process_single_pass
+    from zap_it_sam2 import process_single_pass
     from zap_it_postseg_processing import filter_by_area_bbox
     from zap_it_clip import ClipFilter
     from zap_it_blip3 import Blip3Filter
@@ -215,10 +162,6 @@ def run_export_over_folder(
     prep = config.get("preprocessing", {})
     roi_val = prep.get("roi")
     resize_val = prep.get("resize")
-    tile_cfg = config.get("tiled", {})
-    tile_size = tile_cfg.get("tile_size", 1024)
-    overlap = tile_cfg.get("overlap", 0.2)
-
     post_cfg = config.get("postsam2processing", {})
     post_max = post_cfg.get("maxsize", 99999999)
     max_w = post_cfg.get("max_w", 99999999)
@@ -268,44 +211,67 @@ def run_export_over_folder(
             x2 = min(rx + rw, w)
             y2 = min(ry + rh, h)
             roi_np = image_np[ry:y2, rx:x2, :]
+            x, y = rx, ry
         else:
             roi_np = image_np
+            x, y = 0, 0
+            x2, y2 = w, h
 
         if resize_val is None:
-            masks = process_tiled(
-                roi_np,
-                mask_generator,
-                config["alpha"],
-                tile_size,
-                overlap,
-                verbosity=verbosity,
-            )
+            resized_np = roi_np
         else:
             rv = float(resize_val)
             if abs(rv - 1.0) < 1e-7:
-                masks = process_single_pass(
-                    roi_np, mask_generator, config["alpha"], verbosity=verbosity
-                )
+                resized_np = roi_np
             else:
                 new_w = int(roi_np.shape[1] * rv)
                 new_h = int(roi_np.shape[0] * rv)
-                res = np.array(
+                resized_np = np.array(
                     Image.fromarray(roi_np).resize(
                         (new_w, new_h), Image.Resampling.LANCZOS
                     )
                 )
-                masks = process_single_pass(
-                    res, mask_generator, config["alpha"], verbosity=verbosity
-                )
 
-        masks = filter_by_area_bbox(masks, post_max, max_w, max_h, verbosity=verbosity)
+        partial_masks = process_single_pass(
+            resized_np, mask_generator, config["alpha"], verbosity=verbosity
+        )
+
+        H_res, W_res = resized_np.shape[:2]
+        scaleX = (x2 - x) / float(W_res)
+        scaleY = (y2 - y) / float(H_res)
+
+        all_masks_pre = []
+        for m in partial_masks:
+            seg_rs = m["segmentation"]
+            rr, cc = np.where(seg_rs)
+            if len(rr) == 0:
+                continue
+            seg_global = np.zeros((h, w), dtype=bool)
+            for rpos, cpos in zip(rr, cc):
+                Yg = y + int(rpos * scaleY)
+                Xg = x + int(cpos * scaleX)
+                if 0 <= Yg < h and 0 <= Xg < w:
+                    seg_global[Yg, Xg] = True
+
+            all_masks_pre.append(
+                {
+                    "segmentation": seg_global,
+                    "area": seg_global.sum(),
+                    "predicted_iou": m.get("predicted_iou"),
+                    "stability_score": m.get("stability_score"),
+                }
+            )
+
+        masks = filter_by_area_bbox(
+            all_masks_pre, post_max, max_w, max_h, verbosity=verbosity
+        )
         if clip_filter:
             masks = clip_filter.filter_masks(
-                masks, roi_np, exporter.results_root, os.path.splitext(fname)[0]
+                masks, image_np, exporter.results_root, os.path.splitext(fname)[0]
             )
         if blip3_filter:
             masks = blip3_filter.filter_masks(
-                masks, roi_np, exporter.results_root, os.path.splitext(fname)[0]
+                masks, image_np, exporter.results_root, os.path.splitext(fname)[0]
             )
 
         exporter.process_image(image_np, masks, roi_val=roi_val)
