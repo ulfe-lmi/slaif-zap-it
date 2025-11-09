@@ -7,7 +7,7 @@ Defines optional region-of-interest cropping and resizing. Example:
 ```yaml
 preprocessing:
   roi: "0,1500,4000,1500"  # x,y,w,h or False for full image
-  resize: 1.0              # 1.0 => single pass; omit for tiling
+  resize: 1.0              # scale factor for ROI; omit to run at native size
   debug: true              # save ROI debug image
 ```
 
@@ -16,9 +16,6 @@ Parameters for the SAM2 automatic mask generator such as grid density and IoU th
 
 ## postsam2processing
 Filters masks by area and bounding-box size after segmentation.
-
-## tiled
-Controls tile size and overlap if tiling is used instead of resizing.
 
 ## clip (optional)
 Zero-shot classification prompts for CLIP. Prompts are grouped under `labels` with each key being the desired class name.

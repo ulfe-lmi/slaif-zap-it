@@ -2,7 +2,7 @@
 # PREPROCESSING
 #
 # This section controls how we select which portion of the image to process
-# and whether or not we rescale that portion (instead of using tiling).
+# and whether or not we rescale that portion.
 #
 # "roi": "x,y,w,h"
 #   - The rectangular subregion of the image to process. If set to "False",
@@ -12,8 +12,8 @@
 # "resize": factor
 #   - If given a numeric factor < 1.0, we downscale that ROI and do a single-pass
 #     SAM2 segmentation on the resized region.
-#   - If = 1.0, we do single-pass SAM2 at the native scale (no tiling).
-#   - If omitted altogether, we switch to tiling mode.
+#   - If = 1.0, we do single-pass SAM2 at the native scale.
+#   - If omitted altogether, we run SAM2 at the native scale.
 #
 # "debug": true/false
 #   - If true, the script will save a debug image of the ROI region for
@@ -91,20 +91,6 @@ postsam2processing:
   max_w: 4000
   max_h: 800
   debug: true
-
-################################################################################
-# TILING PARAMETERS
-#
-# If we do not specify "resize" in preprocessing (or if "resize" is None),
-# we switch to a tiling approach. For example:
-#   tile_size: 1024 => each tile is 1024×1024
-#   overlap: 0.2    => each tile overlaps the next by 20%
-# Tiling is useful if the image or ROI is large and we don't have enough
-# GPU memory to handle it in a single pass at native resolution.
-################################################################################
-tiled:
-  tile_size: 1024
-  overlap: 0.2
 
 ################################################################################
 # CLIP FILTER (OPTIONAL)
