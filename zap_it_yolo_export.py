@@ -26,6 +26,10 @@ from PIL import Image
 import yaml
 from datetime import datetime
 
+from modules.segmenter import run_sam2
+from modules.classifier import run_clip
+from modules.verifier import run_blip3
+
 
 # -----------------------------------------------------------------------------
 # main class
@@ -149,15 +153,15 @@ def run_export_over_folder(
     base_dir: str, config: dict, randomize: bool = False, verbosity: int = 1
 ) -> None:
     """Convenience wrapper to build a dataset directly from a folder of images."""
-    from zap_it_sam2 import process_single_pass
     from zap_it_postseg_processing import filter_by_area_bbox
-    from zap_it_clip import ClipFilter
-    from zap_it_blip3 import Blip3Filter
     from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
     from sam2.build_sam import build_sam2_hf
     import torch
 
     exporter = YoloDatasetExporter(config, base_dir, verbosity=verbosity)
+
+    def module_log(msg, needed_level, _current_level):
+        exporter._log(msg, needed_level)
 
     prep = config.get("preprocessing", {})
     roi_val = prep.get("roi")
@@ -171,14 +175,9 @@ def run_export_over_folder(
     blip3_cfg = config.get("blip3", {})
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    clip_filter = (
-        ClipFilter(clip_cfg, device=device, verbosity=verbosity) if clip_cfg else None
-    )
-    blip3_filter = (
-        Blip3Filter(blip3_cfg, device=device, verbosity=verbosity)
-        if blip3_cfg
-        else None
-    )
+    clip_state = None
+    blip3_state = None
+    segmenter_state = None
 
     mg_cfg = config.get("mask_generator", {})
     model = build_sam2_hf("facebook/sam2-hiera-large")
@@ -232,8 +231,16 @@ def run_export_over_folder(
                     )
                 )
 
-        partial_masks = process_single_pass(
-            resized_np, mask_generator, config["alpha"], verbosity=verbosity
+        segmenter_params = {
+            "mask_generator": mask_generator,
+            "alpha": config["alpha"],
+        }
+        segmenter_state, partial_masks, _ = run_sam2(
+            segmenter_state,
+            segmenter_params,
+            resized_np,
+            verbosity=verbosity,
+            log_print_func=module_log,
         )
 
         H_res, W_res = resized_np.shape[:2]
@@ -265,13 +272,35 @@ def run_export_over_folder(
         masks = filter_by_area_bbox(
             all_masks_pre, post_max, max_w, max_h, verbosity=verbosity
         )
-        if clip_filter:
-            masks = clip_filter.filter_masks(
-                masks, image_np, exporter.results_root, os.path.splitext(fname)[0]
+        if clip_cfg:
+            clip_params = {
+                "config": clip_cfg,
+                "device": device,
+                "masks": masks,
+                "out_dir": exporter.results_root,
+                "fname_stem": os.path.splitext(fname)[0],
+            }
+            clip_state, masks, _ = run_clip(
+                clip_state,
+                clip_params,
+                image_np,
+                verbosity=verbosity,
+                log_print_func=module_log,
             )
-        if blip3_filter:
-            masks = blip3_filter.filter_masks(
-                masks, image_np, exporter.results_root, os.path.splitext(fname)[0]
+        if blip3_cfg:
+            blip3_params = {
+                "config": blip3_cfg,
+                "device": device,
+                "masks": masks,
+                "out_dir": exporter.results_root,
+                "fname_stem": os.path.splitext(fname)[0],
+            }
+            blip3_state, masks, _ = run_blip3(
+                blip3_state,
+                blip3_params,
+                image_np,
+                verbosity=verbosity,
+                log_print_func=module_log,
             )
 
         exporter.process_image(image_np, masks, roi_val=roi_val)

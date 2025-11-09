@@ -26,9 +26,9 @@ import torch
 
 # Our modules:
 from zap_it_config import load_config
-from zap_it_sam2 import process_single_pass
-from zap_it_clip import ClipFilter
-from zap_it_blip3 import Blip3Filter
+from modules.segmenter import run_sam2
+from modules.classifier import run_clip
+from modules.verifier import run_blip3
 from zap_it_postseg_processing import filter_by_area_bbox
 from zap_it_visualization import build_composite_for_masks, build_panoptic_final
 
@@ -124,25 +124,10 @@ def process_folder(
     resize_val = prep.get("resize", None)
     prep_debug = bool(prep.get("debug", False))
 
-    # Possibly create CLIP filter
-    clip_filter = None
-    if clip_cfg:
-        clip_filter = ClipFilter(
-            clip_cfg,
-            device=device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-            verbosity=verbosity,
-            log_print_func=log_print
-        )
-
-    # Optional BLIP3 verification
-    blip3_filter = None
-    if blip3_cfg:
-        blip3_filter = Blip3Filter(
-            blip3_cfg,
-            device=device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-            verbosity=verbosity,
-            log_print_func=log_print
-        )
+    # Module states reused across images
+    segmenter_state = {"mask_generator": mask_generator}
+    clip_state = None
+    blip3_state = None
 
     for fname in images:
         log_print(f"\n[process_folder] => Handling image: {fname}", 1, verbosity)
@@ -200,9 +185,16 @@ def process_folder(
                     )
                 )
 
-        partial_masks = process_single_pass(
-            resized_np, mask_generator, alpha_val,
-            verbosity=verbosity, log_print_func=log_print
+        segmenter_params = {
+            "mask_generator": mask_generator,
+            "alpha": alpha_val,
+        }
+        segmenter_state, partial_masks, _ = run_sam2(
+            segmenter_state,
+            segmenter_params,
+            resized_np,
+            verbosity=verbosity,
+            log_print_func=log_print,
         )
 
         # C) scale partial => global
@@ -255,20 +247,42 @@ def process_folder(
         )
 
         # F) CLIP classification (if provided)
-        if clip_filter:
-            log_print(f"[clip_filter] => classifying {len(filtered_for_clip)} bounding boxes...", 1, verbosity)
-            masked_after_clip = clip_filter.filter_masks(
-                filtered_for_clip, orig_np, out_dir, os.path.splitext(fname)[0]
+        if clip_cfg:
+            log_print(f"[clip] => classifying {len(filtered_for_clip)} bounding boxes...", 1, verbosity)
+            clip_params = {
+                "config": clip_cfg,
+                "device": device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+                "masks": filtered_for_clip,
+                "out_dir": out_dir,
+                "fname_stem": os.path.splitext(fname)[0],
+            }
+            clip_state, masked_after_clip, _ = run_clip(
+                clip_state,
+                clip_params,
+                orig_np,
+                verbosity=verbosity,
+                log_print_func=log_print,
             )
-            log_print("[clip_filter] => classification done, now final label filter...", 1, verbosity)
+            log_print("[clip] => classification done, now final label filter...", 1, verbosity)
         else:
             masked_after_clip = filtered_for_clip
 
         # Optional BLIP3 verification step
-        if blip3_filter:
-            log_print("[blip3_filter] => verifying masks...", 1, verbosity)
-            masked_after_clip = blip3_filter.filter_masks(
-                masked_after_clip, orig_np, out_dir, os.path.splitext(fname)[0]
+        if blip3_cfg:
+            log_print("[blip3] => verifying masks...", 1, verbosity)
+            blip3_params = {
+                "config": blip3_cfg,
+                "device": device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+                "masks": masked_after_clip,
+                "out_dir": out_dir,
+                "fname_stem": os.path.splitext(fname)[0],
+            }
+            blip3_state, masked_after_clip, _ = run_blip3(
+                blip3_state,
+                blip3_params,
+                orig_np,
+                verbosity=verbosity,
+                log_print_func=log_print,
             )
 
         # G) final label-based filter => keep only masks in keep_labels
