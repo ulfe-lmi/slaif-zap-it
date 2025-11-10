@@ -1,4 +1,5 @@
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -289,3 +290,181 @@ def test_segment_video_dryrun(monkeypatch, tmp_path, simple_config):
     assert calls["blip"] == 1
     assert calls["yolo"] == 1
     assert calls["process"] == 1
+
+
+def test_segment_video_parallel_branch(monkeypatch, tmp_path, simple_config):
+    config = dict(simple_config)
+    config["clip"] = {"cfg": True}
+    config["blip3"] = {"cfg": True}
+    config["export_yolo_det"] = {"labels": "x"}
+
+    calls = {"parallel": 0, "yolo": 0}
+
+    def fake_parallel(video_path, config_arg, **kwargs):
+        calls["parallel"] += 1
+        assert kwargs["ngpu"] == 2
+        assert kwargs["dryrun"] is False
+        assert kwargs["yolo_exporter"] is not None
+
+    monkeypatch.setattr(batch, "process_video_parallel", fake_parallel)
+
+    def fail(*args, **kwargs):  # pragma: no cover - defensive guard
+        raise AssertionError("serial helpers should not run for ngpu>1")
+
+    monkeypatch.setattr(batch, "process_video", fail)
+    monkeypatch.setattr(batch, "initialize_sam2", fail)
+    monkeypatch.setattr(batch, "initialize_clip", fail)
+    monkeypatch.setattr(batch, "initialize_blip3", fail)
+
+    class DummyTorch:
+        class cuda:
+            @staticmethod
+            def is_available():
+                return False
+
+            @staticmethod
+            def device_count():
+                return 0
+
+        @staticmethod
+        def device(name):
+            return name
+
+    monkeypatch.setattr(batch, "torch", DummyTorch(), raising=False)
+
+    monkeypatch.setattr(batch, "_compute_yolo_root", lambda *a, **k: str(tmp_path / "yolo"))
+
+    class DummyExporter:
+        def __init__(self, *a, **k):
+            calls["yolo"] += 1
+
+        def process_image(self, *a, **k):
+            return
+
+    import modules.output.yolo as yolo_module
+
+    monkeypatch.setattr(yolo_module, "YoloDatasetExporter", DummyExporter)
+
+    video_path = tmp_path / "vid.mp4"
+    video_path.write_bytes(b"fake")
+
+    batch.segment_video(
+        str(video_path),
+        parsed_config=config,
+        verbosity_level="some",
+        dryrun=False,
+        image_output_root=str(tmp_path / "images"),
+        video_output_root=str(tmp_path / "videos"),
+        ngpu=2,
+    )
+
+    assert calls["parallel"] == 1
+    assert calls["yolo"] == 1
+
+
+def test_process_video_parallel_uses_workers(monkeypatch, tmp_path, simple_config):
+    frames = [np.full((2, 2, 3), idx, dtype=np.uint8) for idx in range(4)]
+
+    metadata = SimpleNamespace(width=2, height=2, fps=24.0)
+    monkeypatch.setattr(batch, "probe_video", lambda path: metadata)
+
+    class FakeReader:
+        def __init__(self, path, meta):
+            self._frames = [frame.tobytes() for frame in frames]
+            self.closed = False
+
+        def __iter__(self):
+            return iter(self._frames)
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(batch, "FFmpegVideoReader", FakeReader)
+
+    class RecordingWriter:
+        def __init__(self, *a, **k):
+            self.frames = []
+            self.closed = False
+
+        def write(self, rendered):
+            self.frames.append(rendered)
+
+        def close(self):
+            self.closed = True
+
+    image_writer = RecordingWriter()
+    video_writer = RecordingWriter()
+
+    monkeypatch.setattr(batch, "build_image_writer", lambda *a, **k: image_writer)
+    monkeypatch.setattr(batch, "build_video_writer", lambda *a, **k: video_writer)
+
+    seen_workers = []
+
+    def fake_worker(
+        idx,
+        task_queue,
+        result_queue,
+        config,
+        pipeline_context,
+        dryrun,
+        verbosity,
+        out_dir,
+    ):
+        seen_workers.append(idx)
+        while True:
+            payload = task_queue.get()
+            if payload is None:
+                break
+            frame_idx, frame_id, frame_np = payload
+            result = batch.FramePipelineResult(
+                rendered={"sam": frame_np},
+                final_masks=[{"frame": frame_idx}],
+                serialized=[{"frame": frame_idx}],
+            )
+            result_queue.put(("RESULT", frame_idx, frame_id, result))
+        result_queue.put(("DONE", idx))
+
+    monkeypatch.setattr(batch, "_video_worker_process", fake_worker)
+
+    class ThreadProcess:
+        def __init__(self, target, args=(), kwargs=None):
+            self._target = target
+            self._args = args
+            self._kwargs = kwargs or {}
+            self._thread = threading.Thread(
+                target=self._target, args=self._args, kwargs=self._kwargs
+            )
+            self.exitcode = 0
+
+        def start(self):
+            self._thread.start()
+
+        def join(self, timeout=None):
+            self._thread.join(timeout)
+            self.exitcode = 0 if not self._thread.is_alive() else None
+
+    monkeypatch.setattr(batch.mp, "Process", ThreadProcess)
+
+    video_path = tmp_path / "video.mp4"
+    video_path.write_bytes(b"fake")
+
+    batch.process_video_parallel(
+        str(video_path),
+        simple_config,
+        dryrun=False,
+        verbosity=1,
+        yolo_exporter=None,
+        image_output_root=str(tmp_path / "images"),
+        video_output_root=str(tmp_path / "videos"),
+        ngpu=2,
+    )
+
+    assert sorted(set(seen_workers)) == [0, 1]
+    assert len(image_writer.frames) == len(frames)
+    assert len(video_writer.frames) == len(frames)
+
+    json_dir = Path(tmp_path / "images" / video_path.stem)
+    json_payloads = sorted(json_dir.glob("*.json"))
+    assert len(json_payloads) == len(frames)
+    payload = json.loads(json_payloads[0].read_text())
+    assert payload[0]["frame"] == 1
