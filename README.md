@@ -31,6 +31,9 @@ ZAP-IT is a high level computer‑vision pipeline built from foundational models
    python zap-it-batch.py --config configs/example.yaml --input-video path/to/video.mp4
    ```
    Video outputs are written under `output/<video-stem>/` alongside the source file.
+   Pass `--ngpu` with a value greater than one to fan frames across multiple GPUs; the
+   parent process buffers frames to preserve ordering, so expect additional memory use
+   when enabling this parallel mode.
 7. Upon loading the YAML configuration the script prints a short summary of
    which optional modules are enabled (CLIP, BLIP3, YOLO export, etc.).
 
