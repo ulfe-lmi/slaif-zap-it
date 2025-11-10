@@ -35,7 +35,7 @@ ZAP-IT is a high level computer‑vision pipeline built from foundational models
 - `zap_it_config.py` – loads and fixes the YAML configuration.
 - `modules/input/` – helpers for loading and pre-processing image/video inputs.
 - `modules/output/` – image/video writers and YOLO dataset exporter.
-- `modules/visualizer/` – rendering utilities that turn masks into RGB overlays.
+- `modules/visualizer.py` – rendering utilities that turn masks into RGB overlays.
 - `modules/segmenter/` – SAM2 segmentation implementation via the unified module API.
 - `modules/classifier/` – CLIP-based zero-shot classification module.
 - `modules/verifier/` – BLIP-3 verification module.
