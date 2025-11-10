@@ -22,13 +22,16 @@ import random
 import multiprocessing as mp
 import numpy as np
 from PIL import Image
-import torch
+try:
+    import torch
+except ImportError:
+    torch = None
 
 # Our modules:
 from zap_it_config import load_config
-from modules.segmenter import run_sam2
-from modules.classifier import run_clip
-from modules.verifier import run_blip3
+from modules.segmenter import initialize_sam2, run_sam2
+from modules.classifier import initialize_clip, run_clip
+from modules.verifier import initialize_blip3, run_blip3
 from modules.input.images import (
     list_images,
     load_image,
@@ -41,11 +44,6 @@ from modules.output.visualization import build_composite_for_masks, build_panopt
 
 # NEW: geometry code is in a separate file
 from zap_it_geometry import apply_geometry_on_mask, draw_geometry_on_image
-
-# For building the SAM2 mask generator:
-from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
-from sam2.build_sam import build_sam2_hf
-
 
 def log_print(msg, needed_level, current_level):
     """
@@ -69,10 +67,20 @@ def prepare_dirs(base_dir, verbosity=1):
     return out_dir
 
 
+def _resolve_device(preferred=None):
+    if preferred is not None:
+        return preferred
+    if torch is not None:
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return "cpu"
+
+
 def process_folder(
     base_dir,
-    mask_generator,
+    segmenter_state,
     config,
+    *,
+    dryrun=False,
     verbosity=1,
     randomize=False,
     yolo_exporter=None,
@@ -80,6 +88,8 @@ def process_folder(
     out_dir=None,
     skip_prepare=False,
     device=None,
+    clip_state=None,
+    blip3_state=None,
 ):
     """
     For each .jpg in base_dir:
@@ -128,9 +138,12 @@ def process_folder(
     prep_debug = bool(prep.get("debug", False))
 
     # Module states reused across images
-    segmenter_state = {"mask_generator": mask_generator}
-    clip_state = None
-    blip3_state = None
+    if segmenter_state is None:
+        segmenter_state = {}
+    if clip_state is None:
+        clip_state = {}
+    if blip3_state is None:
+        blip3_state = {}
 
     for fname in images:
         log_print(f"\n[process_folder] => Handling image: {fname}", 1, verbosity)
@@ -168,9 +181,11 @@ def process_folder(
             )
 
         segmenter_params = {
-            "mask_generator": mask_generator,
             "alpha": alpha_val,
+            "dryrun": dryrun,
         }
+        if "mask_generator" in segmenter_state:
+            segmenter_params["mask_generator"] = segmenter_state["mask_generator"]
         segmenter_state, partial_masks, _ = run_sam2(
             segmenter_state,
             segmenter_params,
@@ -233,10 +248,11 @@ def process_folder(
             log_print(f"[clip] => classifying {len(filtered_for_clip)} bounding boxes...", 1, verbosity)
             clip_params = {
                 "config": clip_cfg,
-                "device": device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+                "device": _resolve_device(device),
                 "masks": filtered_for_clip,
                 "out_dir": out_dir,
                 "fname_stem": os.path.splitext(fname)[0],
+                "dryrun": dryrun,
             }
             clip_state, masked_after_clip, _ = run_clip(
                 clip_state,
@@ -254,10 +270,11 @@ def process_folder(
             log_print("[blip3] => verifying masks...", 1, verbosity)
             blip3_params = {
                 "config": blip3_cfg,
-                "device": device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+                "device": _resolve_device(device),
                 "masks": masked_after_clip,
                 "out_dir": out_dir,
                 "fname_stem": os.path.splitext(fname)[0],
+                "dryrun": dryrun,
             }
             blip3_state, masked_after_clip, _ = run_blip3(
                 blip3_state,
@@ -389,29 +406,25 @@ def process_folder(
         log_print("[process_folder] => done with image.\n",1,verbosity)
 
 
-def _worker_process(gpu_idx, images, base_dir, config, verbosity, out_dir):
+def _worker_process(gpu_idx, images, base_dir, config, verbosity, out_dir, dryrun=False):
     """Worker helper for multi-GPU processing."""
-    import torch
     mg_cfg = config["mask_generator"]
 
-    device = torch.device(f"cuda:{gpu_idx}" if torch.cuda.device_count() > gpu_idx else "cpu")
+    if dryrun or torch is None:
+        device = "cpu"
+    else:
+        device = torch.device(f"cuda:{gpu_idx}" if torch.cuda.device_count() > gpu_idx else "cpu")
+
     if verbosity >= 1:
-        print(f"[worker {gpu_idx}] Building SAM2 model on {device}...")
+        mode = "dry-run" if dryrun else "full"
+        print(f"[worker {gpu_idx}] Initializing SAM2 ({mode}) on {device}...")
 
-    model = build_sam2_hf("facebook/sam2-hiera-large")
-    model.eval().to(device)
-
-    mask_generator = SAM2AutomaticMaskGenerator(
-        model,
-        points_per_side=mg_cfg["points_per_side"],
-        pred_iou_thresh=mg_cfg["pred_iou_thresh"],
-        stability_score_thresh=mg_cfg["stability_score_thresh"],
-        min_mask_region_area=mg_cfg["min_mask_region_area"],
-        crop_n_layers=mg_cfg["crop_n_layers"],
-        crop_n_points_downscale_factor=mg_cfg["crop_n_points_downscale_factor"],
-        crop_overlap_ratio=mg_cfg["crop_overlap_ratio"],
-        box_nms_thresh=mg_cfg["box_nms_thresh"],
-        multimask_output=mg_cfg["multimask_output"]
+    segmenter_state = initialize_sam2(
+        mg_cfg,
+        dryrun=dryrun,
+        device=device if torch is not None else None,
+        verbosity=verbosity,
+        log_print_func=log_print,
     )
 
     yolo_exporter = None
@@ -419,10 +432,31 @@ def _worker_process(gpu_idx, images, base_dir, config, verbosity, out_dir):
         from modules.output.yolo import YoloDatasetExporter
         yolo_exporter = YoloDatasetExporter(config, base_dir, verbosity=verbosity, log_print_func=log_print)
 
+    clip_state = None
+    if config.get("clip"):
+        clip_state = initialize_clip(
+            config.get("clip", {}),
+            dryrun=dryrun,
+            device=device if torch is not None else "cpu",
+            verbosity=verbosity,
+            log_print_func=log_print,
+        )
+
+    blip3_state = None
+    if config.get("blip3"):
+        blip3_state = initialize_blip3(
+            config.get("blip3", {}),
+            dryrun=dryrun,
+            device=device if torch is not None else "cpu",
+            verbosity=verbosity,
+            log_print_func=log_print,
+        )
+
     process_folder(
         base_dir,
-        mask_generator,
+        segmenter_state,
         config,
+        dryrun=dryrun,
         verbosity=verbosity,
         randomize=False,
         yolo_exporter=yolo_exporter,
@@ -430,10 +464,12 @@ def _worker_process(gpu_idx, images, base_dir, config, verbosity, out_dir):
         out_dir=out_dir,
         skip_prepare=True,
         device=device,
+        clip_state=clip_state,
+        blip3_state=blip3_state,
     )
 
 
-def process_folder_parallel(base_dir, config, ngpu, verbosity, randomize=False, recursive=False):
+def process_folder_parallel(base_dir, config, ngpu, verbosity, randomize=False, recursive=False, dryrun=False):
     """Process images in ``base_dir`` using ``ngpu`` processes."""
     out_dir = prepare_dirs(base_dir, verbosity)
 
@@ -450,14 +486,14 @@ def process_folder_parallel(base_dir, config, ngpu, verbosity, randomize=False, 
     for idx, subset in enumerate(chunks):
         if not subset:
             continue
-        p = mp.Process(target=_worker_process, args=(idx, subset, base_dir, config, verbosity, out_dir))
+        p = mp.Process(target=_worker_process, args=(idx, subset, base_dir, config, verbosity, out_dir, dryrun))
         p.start()
         procs.append(p)
 
     for p in procs:
         p.join()
 
-def segment_images(base_dir, recursive=False, parsed_config=None, verbosity_level="some", randomize=False, ngpu=1):
+def segment_images(base_dir, recursive=False, parsed_config=None, verbosity_level="some", randomize=False, ngpu=1, dryrun=False):
     """
     Main entry point. Expects 'parsed_config' from load_config.
     Builds SAM2 model + mask generator, then calls process_folder.
@@ -474,39 +510,83 @@ def segment_images(base_dir, recursive=False, parsed_config=None, verbosity_leve
 
     mg_cfg = parsed_config["mask_generator"]
 
-    if ngpu <= 1:
+    if torch is None and not dryrun:
+        raise RuntimeError("PyTorch is required for full runs. Install torch or use --dryrun.")
+
+    if ngpu <= 1 or dryrun:
         yolo_exporter = None
         if parsed_config.get("export_yolo_det"):
             from modules.output.yolo import YoloDatasetExporter
             yolo_exporter = YoloDatasetExporter(parsed_config, base_dir, verbosity=vb, log_print_func=log_print)
 
-        import torch
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = "cpu" if dryrun else _resolve_device(None)
 
-        print("[segment_images] Building SAM2 model...")
-        model = build_sam2_hf("facebook/sam2-hiera-large")
-        model.eval().to(device)
-
-        mask_generator = SAM2AutomaticMaskGenerator(
-            model,
-            points_per_side=mg_cfg["points_per_side"],
-            pred_iou_thresh=mg_cfg["pred_iou_thresh"],
-            stability_score_thresh=mg_cfg["stability_score_thresh"],
-            min_mask_region_area=mg_cfg["min_mask_region_area"],
-            crop_n_layers=mg_cfg["crop_n_layers"],
-            crop_n_points_downscale_factor=mg_cfg["crop_n_points_downscale_factor"],
-            crop_overlap_ratio=mg_cfg["crop_overlap_ratio"],
-            box_nms_thresh=mg_cfg["box_nms_thresh"],
-            multimask_output=mg_cfg["multimask_output"]
+        print("[segment_images] Initializing SAM2...")
+        segmenter_state = initialize_sam2(
+            mg_cfg,
+            dryrun=dryrun,
+            device=device if torch is not None else None,
+            verbosity=vb,
+            log_print_func=log_print,
         )
+
+        clip_state = None
+        if parsed_config.get("clip"):
+            clip_state = initialize_clip(
+                parsed_config.get("clip", {}),
+                dryrun=dryrun,
+                device=device,
+                verbosity=vb,
+                log_print_func=log_print,
+            )
+
+        blip3_state = None
+        if parsed_config.get("blip3"):
+            blip3_state = initialize_blip3(
+                parsed_config.get("blip3", {}),
+                dryrun=dryrun,
+                device=device,
+                verbosity=vb,
+                log_print_func=log_print,
+            )
 
         if recursive:
             for root, dirs, files in os.walk(base_dir):
-                process_folder(root, mask_generator, parsed_config, verbosity=vb, randomize=randomize, yolo_exporter=yolo_exporter, device=device)
+                process_folder(
+                    root,
+                    segmenter_state,
+                    parsed_config,
+                    dryrun=dryrun,
+                    verbosity=vb,
+                    randomize=randomize,
+                    yolo_exporter=yolo_exporter,
+                    device=device,
+                    clip_state=clip_state,
+                    blip3_state=blip3_state,
+                )
         else:
-            process_folder(base_dir, mask_generator, parsed_config, verbosity=vb, randomize=randomize, yolo_exporter=yolo_exporter, device=device)
+            process_folder(
+                base_dir,
+                segmenter_state,
+                parsed_config,
+                dryrun=dryrun,
+                verbosity=vb,
+                randomize=randomize,
+                yolo_exporter=yolo_exporter,
+                device=device,
+                clip_state=clip_state,
+                blip3_state=blip3_state,
+            )
     else:
-        process_folder_parallel(base_dir, parsed_config, ngpu, vb, randomize=randomize, recursive=recursive)
+        process_folder_parallel(
+            base_dir,
+            parsed_config,
+            ngpu,
+            vb,
+            randomize=randomize,
+            recursive=recursive,
+            dryrun=dryrun,
+        )
 
 
 if __name__=="__main__":
@@ -518,9 +598,10 @@ if __name__=="__main__":
     parser.add_argument("--verbose", default="some", choices=["none","some","full"], help="Verbosity level.")
     parser.add_argument("--randomize", action="store_true", help="Process images in random order")
     parser.add_argument("--ngpu", type=int, default=1, help="Number of GPUs to use in parallel")
+    parser.add_argument("--dryrun", action="store_true", help="Enable dry-run mode for SAM2/CLIP/BLIP3")
     args = parser.parse_args()
 
-    if args.ngpu > 1:
+    if args.ngpu > 1 and not args.dryrun:
         mp.set_start_method("spawn", force=True)
 
     if not os.path.isdir(args.dir):
@@ -538,7 +619,8 @@ if __name__=="__main__":
         parsed_config=config_dict,
         verbosity_level=args.verbose,
         randomize=args.randomize,
-        ngpu=args.ngpu
+        ngpu=args.ngpu,
+        dryrun=args.dryrun,
     )
 
     print("Done.")

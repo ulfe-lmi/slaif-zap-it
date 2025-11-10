@@ -4,14 +4,15 @@ from __future__ import annotations
 from typing import Any, Dict, Tuple
 
 import numpy as np
-import torch
 from PIL import Image
-from transformers import (
-    AutoImageProcessor,
-    AutoModelForVision2Seq,
-    AutoTokenizer,
-    StoppingCriteria,
-)
+try:
+    from transformers import StoppingCriteria
+except ImportError:  # pragma: no cover - lightweight fallback for dry-run
+    class StoppingCriteria:  # type: ignore
+        """Fallback base class when transformers is not installed."""
+
+        def __call__(self, *args, **kwargs):  # pragma: no cover - runtime guard
+            raise RuntimeError("transformers is required for BLIP-3 execution")
 
 
 class _EosListStoppingCriteria(StoppingCriteria):
@@ -28,6 +29,10 @@ class _EosListStoppingCriteria(StoppingCriteria):
 
 class _Blip3QA:
     def __init__(self, blip_config: Dict[str, Any], device="cuda", verbosity: int = 1, log_print_func=None):
+        import torch
+        from transformers import AutoImageProcessor, AutoModelForVision2Seq, AutoTokenizer
+
+        self._torch = torch
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
         self.verbosity = verbosity
         self.log_print = log_print_func or (lambda *a, **k: None)
@@ -70,6 +75,8 @@ class _Blip3QA:
         if not isinstance(image, Image.Image):
             image = Image.fromarray(image)
 
+        torch = self._torch
+
         vision_inputs = self.image_processor(
             [image],
             return_tensors="pt",
@@ -103,6 +110,9 @@ class _Blip3QA:
 
 class _Blip3Filter:
     def __init__(self, blip_config: Dict[str, Any], device="cuda", verbosity: int = 1, log_print_func=None):
+        import torch
+
+        self._torch = torch
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
         self.verbosity = verbosity
         self.log_print = log_print_func or (lambda *a, **k: None)
@@ -230,6 +240,27 @@ class _Blip3Filter:
         return masks, answers
 
 
+class _DryRunBlip3Filter:
+    """Simulate BLIP-3 by deterministically approving/rejecting masks."""
+
+    def __init__(self, *, verbosity: int = 1, log_print_func=None):
+        self.verbosity = verbosity
+        self.log_print = log_print_func or (lambda *a, **k: None)
+
+    def filter_masks(self, masks, _image_np, _out_dir, _fname_stem):
+        answers = []
+        for idx, mask in enumerate(masks, start=1):
+            if idx % 2 == 1:
+                mask["clip_label"] = "negative"
+                answer = "dryrun: rejected"
+            else:
+                answer = "dryrun: accepted"
+            mask["blip3_answer"] = answer
+            answers.append(answer)
+        self.log_print(f"[_DryRunBlip3Filter] processed {len(masks)} masks", 2, self.verbosity)
+        return masks, answers
+
+
 def run(state: Dict[str, Any] | None,
         params: Dict[str, Any],
         images,
@@ -241,11 +272,16 @@ def run(state: Dict[str, Any] | None,
     if state is None:
         state = {}
 
-    blip_filter: _Blip3Filter | None = state.get("blip3_filter")
+    dryrun_mode = bool(params.get("dryrun", False))
+
+    blip_filter = state.get("blip3_filter")
     if blip_filter is None:
         blip_cfg = params.get("config", {})
         device = params.get("device", "cuda")
-        blip_filter = _Blip3Filter(blip_cfg, device=device, verbosity=verbosity, log_print_func=log)
+        if dryrun_mode:
+            blip_filter = _DryRunBlip3Filter(verbosity=verbosity, log_print_func=log)
+        else:
+            blip_filter = _Blip3Filter(blip_cfg, device=device, verbosity=verbosity, log_print_func=log)
         state["blip3_filter"] = blip_filter
 
     image_np = images[0] if isinstance(images, (list, tuple)) else images
@@ -265,4 +301,23 @@ def run(state: Dict[str, Any] | None,
     return state, updated_masks, meta
 
 
-__all__ = ["run"]
+def initialize(config: Dict[str, Any],
+               *,
+               dryrun: bool = False,
+               device="cuda",
+               verbosity: int = 1,
+               log_print_func=None) -> Dict[str, Any]:
+    """Prepare a BLIP-3 filter or its dry-run counterpart."""
+
+    log = log_print_func or (lambda *a, **k: None)
+
+    if dryrun:
+        log("[verifier.blip3] Initializing dry-run BLIP-3 filter", 1, verbosity)
+        return {"blip3_filter": _DryRunBlip3Filter(verbosity=verbosity, log_print_func=log)}
+
+    log("[verifier.blip3] Initializing BLIP-3 filter", 1, verbosity)
+    blip_filter = _Blip3Filter(config, device=device, verbosity=verbosity, log_print_func=log)
+    return {"blip3_filter": blip_filter}
+
+
+__all__ = ["initialize", "run"]
