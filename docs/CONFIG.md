@@ -1,118 +1,166 @@
 # Configuration Files
 
-Each run of ZAP-IT is driven by a YAML configuration file. The examples in `configs/` cover typical use cases. A configuration is composed of several sections:
+ZAP-IT pipelines are driven by YAML configuration files. Examples live in
+`configs/` and can be used as a starting point. Unknown keys are ignored so you
+can keep notes in the file, but the sections below document the entries that
+are consumed by the current codebase.
 
-The batch driver accepts either an image directory (`--input-image-dir`) or a video file (`--input-video`). Video runs reuse the exact same configuration knobs; the rendered frames and JSON manifests are written under `output/<video-stem>/` next to the source file.
+At a glance the batch runner understands these top-level sections:
 
-## preprocessing
-Defines optional region-of-interest cropping and resizing. Example:
-```yaml
-preprocessing:
-  roi: "0,1500,4000,1500"  # x,y,w,h or False for full image
-  resize: 1.0              # scale factor for ROI; omit to run at native size
-  debug: true              # save ROI debug image
-```
+- `preprocessing`
+- `mask_generator`
+- `postsam2processing`
+- `clip`
+- `blip3`
+- `geometry`
+- `visualization`
+- `images`
+- `video`
+- `export_yolo_det`
 
-## mask_generator
-Parameters for the SAM2 automatic mask generator such as grid density and IoU thresholds.
+The same configuration works for image directories and video files. When a
+video is processed, extracted frames and JSON manifests are written to an
+`output/<video-stem>/` folder next to the source file.
 
-## postsam2processing
-Filters masks by area and bounding-box size after segmentation.
+## `preprocessing`
 
-## clip (optional)
-Zero-shot classification prompts for CLIP. Prompts are grouped under `labels` with each key being the desired class name.
+Optional region-of-interest cropping and resizing. All keys are optional.
 
-```yaml
-clip:
-  padding: 40
-  debug: true
-  labels:
-    goat: |
-      a Boer goat in a grassy field,
-      a white goat with reddish ears
-    sign: |
-      a white rectangular sign with a black number
-```
+| Key      | Type          | Description |
+| -------- | ------------- | ----------- |
+| `roi`    | string/`false` | Rectangle described as `"x,y,w,h"`. When set to `false` the full image is used. The loader clamps coordinates to the image bounds. |
+| `resize` | number        | Uniform scale factor applied after cropping. `1.0` (or omission) keeps the native size. Values &lt; 1.0 downscale, values &gt; 1.0 upscale. |
+| `debug`  | bool          | If `true`, a JPEG snapshot of the ROI is saved alongside the outputs. |
 
-## blip3 (optional)
-Zero-shot verification with the BLIP-3 VQA model. Each key matches a CLIP label
-and provides a question along with substrings representing the true and false
-answers. Masks answering with the false string are re-labelled as `negative`.
-If `newcategory` is set, a positive answer overwrites the label with that value.
-Keys starting with `any,` treat the number after the comma as a CLIP score
-threshold. When a mask's CLIP score is below that threshold the associated
-question is asked and the label can be changed to `newcategory` based on the
-answer.
+## `mask_generator`
 
-```yaml
-blip3:
-  goat:
-    question: "Is there an animal in the image? Yes or no!"
-    trueresult: "Yes"
-    falseresult: "No"
-    newcategory: goat
-    debug: true
+Parameters forwarded to the SAM2 automatic mask generator. Any omitted value
+uses the library default (`None` in the constructor call).
 
-  sign:
-    question: "Is there anything that could be interpreted as a white sign in the image? Yes or no!"
-    trueresult: "Yes"
-    falseresult: "No"
-    newcategory: sign
-    debug: true
+- `model_name` (string, default `facebook/sam2-hiera-large`)
+- `points_per_side`
+- `pred_iou_thresh`
+- `stability_score_thresh`
+- `min_mask_region_area`
+- `crop_n_layers`
+- `crop_n_points_downscale_factor`
+- `crop_overlap_ratio`
+- `box_nms_thresh`
+- `multimask_output`
+- `debug` (bool) – when enabled ZAP-IT saves each SAM2 patch to disk for
+  inspection before any filtering.
 
-  any,0.1:
-    question: "Is there an animal in the image? Yes or no!"
-    trueresult: "Yes"
-    falseresult: "No"
-    newcategory: goat
-    debug: true
-```
+## `postsam2processing`
 
-## geometry (optional)
-Canny and Hough settings for line detection if geometry analysis is enabled. The
-implementation lives in `modules.geometry`, which can be imported by custom
-pipelines that need direct access to the geometry helpers.
+Filters applied after SAM2 but before CLIP. All thresholds are optional; if a
+value is missing the code uses a very large default so that nothing is removed.
 
-## visualization
-Declares which mask stages should be rendered by the visualizer. Each stage (`sam2`, `clip`, `blip3`) accepts a list of
-entries with an `id`, a `renderer`, and optional renderer arguments. The resulting RGB arrays are keyed by `id` and can
-be consumed by the `images` and `video` sections described below.
+- `maxsize`: maximum mask area in pixels.
+- `max_w`: maximum bounding-box width in pixels.
+- `max_h`: maximum bounding-box height in pixels.
+- `debug`: when `true`, the final mask patches that survive filtering are saved
+  as JPEGs.
 
-```yaml
-visualization:
-  labels: ["goat", "fencepost"]        # whitelist for the final mask filter
-  alpha: 0.75                           # default alpha for alpha-overlay renderer
-  sam2:
-    - id: sam2-goat-alpha               # visualization identifier
-      renderer: alpha-overlay           # available: alpha-overlay, panoptic
-      alpha: 0.75                       # overrides the default alpha for this entry
-  clip:
-    - id: clip-goat-alpha
-      renderer: alpha-overlay
-  blip3:
-    - id: clip-panoptic
-      renderer: panoptic
-```
+## `clip` (optional)
 
-### images
-Associates visualization IDs with output directories. Each frame is written as a seven-digit JPEG sequence
+Enables the CLIP-based zero-shot classifier. When the section is absent the
+CLIP stage is skipped entirely.
+
+- `padding` (integer, default `20`): how many pixels to expand each bounding box
+  before cropping.
+- `debug` (bool): if set, every crop is written as `*-patch*.jpg` with the
+  winning prompt in the filename.
+- `labels` (mapping): label names to comma-separated prompt strings. Literal
+  block style (`|`) is recommended so that commas and line breaks are preserved.
+
+The loader also supports flattened keys such as `"label goat": "prompt1, prompt2"`
+for convenience. Every mask receives the label with the highest CLIP score; the
+score is stored in `clip_score` for later stages.
+
+## `blip3` (optional)
+
+Configures the BLIP-3 VQA verifier that refines CLIP labels. The section can
+mix model-level options with per-label rules:
+
+- `model_name` (string, default `Salesforce/xgen-mm-phi3-mini-instruct-r-v1`).
+- Any other top-level scalar is forwarded to the BLIP loader unchanged.
+- Nested mappings define rules. Keys that match existing CLIP labels trigger the
+  associated question whenever that label is assigned. Keys that start with
+  `"any,"` declare a CLIP score threshold. For example `any,0.15` fires when the
+  mask's CLIP score is ≤ 0.15, regardless of label.
+
+Each rule supports these fields:
+
+- `question`: prompt passed to BLIP-3.
+- `trueresult` / `falseresult`: substrings that signal a positive/negative
+  answer (case-insensitive).
+- `newcategory`: optional replacement label applied when the answer is true.
+- `debug`: when `true`, crops and the raw BLIP-3 answer text are saved.
+
+Masks that match the false string are relabelled to `negative`; matches on the
+true string keep their label or take `newcategory` if provided.
+
+## `geometry` (optional)
+
+Enables the Canny/Hough based geometry helpers in `modules.geometry`. Recognized
+parameters:
+
+- `debug` (bool): emit extra logging and write intermediate images/TSV files.
+- `canny_threshold1`, `canny_threshold2`, `canny_aperture`
+- `hough_rho`, `hough_theta`, `hough_threshold`
+- `hough_min_line_length`, `hough_max_line_gap`
+
+Geometry results are saved as TSV files per mask; when debug mode is on the
+Canny edge image is also stored.
+
+## `visualization`
+
+Controls which intermediate results are rendered. The loader copies
+`visualization.alpha` into a top-level `alpha` field (default `0.6`) used by the
+composite builder. Additional keys:
+
+- `labels`: optional whitelist of CLIP labels to keep at the end of the
+  pipeline. Accepts either a comma-separated string or a list.
+- `sam2` / `clip` / `blip3`: each is a list of renderer specifications. Every
+  entry must contain an `id` (used to reference the rendered frame) and a
+  `renderer` name.
+
+Two renderer names are available:
+
+- `alpha-overlay`: draws colored masks on top of the original image. Supports an
+  `alpha` override per entry; otherwise `visualization.alpha` is used.
+- `panoptic`: builds a Detectron2-style panoptic visualization of the masks.
+
+## `images`
+
+Maps visualization IDs to directory names. The directories are created under
+`--output-image-dir/<run-subdir>/` when the batch script is launched with an
+`--output-image-dir` value. Each frame is written as a zero-padded JPEG sequence
 (`0000001.jpg`, `0000002.jpg`, …).
 
-```yaml
-images:
-  sam2-goat-alpha: goats-sam2
-  clip-goat-alpha: goats-clip
-```
+## `video`
 
-### video
-Associates visualization IDs with MJPEG AVI files. Provide a filename or a mapping with additional parameters such as
-`fps`.
+Maps visualization IDs to MJPEG encoders. Each value can be either a string (the
+AVI filename) or a mapping with extra options:
 
-```yaml
-video:
-  clip-panoptic:
-    filename: goats-clip.avi
-    fps: 24
-```
+- `filename`: desired output name.
+- `fps`: frames per second (defaults to `24`).
 
-If a section is omitted the corresponding writer becomes a no-op.
+Videos are written to `--output-video-dir/<run-subdir>/` when that CLI flag is
+provided.
+
+## `export_yolo_det` (optional)
+
+Enables YOLO dataset export. When present the batch runner writes annotations to
+a `yolo/` folder alongside the image outputs for each processed directory.
+Supported options:
+
+- `labels` (string): comma-separated class names. The order defines the class
+  indices in the generated `dataset.yaml` and `data.yaml` files.
+- `trainsplit` (number): percentage of samples placed in the `train` split
+  (default `80`). Remaining samples go to `val`.
+- `sample_roi` (bool): when `true`, the YOLO exporter crops the saved images to
+  the configured preprocessing ROI before deriving boxes.
+
+If YOLO export is enabled while `--output-image-dir` points elsewhere, the
+exporter nests the dataset under that root to keep outputs together.
