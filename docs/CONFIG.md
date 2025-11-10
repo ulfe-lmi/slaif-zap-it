@@ -15,7 +15,8 @@ preprocessing:
 Parameters for the SAM2 automatic mask generator such as grid density and IoU thresholds.
 
 ## postsam2processing
-Filters masks by area and bounding-box size after segmentation.
+Filters masks by area and bounding-box size after segmentation. Set any limit to
+`0` or `null` to disable that filter entirely.
 
 ## clip (optional)
 Zero-shot classification prompts for CLIP. Prompts are grouped under `labels` with each key being the desired class name.
