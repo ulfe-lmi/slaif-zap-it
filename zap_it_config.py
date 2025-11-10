@@ -14,7 +14,6 @@ def _print_enabled_modules(config: dict, verbosity: int = 1) -> None:
         "SAM2 mask generator": True,
         "CLIP filter": bool(config.get("clip")),
         "BLIP3 verification": bool(config.get("blip3")),
-        "Geometry analysis": bool(config.get("geometry")),
         "YOLO export": bool(config.get("export_yolo_det")),
     }
 
