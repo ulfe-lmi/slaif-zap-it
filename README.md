@@ -39,7 +39,7 @@ ZAP-IT is a high level computer‑vision pipeline built from foundational models
 - `modules/segmenter/` – SAM2 segmentation implementation via the unified module API.
 - `modules/classifier/` – CLIP-based zero-shot classification module.
 - `modules/verifier/` – BLIP-3 verification module.
-- `zap_it_postseg_processing.py` – filters masks by size and bounding-box limits.
+- `src/postprocessing.py` – filters masks by size and bounding-box limits.
 - `zap_it_geometry.py` – optional line-based geometry analysis with Canny/Hough.
 - `configs/` – example YAML files.
 - `assets/` – logos and banner image used in this README.
