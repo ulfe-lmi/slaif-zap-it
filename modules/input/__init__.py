@@ -1,3 +1,3 @@
 """Input modules for ZAP-IT."""
 
-__all__ = ["images"]
+__all__ = ["images", "video"]
