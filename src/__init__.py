@@ -1,5 +1,15 @@
 """Batch orchestration helpers for the ZAP-IT pipeline."""
 
+import PIL.Image as Image
+
+# restore old names expected by Detectron2
+if not hasattr(Image, "LINEAR"):
+    Image.LINEAR = Image.BILINEAR
+if not hasattr(Image, "CUBIC"):
+    Image.CUBIC = Image.BICUBIC
+if not hasattr(Image, "ANTIALIAS"):
+    Image.ANTIALIAS = Image.LANCZOS
+
 from .batch import (
     log_print,
     prepare_dirs,
