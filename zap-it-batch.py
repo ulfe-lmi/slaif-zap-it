@@ -112,6 +112,7 @@ if __name__ == "__main__":
             dryrun=args.dryrun,
             image_output_root=args.output_image_dir,
             video_output_root=args.output_video_dir,
+            ngpu=args.ngpu,
         )
 
     print("Done.")

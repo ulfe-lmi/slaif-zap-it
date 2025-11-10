@@ -2,6 +2,24 @@
 
 import PIL.Image as Image
 
+# Pillow 11+ moved resampling filters under ``Image.Resampling``.
+_resampling = getattr(Image, "Resampling", None)
+if not hasattr(Image, "BILINEAR") and _resampling is not None:
+    if hasattr(_resampling, "BILINEAR"):
+        Image.BILINEAR = _resampling.BILINEAR
+if not hasattr(Image, "BILINEAR"):
+    Image.BILINEAR = 2
+if not hasattr(Image, "BICUBIC") and _resampling is not None:
+    if hasattr(_resampling, "BICUBIC"):
+        Image.BICUBIC = _resampling.BICUBIC
+if not hasattr(Image, "BICUBIC"):
+    Image.BICUBIC = 3
+if not hasattr(Image, "LANCZOS") and _resampling is not None:
+    if hasattr(_resampling, "LANCZOS"):
+        Image.LANCZOS = _resampling.LANCZOS
+if not hasattr(Image, "LANCZOS"):
+    Image.LANCZOS = 1
+
 # restore old names expected by Detectron2
 if not hasattr(Image, "LINEAR"):
     Image.LINEAR = Image.BILINEAR
@@ -17,6 +35,7 @@ from .batch import (
     _resolve_device,
     process_folder,
     process_video,
+    process_video_parallel,
     run_frame_pipeline,
     _worker_process,
     process_folder_parallel,
@@ -32,6 +51,7 @@ __all__ = [
     "_resolve_device",
     "process_folder",
     "process_video",
+    "process_video_parallel",
     "run_frame_pipeline",
     "_worker_process",
     "process_folder_parallel",

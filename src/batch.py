@@ -7,11 +7,14 @@ import multiprocessing as mp
 import os
 import random
 import shutil
+import traceback
 from dataclasses import dataclass
 from typing import Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 from PIL import Image
+
+from queue import Empty
 
 try:
     import torch
@@ -120,12 +123,15 @@ def _prepare_output_paths(
     video_output_root: Optional[str],
     verbosity: int,
     cleanup: bool,
+    run_folder: Optional[str] = None,
 ) -> Tuple[str, str, str]:
     """Return the output directory along with image/video roots for ``base_dir``."""
 
     abs_base = os.path.abspath(base_dir)
     abs_root = os.path.abspath(input_root or base_dir)
     rel_subdir = _derive_run_subdir(abs_base, abs_root)
+    if run_folder:
+        rel_subdir = run_folder
 
     image_dir = os.path.join(image_output_root, rel_subdir) if image_output_root else None
     video_dir = os.path.join(video_output_root, rel_subdir) if video_output_root else None
@@ -151,9 +157,15 @@ def _prepare_output_paths(
             video_dir = out_dir
     else:
         if cleanup:
-            out_dir = prepare_dirs(abs_base, verbosity)
+            if run_folder:
+                out_dir = prepare_output_dir(abs_base, subdir=run_folder, verbosity=verbosity)
+            else:
+                out_dir = prepare_dirs(abs_base, verbosity)
         else:
-            out_dir = os.path.join(abs_base, "output")
+            if run_folder:
+                out_dir = os.path.join(abs_base, "output", run_folder)
+            else:
+                out_dir = os.path.join(abs_base, "output")
             os.makedirs(out_dir, exist_ok=True)
         image_dir = out_dir
         video_dir = out_dir
@@ -556,33 +568,16 @@ def process_video(
 
     video_dir = os.path.dirname(video_path) or "."
     video_stem = os.path.splitext(os.path.basename(video_path))[0]
-    image_dir = os.path.join(image_output_root, video_stem) if image_output_root else None
-    video_dir_out = os.path.join(video_output_root, video_stem) if video_output_root else None
 
-    if image_dir or video_dir_out:
-        out_dir = image_dir or video_dir_out
-        abs_out_dir = os.path.abspath(out_dir)
-        abs_input = os.path.abspath(video_dir)
-        try:
-            common = os.path.commonpath([abs_input, abs_out_dir])
-        except ValueError:
-            common = ""
-        if common == abs_input and os.path.exists(abs_out_dir):
-            log_print(f"[prepare_dirs] Removing old output: {abs_out_dir}", 2, verbosity)
-            shutil.rmtree(abs_out_dir)
-        os.makedirs(abs_out_dir, exist_ok=True)
-        if image_dir:
-            os.makedirs(image_dir, exist_ok=True)
-        else:
-            image_dir = out_dir
-        if video_dir_out:
-            os.makedirs(video_dir_out, exist_ok=True)
-        else:
-            video_dir_out = out_dir
-    else:
-        out_dir = prepare_output_dir(video_dir, subdir=video_stem, verbosity=verbosity)
-        image_dir = out_dir
-        video_dir_out = out_dir
+    out_dir, image_dir, video_dir_out = _prepare_output_paths(
+        video_dir,
+        input_root=video_dir,
+        image_output_root=image_output_root,
+        video_output_root=video_output_root,
+        verbosity=verbosity,
+        cleanup=True,
+        run_folder=video_stem,
+    )
 
     pipeline_context = _build_pipeline_context(config)
 
@@ -633,6 +628,281 @@ def process_video(
         reader.close()
         image_writer.close()
         video_writer.close()
+
+
+def _video_worker_process(
+    gpu_idx: int,
+    task_queue: mp.Queue,
+    result_queue: mp.Queue,
+    config: dict,
+    pipeline_context: PipelineContext,
+    dryrun: bool,
+    verbosity: int,
+    out_dir: str,
+) -> None:
+    """Worker helper used by :func:`process_video_parallel`."""
+
+    try:
+        if dryrun or torch is None:
+            device = "cpu"
+        else:
+            if torch.cuda.is_available() and torch.cuda.device_count() > gpu_idx:
+                device = torch.device(f"cuda:{gpu_idx}")
+            else:
+                device = torch.device("cpu")
+
+        segmenter_state = initialize_sam2(
+            config["mask_generator"],
+            dryrun=dryrun,
+            device=device if torch is not None else None,
+            verbosity=verbosity,
+            log_print_func=log_print,
+        )
+
+        clip_state = None
+        if config.get("clip"):
+            clip_state = initialize_clip(
+                config.get("clip", {}),
+                dryrun=dryrun,
+                device=device,
+                verbosity=verbosity,
+                log_print_func=log_print,
+            )
+
+        blip3_state = None
+        if config.get("blip3"):
+            blip3_state = initialize_blip3(
+                config.get("blip3", {}),
+                dryrun=dryrun,
+                device=device,
+                verbosity=verbosity,
+                log_print_func=log_print,
+            )
+
+        while True:
+            payload = task_queue.get()
+            if payload is None:
+                break
+
+            frame_idx, frame_id, frame_np = payload
+            log_print(
+                f"\n[process_video_parallel worker {gpu_idx}] => Handling frame: {frame_id}",
+                1,
+                verbosity,
+            )
+
+            result, segmenter_state, clip_state, blip3_state = run_frame_pipeline(
+                frame_id,
+                frame_np,
+                context=pipeline_context,
+                segmenter_state=segmenter_state,
+                clip_state=clip_state,
+                blip3_state=blip3_state,
+                out_dir=out_dir,
+                dryrun=dryrun,
+                verbosity=verbosity,
+                device=device,
+                yolo_exporter=None,
+            )
+
+            result_queue.put(("RESULT", frame_idx, frame_id, result))
+    except Exception:  # pragma: no cover - defensive guard
+        result_queue.put(("ERROR", gpu_idx, traceback.format_exc()))
+    finally:
+        result_queue.put(("DONE", gpu_idx))
+
+
+def process_video_parallel(
+    video_path: str,
+    config: dict,
+    *,
+    dryrun: bool,
+    verbosity: int,
+    yolo_exporter=None,
+    image_output_root: Optional[str] = None,
+    video_output_root: Optional[str] = None,
+    ngpu: int,
+) -> None:
+    """Run the batch pipeline over frames extracted from a video file using multiple GPUs."""
+
+    if ngpu <= 0:
+        raise ValueError("ngpu must be a positive integer")
+
+    video_dir = os.path.dirname(video_path) or "."
+    video_stem = os.path.splitext(os.path.basename(video_path))[0]
+
+    out_dir, image_dir, video_dir_out = _prepare_output_paths(
+        video_dir,
+        input_root=video_dir,
+        image_output_root=image_output_root,
+        video_output_root=video_output_root,
+        verbosity=verbosity,
+        cleanup=True,
+        run_folder=video_stem,
+    )
+
+    pipeline_context = _build_pipeline_context(config)
+
+    metadata = probe_video(video_path)
+    reader = FFmpegVideoReader(video_path, metadata)
+
+    image_writer = build_image_writer(config.get("images"), image_dir, verbosity=verbosity)
+    video_writer = build_video_writer(
+        config.get("video"),
+        video_dir_out,
+        verbosity=verbosity,
+        default_fps=metadata.fps,
+    )
+
+    task_queues: List[mp.Queue] = []
+    workers: List[mp.Process] = []
+    result_queue: Optional[mp.Queue] = None
+    worker_error: Optional[Exception] = None
+
+    def emit_frame(frame_id: str, result: FramePipelineResult, frame_np: Optional[np.ndarray]) -> None:
+        if result.rendered:
+            image_writer.write(result.rendered)
+            video_writer.write(result.rendered)
+
+        out_json = os.path.join(out_dir, f"{frame_id}.json")
+        with open(out_json, "w") as f:
+            json.dump(result.serialized, f)
+        log_print(f"[process_video_parallel] => wrote JSON => {out_json}", 1, verbosity)
+
+        if yolo_exporter is not None and frame_np is not None:
+            yolo_exporter.process_image(
+                frame_np,
+                result.final_masks,
+                roi_val=pipeline_context.roi_val,
+            )
+
+    try:
+        result_queue = mp.Queue(maxsize=max(ngpu * 2, 1))
+
+        for idx in range(ngpu):
+            queue = mp.Queue(maxsize=2)
+            task_queues.append(queue)
+            proc = mp.Process(
+                target=_video_worker_process,
+                args=(
+                    idx,
+                    queue,
+                    result_queue,
+                    config,
+                    pipeline_context,
+                    dryrun,
+                    verbosity,
+                    out_dir,
+                ),
+            )
+            proc.start()
+            workers.append(proc)
+
+        pending_results: dict[int, Tuple[str, FramePipelineResult]] = {}
+        pending_frames: dict[int, np.ndarray] = {}
+        next_to_emit = 1
+        processed = 0
+        total_frames = 0
+        done_workers: set[int] = set()
+
+        def handle_message(msg) -> None:
+            nonlocal processed, next_to_emit, worker_error
+            kind = msg[0]
+            if kind == "RESULT":
+                _, frame_idx, frame_id, result = msg
+                pending_results[frame_idx] = (frame_id, result)
+                while next_to_emit in pending_results:
+                    frame_id_local, result_local = pending_results.pop(next_to_emit)
+                    frame_np_local = pending_frames.pop(next_to_emit, None)
+                    emit_frame(frame_id_local, result_local, frame_np_local)
+                    processed += 1
+                    next_to_emit += 1
+            elif kind == "ERROR":
+                _, worker_idx, tb = msg
+                worker_error = RuntimeError(f"Worker {worker_idx} failed:\n{tb}")
+            elif kind == "DONE":
+                done_workers.add(msg[1])
+
+        def drain_nonblocking() -> None:
+            if result_queue is None:
+                return
+            while True:
+                try:
+                    msg = result_queue.get_nowait()
+                except Empty:
+                    break
+                handle_message(msg)
+
+        try:
+            for frame_idx, raw in enumerate(reader, start=1):
+                frame_np = np.frombuffer(raw, dtype=np.uint8).reshape(
+                    metadata.height, metadata.width, 3
+                )
+                frame_id = f"{video_stem}-{frame_idx:07d}"
+                log_print(
+                    f"\n[process_video_parallel] => Scheduling frame: {frame_id}",
+                    1,
+                    verbosity,
+                )
+
+                total_frames += 1
+                if yolo_exporter is not None:
+                    pending_frames[frame_idx] = frame_np
+
+                queue_idx = (frame_idx - 1) % len(task_queues)
+                task_queues[queue_idx].put((frame_idx, frame_id, frame_np))
+                drain_nonblocking()
+        finally:
+            for queue in task_queues:
+                queue.put(None)
+
+        while processed < total_frames and worker_error is None:
+            assert result_queue is not None
+            msg = result_queue.get()
+            handle_message(msg)
+
+        # Drain any remaining DONE/ERROR messages without blocking indefinitely
+        drain_nonblocking()
+
+        if worker_error is not None:
+            raise worker_error
+
+    finally:
+        for queue in task_queues:
+            try:
+                queue.close()
+            except Exception:
+                pass
+            try:
+                queue.join_thread()
+            except Exception:
+                pass
+
+        if result_queue is not None:
+            try:
+                result_queue.close()
+            except Exception:
+                pass
+            try:
+                result_queue.join_thread()
+            except Exception:
+                pass
+
+        reader.close()
+        image_writer.close()
+        video_writer.close()
+
+        for proc in workers:
+            proc.join()
+
+        for proc in workers:
+            if proc.exitcode not in (0, None) and worker_error is None:
+                worker_error = RuntimeError(
+                    f"Worker process exited with code {proc.exitcode}"
+                )
+
+    if worker_error is not None:
+        raise worker_error
 
 
 def _worker_process(
@@ -909,6 +1179,7 @@ def segment_video(
     dryrun: bool = False,
     image_output_root: Optional[str] = None,
     video_output_root: Optional[str] = None,
+    ngpu: int = 1,
 ) -> None:
     """Main entry point for processing a single video file."""
 
@@ -926,6 +1197,43 @@ def segment_video(
         raise RuntimeError("PyTorch is required for full runs. Install torch or use --dryrun.")
 
     device = "cpu" if dryrun else _resolve_device(None)
+
+    yolo_exporter = None
+    video_dir = os.path.dirname(video_path) or "."
+    video_stem = os.path.splitext(os.path.basename(video_path))[0]
+    if parsed_config.get("export_yolo_det"):
+        from modules.output.yolo import YoloDatasetExporter
+
+        yolo_exporter = YoloDatasetExporter(
+            parsed_config,
+            video_dir,
+            output_root=_compute_yolo_root(
+                video_dir,
+                input_root=video_dir,
+                image_output_root=image_output_root,
+                run_folder=video_stem,
+            ),
+            verbosity=vb,
+            log_print_func=log_print,
+        )
+
+    if ngpu > 1 and not dryrun:
+        log_print(
+            f"[segment_video] Launching parallel video processing with {ngpu} GPUs",
+            1,
+            vb,
+        )
+        process_video_parallel(
+            video_path,
+            parsed_config,
+            dryrun=dryrun,
+            verbosity=vb,
+            yolo_exporter=yolo_exporter,
+            image_output_root=image_output_root,
+            video_output_root=video_output_root,
+            ngpu=ngpu,
+        )
+        return
 
     print("[segment_video] Initializing SAM2...")
     segmenter_state = initialize_sam2(
@@ -952,25 +1260,6 @@ def segment_video(
             parsed_config.get("blip3", {}),
             dryrun=dryrun,
             device=device,
-            verbosity=vb,
-            log_print_func=log_print,
-        )
-
-    yolo_exporter = None
-    video_dir = os.path.dirname(video_path) or "."
-    video_stem = os.path.splitext(os.path.basename(video_path))[0]
-    if parsed_config.get("export_yolo_det"):
-        from modules.output.yolo import YoloDatasetExporter
-
-        yolo_exporter = YoloDatasetExporter(
-            parsed_config,
-            video_dir,
-            output_root=_compute_yolo_root(
-                video_dir,
-                input_root=video_dir,
-                image_output_root=image_output_root,
-                run_folder=video_stem,
-            ),
             verbosity=vb,
             log_print_func=log_print,
         )
