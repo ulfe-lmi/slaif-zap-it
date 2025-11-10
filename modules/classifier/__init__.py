@@ -1,5 +1,5 @@
 """Classification modules."""
 
-from .clip import run as run_clip
+from .clip import initialize as initialize_clip, run as run_clip
 
-__all__ = ["run_clip"]
+__all__ = ["initialize_clip", "run_clip"]
