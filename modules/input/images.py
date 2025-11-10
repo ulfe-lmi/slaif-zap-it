@@ -44,10 +44,27 @@ def apply_roi(
 ) -> tuple[np.ndarray, tuple[int, int, int, int]]:
     """Crop ``image_np`` to ``roi_value`` if provided."""
     height, width = image_np.shape[:2]
-    if not roi_value:
+    if roi_value is None:
         return image_np, (0, 0, width, height)
 
-    x, y, w, h = [int(v) for v in str(roi_value).split(",")]
+    roi_str = str(roi_value).strip()
+    if not roi_str or roi_str.lower() in {"false", "none"}:
+        return image_np, (0, 0, width, height)
+
+    parts = [part.strip() for part in roi_str.split(",")]
+    if len(parts) != 4:
+        raise ValueError(
+            "ROI must contain exactly four comma-separated integers; got:"
+            f" {roi_value!r}"
+        )
+
+    try:
+        x, y, w, h = [int(part) for part in parts]
+    except ValueError as exc:
+        raise ValueError(
+            "ROI must contain exactly four comma-separated integers; got:"
+            f" {roi_value!r}"
+        ) from exc
 
     # Clamp the coordinates so negative inputs do not wrap around the image by
     # computing the intersection between the ROI and the image bounds.
