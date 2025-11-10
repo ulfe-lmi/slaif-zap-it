@@ -7,6 +7,21 @@ We can also place other post-seg filtering logic here if desired.
 
 import numpy as np
 
+
+def _normalize_limit(value):
+    """Return ``None`` when a size limit should be ignored."""
+
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return None if value <= 0 else value
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"Invalid limit value: {value!r}") from None
+    return None if numeric <= 0 else numeric
+
+
 def filter_by_area_bbox(masks, post_maxsize, max_w, max_h, verbosity=1, log_print_func=None):
     """
     Given a list of 'masks' (each with 'segmentation' & 'area'),
@@ -20,9 +35,13 @@ def filter_by_area_bbox(masks, post_maxsize, max_w, max_h, verbosity=1, log_prin
     :param log_print_func: optional log printing function
     :return: a filtered list of the same dict objects
     """
+    area_limit = _normalize_limit(post_maxsize)
+    max_w_limit = _normalize_limit(max_w)
+    max_h_limit = _normalize_limit(max_h)
+
     kept = []
     for mm in masks:
-        if mm["area"] > post_maxsize:
+        if area_limit is not None and mm["area"] > area_limit:
             continue
         seg_bool = mm["segmentation"]
         rr, cc = np.where(seg_bool)
@@ -32,7 +51,10 @@ def filter_by_area_bbox(masks, post_maxsize, max_w, max_h, verbosity=1, log_prin
         x_min, x_max = cc.min(), cc.max()
         w_box = x_max - x_min + 1
         h_box = y_max - y_min + 1
-        if w_box <= max_w and h_box <= max_h:
+        if (
+            (max_w_limit is None or w_box <= max_w_limit)
+            and (max_h_limit is None or h_box <= max_h_limit)
+        ):
             kept.append(mm)
 
     if log_print_func and verbosity >= 1:
