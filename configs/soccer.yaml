@@ -21,7 +21,7 @@
 ################################################################################
 preprocessing:
   roi: "False"            # Use full 1280x720 frame
-  resize: 1.0             # 1.0 => single-pass at native scale
+  resize: 1.3             # 1.0 => single-pass at native scale
   debug: false            # Save ROI debug image
 
 ################################################################################
@@ -66,11 +66,11 @@ preprocessing:
 #   the segmentation results before any CLIP classification.
 ################################################################################
 mask_generator:
-  points_per_side: 128        # dense grid (~10 px at 1280w) to catch the small ball
-  pred_iou_thresh: 0.60       # looser to retain tiny masks
-  stability_score_thresh: 0.60
-  min_mask_region_area: 50    # players ~20x40 px, ball smaller => allow small regions
-  crop_n_layers: 3            # multi-scale helps with distant players/ball
+  points_per_side: 160        # dense grid (~10 px at 1280w) to catch the small ball
+  pred_iou_thresh: 0.55       # looser to retain tiny masks
+  stability_score_thresh: 0.55
+  min_mask_region_area: 20    # players ~20x40 px, ball smaller => allow small regions
+  crop_n_layers: 4            # multi-scale helps with distant players/ball
   crop_n_points_downscale_factor: 2
   crop_overlap_ratio: 0.5
   box_nms_thresh: 0.20        # less merging so nearby small masks survive
