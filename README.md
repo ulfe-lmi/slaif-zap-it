@@ -14,7 +14,7 @@ ZAP-IT is a high level computer‑vision pipeline built from foundational models
 2. Pick or create a YAML file in `configs/` describing your task (see [docs/CONFIG.md](docs/CONFIG.md)).
 3. Run the batch script over a folder of `.jpg` files:
    ```bash
-   python zap-it-batch.py --config configs/example.yaml --dir path/to/images --verbose full
+   python zap-it-batch.py --config configs/example.yaml --input-image-dir path/to/images --verbose full
    ```
    The output images and JSON metadata are written to `output/` inside the given folder.
 4. If the configuration contains an `export_yolo_det` section the batch script
@@ -22,11 +22,16 @@ ZAP-IT is a high level computer‑vision pipeline built from foundational models
    alongside the `output/` folder inside the given images directory.
    You can randomise the processing order of images with `--randomize`:
    ```bash
-   python zap-it-batch.py --config configs/example.yaml --dir path/to/images --randomize
+   python zap-it-batch.py --config configs/example.yaml --input-image-dir path/to/images --randomize
    ```
 5. To process images on multiple GPUs simultaneously provide `--ngpu` with the
    desired number, e.g. `--ngpu 2` will handle two images in parallel.
-6. Upon loading the YAML configuration the script prints a short summary of
+6. To segment a video instead of an image directory provide `--input-video`:
+   ```bash
+   python zap-it-batch.py --config configs/example.yaml --input-video path/to/video.mp4
+   ```
+   Video outputs are written under `output/<video-stem>/` alongside the source file.
+7. Upon loading the YAML configuration the script prints a short summary of
    which optional modules are enabled (CLIP, BLIP3, YOLO export, etc.).
 
 ## Repository Layout
