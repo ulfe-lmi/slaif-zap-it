@@ -44,7 +44,48 @@ def test_ffmpeg_writer_starts_and_writes(monkeypatch, tmp_path):
     writer.write(frame)
     writer.close()
 
-    assert fake_popen.last_cmd[0] == "ffmpeg"
+    assert fake_popen.last_cmd == [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-nostdin",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-s",
+        "2x2",
+        "-r",
+        "10.000000",
+        "-i",
+        "pipe:0",
+        "-an",
+        "-c:v",
+        "mjpeg",
+        "-q:v",
+        "3",
+        "-pix_fmt",
+        "yuvj422p",
+        "-vtag",
+        "MJPG",
+        "-r",
+        "10.000000",
+        "-fflags",
+        "+flush_packets",
+        "-flush_packets",
+        "1",
+        "-avioflags",
+        "direct",
+        "-muxdelay",
+        "0",
+        "-muxpreload",
+        "0",
+        "-reserve_index_space",
+        "1048576",
+        "-y",
+        str(tmp_path / "video.avi"),
+    ]
     assert len(writes) == 2
 
 
