@@ -399,6 +399,11 @@ clip:
 
 
 blip3:
+  model_name: Salesforce/xgen-mm-phi3-mini-instruct-r-v1
+  dtype: bfloat16            # <- add this line
+  use_fast_tokenizer: true
+  use_fast_processor: true
+
   goat:
     question: "Is there an animal in the image? Yes or no!"
     trueresult: "Yes"
@@ -452,16 +457,13 @@ visualization:
       renderer: alpha-overlay
       alpha: 0.75
   blip3:
-    - id: clip-panoptic
+    - id: blip3-panoptic
       renderer: panoptic
 
 images:
-  sam2-goat-alpha: goats2-sam2
-  clip-goat-alpha: goats2-clip
-
-video:
-  clip-panoptic:
-    filename: goats2-clip.avi
+  sam2-goat-alpha: goats-sam2
+  clip-goat-alpha: goats-clip
+  blip3-panoptic: goats-blip3
 
 
 # Export yolo detections into dataset
