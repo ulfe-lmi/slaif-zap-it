@@ -19,7 +19,7 @@ import multiprocessing as mp
 import os
 
 from src.config import load_config
-from src import segment_images
+from src import segment_images, segment_video
 
 
 if __name__ == "__main__":
@@ -28,7 +28,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="ZAP-IT Zero-shot Anything Pipeline for Image Tasks."
     )
-    parser.add_argument("--dir", required=True, help="Directory with .jpg images")
+    input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument(
+        "--input-image-dir", help="Directory with .jpg images to segment"
+    )
+    input_group.add_argument(
+        "--input-video", help="Video file to segment frame-by-frame"
+    )
     parser.add_argument("--config", required=True, help="Path to config.yaml")
     parser.add_argument("--recursive", action="store_true", help="Process subdirectories.")
     parser.add_argument(
@@ -49,22 +55,42 @@ if __name__ == "__main__":
     if args.ngpu > 1 and not args.dryrun:
         mp.set_start_method("spawn", force=True)
 
-    if not os.path.isdir(args.dir):
-        print(f"Error: {args.dir} is not a valid directory.", file=sys.stderr)
+    if args.input_image_dir and not os.path.isdir(args.input_image_dir):
+        print(
+            f"Error: {args.input_image_dir} is not a valid directory.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if args.input_video and not os.path.isfile(args.input_video):
+        print(f"Error: {args.input_video} is not a valid file.", file=sys.stderr)
         sys.exit(1)
 
     print("Starting script...")
 
     config_dict, _ = load_config(args.config, verbosity_level=args.verbose)
 
-    segment_images(
-        base_dir=args.dir,
-        recursive=args.recursive,
-        parsed_config=config_dict,
-        verbosity_level=args.verbose,
-        randomize=args.randomize,
-        ngpu=args.ngpu,
-        dryrun=args.dryrun,
-    )
+    if args.input_image_dir:
+        segment_images(
+            base_dir=args.input_image_dir,
+            recursive=args.recursive,
+            parsed_config=config_dict,
+            verbosity_level=args.verbose,
+            randomize=args.randomize,
+            ngpu=args.ngpu,
+            dryrun=args.dryrun,
+        )
+    else:
+        if args.recursive or args.randomize:
+            print(
+                "Warning: --recursive/--randomize are ignored for video inputs.",
+                file=sys.stderr,
+            )
+        segment_video(
+            args.input_video,
+            parsed_config=config_dict,
+            verbosity_level=args.verbose,
+            dryrun=args.dryrun,
+        )
 
     print("Done.")
