@@ -44,6 +44,14 @@ if __name__ == "__main__":
         help="Verbosity level.",
     )
     parser.add_argument(
+        "--output-image-dir",
+        help="Root directory where image outputs should be written.",
+    )
+    parser.add_argument(
+        "--output-video-dir",
+        help="Root directory where video outputs should be written.",
+    )
+    parser.add_argument(
         "--randomize", action="store_true", help="Process images in random order"
     )
     parser.add_argument("--ngpu", type=int, default=1, help="Number of GPUs to use in parallel")
@@ -70,6 +78,15 @@ if __name__ == "__main__":
 
     config_dict, _ = load_config(args.config, verbosity_level=args.verbose)
 
+    if config_dict.get("images") and not args.output_image_dir:
+        parser.error(
+            "The loaded configuration enables image outputs; please provide --output-image-dir."
+        )
+    if config_dict.get("video") and not args.output_video_dir:
+        parser.error(
+            "The loaded configuration enables video outputs; please provide --output-video-dir."
+        )
+
     if args.input_image_dir:
         segment_images(
             base_dir=args.input_image_dir,
@@ -79,6 +96,8 @@ if __name__ == "__main__":
             randomize=args.randomize,
             ngpu=args.ngpu,
             dryrun=args.dryrun,
+            image_output_root=args.output_image_dir,
+            video_output_root=args.output_video_dir,
         )
     else:
         if args.recursive or args.randomize:
@@ -91,6 +110,8 @@ if __name__ == "__main__":
             parsed_config=config_dict,
             verbosity_level=args.verbose,
             dryrun=args.dryrun,
+            image_output_root=args.output_image_dir,
+            video_output_root=args.output_video_dir,
         )
 
     print("Done.")

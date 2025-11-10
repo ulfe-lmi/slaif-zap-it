@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from os import fspath
 import subprocess
 import threading
 from typing import Dict, Mapping, MutableMapping
@@ -182,7 +183,13 @@ def build_video_writer(
     """Factory that returns an active MJPEG writer or a no-op fallback."""
     if not config:
         return NullVideoWriter()
-    return VideoWriterManager(config, base_dir, default_fps=default_fps, quality=quality, verbosity=verbosity)
+    return VideoWriterManager(
+        config,
+        fspath(base_dir),
+        default_fps=default_fps,
+        quality=quality,
+        verbosity=verbosity,
+    )
 
 
 __all__ = ["VideoWriterManager", "NullVideoWriter", "build_video_writer"]

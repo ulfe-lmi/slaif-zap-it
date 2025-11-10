@@ -8,7 +8,7 @@ import os
 import random
 import shutil
 from dataclasses import dataclass
-from typing import Iterable, List, Mapping, Optional, Sequence
+from typing import Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 from PIL import Image
@@ -96,6 +96,87 @@ def prepare_dirs(base_dir: str, verbosity: int = 1) -> str:
     """Backward compatible wrapper that prepares ``base_dir/output``."""
 
     return prepare_output_dir(base_dir, verbosity=verbosity)
+
+
+def _derive_run_subdir(base_dir: str, input_root: str) -> str:
+    """Return the relative subdirectory for ``base_dir`` under ``input_root``."""
+
+    rel = os.path.relpath(base_dir, input_root)
+    root_name = os.path.basename(os.path.normpath(input_root))
+    if root_name in ("", os.sep):
+        root_name = ""
+    if rel in (".", os.curdir):
+        return root_name or "run"
+    if root_name:
+        return os.path.join(root_name, rel)
+    return rel
+
+
+def _prepare_output_paths(
+    base_dir: str,
+    *,
+    input_root: Optional[str],
+    image_output_root: Optional[str],
+    video_output_root: Optional[str],
+    verbosity: int,
+    cleanup: bool,
+) -> Tuple[str, str, str]:
+    """Return the output directory along with image/video roots for ``base_dir``."""
+
+    abs_base = os.path.abspath(base_dir)
+    abs_root = os.path.abspath(input_root or base_dir)
+    rel_subdir = _derive_run_subdir(abs_base, abs_root)
+
+    image_dir = os.path.join(image_output_root, rel_subdir) if image_output_root else None
+    video_dir = os.path.join(video_output_root, rel_subdir) if video_output_root else None
+
+    if image_dir or video_dir:
+        out_dir = image_dir or video_dir  # Prefer image outputs when available
+        abs_out_dir = os.path.abspath(out_dir)
+        try:
+            common = os.path.commonpath([abs_base, abs_out_dir])
+        except ValueError:
+            common = ""
+        if cleanup and common == abs_base and os.path.exists(abs_out_dir):
+            log_print(f"[prepare_dirs] Removing old output: {abs_out_dir}", 2, verbosity)
+            shutil.rmtree(abs_out_dir)
+        os.makedirs(abs_out_dir, exist_ok=True)
+        if image_dir:
+            os.makedirs(image_dir, exist_ok=True)
+        else:
+            image_dir = out_dir
+        if video_dir:
+            os.makedirs(video_dir, exist_ok=True)
+        else:
+            video_dir = out_dir
+    else:
+        if cleanup:
+            out_dir = prepare_dirs(abs_base, verbosity)
+        else:
+            out_dir = os.path.join(abs_base, "output")
+            os.makedirs(out_dir, exist_ok=True)
+        image_dir = out_dir
+        video_dir = out_dir
+
+    return out_dir, image_dir, video_dir
+
+
+def _compute_yolo_root(
+    base_dir: str,
+    *,
+    input_root: Optional[str],
+    image_output_root: Optional[str],
+    run_folder: Optional[str] = None,
+) -> str:
+    """Return the base directory where YOLO exports should be placed."""
+
+    abs_base = os.path.abspath(base_dir)
+    abs_root = os.path.abspath(input_root or base_dir)
+    default_folder = _derive_run_subdir(abs_base, abs_root)
+    if image_output_root:
+        folder = run_folder or default_folder
+        return os.path.join(image_output_root, folder, "yolo")
+    return os.path.join(base_dir, "yolo")
 
 
 def _build_pipeline_context(config: dict) -> PipelineContext:
@@ -386,18 +467,24 @@ def process_folder(
     randomize: bool = False,
     yolo_exporter=None,
     images: Optional[Iterable[str]] = None,
-    out_dir: Optional[str] = None,
-    skip_prepare: bool = False,
     device=None,
     clip_state: Optional[dict] = None,
     blip3_state: Optional[dict] = None,
+    image_output_root: Optional[str] = None,
+    video_output_root: Optional[str] = None,
+    input_root: Optional[str] = None,
+    cleanup_output: bool = True,
 ) -> None:
     """Run the batch pipeline for images located in ``base_dir``."""
 
-    if out_dir is None:
-        out_dir = prepare_dirs(base_dir, verbosity)
-    elif not skip_prepare:
-        out_dir = prepare_dirs(base_dir, verbosity)
+    out_dir, image_dir, video_dir = _prepare_output_paths(
+        base_dir,
+        input_root=input_root,
+        image_output_root=image_output_root,
+        video_output_root=video_output_root,
+        verbosity=verbosity,
+        cleanup=cleanup_output,
+    )
 
     if images is None:
         images = list_images(base_dir)
@@ -411,8 +498,8 @@ def process_folder(
 
     pipeline_context = _build_pipeline_context(config)
 
-    image_writer = build_image_writer(config.get("images"), out_dir, verbosity=verbosity)
-    video_writer = build_video_writer(config.get("video"), out_dir, verbosity=verbosity)
+    image_writer = build_image_writer(config.get("images"), image_dir, verbosity=verbosity)
+    video_writer = build_video_writer(config.get("video"), video_dir, verbosity=verbosity)
 
     try:
         for fname in images:
@@ -462,22 +549,50 @@ def process_video(
     device=None,
     clip_state: Optional[dict] = None,
     blip3_state: Optional[dict] = None,
+    image_output_root: Optional[str] = None,
+    video_output_root: Optional[str] = None,
 ) -> None:
     """Run the batch pipeline over frames extracted from a video file."""
 
     video_dir = os.path.dirname(video_path) or "."
     video_stem = os.path.splitext(os.path.basename(video_path))[0]
-    out_dir = prepare_output_dir(video_dir, subdir=video_stem, verbosity=verbosity)
+    image_dir = os.path.join(image_output_root, video_stem) if image_output_root else None
+    video_dir_out = os.path.join(video_output_root, video_stem) if video_output_root else None
+
+    if image_dir or video_dir_out:
+        out_dir = image_dir or video_dir_out
+        abs_out_dir = os.path.abspath(out_dir)
+        abs_input = os.path.abspath(video_dir)
+        try:
+            common = os.path.commonpath([abs_input, abs_out_dir])
+        except ValueError:
+            common = ""
+        if common == abs_input and os.path.exists(abs_out_dir):
+            log_print(f"[prepare_dirs] Removing old output: {abs_out_dir}", 2, verbosity)
+            shutil.rmtree(abs_out_dir)
+        os.makedirs(abs_out_dir, exist_ok=True)
+        if image_dir:
+            os.makedirs(image_dir, exist_ok=True)
+        else:
+            image_dir = out_dir
+        if video_dir_out:
+            os.makedirs(video_dir_out, exist_ok=True)
+        else:
+            video_dir_out = out_dir
+    else:
+        out_dir = prepare_output_dir(video_dir, subdir=video_stem, verbosity=verbosity)
+        image_dir = out_dir
+        video_dir_out = out_dir
 
     pipeline_context = _build_pipeline_context(config)
 
     metadata = probe_video(video_path)
     reader = FFmpegVideoReader(video_path, metadata)
 
-    image_writer = build_image_writer(config.get("images"), out_dir, verbosity=verbosity)
+    image_writer = build_image_writer(config.get("images"), image_dir, verbosity=verbosity)
     video_writer = build_video_writer(
         config.get("video"),
-        out_dir,
+        video_dir_out,
         verbosity=verbosity,
         default_fps=metadata.fps,
     )
@@ -526,12 +641,16 @@ def _worker_process(
     base_dir: str,
     config: dict,
     verbosity: int,
-    out_dir: str,
     dryrun: bool = False,
+    image_output_root: Optional[str] = None,
+    video_output_root: Optional[str] = None,
+    input_root: Optional[str] = None,
 ) -> None:
     """Worker helper used by :func:`process_folder_parallel`."""
 
     mg_cfg = config["mask_generator"]
+
+    effective_input_root = input_root or base_dir
 
     if dryrun or torch is None:
         device = "cpu"
@@ -557,7 +676,15 @@ def _worker_process(
         from modules.output.yolo import YoloDatasetExporter
 
         yolo_exporter = YoloDatasetExporter(
-            config, base_dir, verbosity=verbosity, log_print_func=log_print
+            config,
+            base_dir,
+            output_root=_compute_yolo_root(
+                base_dir,
+                input_root=effective_input_root,
+                image_output_root=image_output_root,
+            ),
+            verbosity=verbosity,
+            log_print_func=log_print,
         )
 
     clip_state = None
@@ -589,11 +716,13 @@ def _worker_process(
         randomize=False,
         yolo_exporter=yolo_exporter,
         images=images,
-        out_dir=out_dir,
-        skip_prepare=True,
         device=device,
         clip_state=clip_state,
         blip3_state=blip3_state,
+        image_output_root=image_output_root,
+        video_output_root=video_output_root,
+        input_root=effective_input_root,
+        cleanup_output=False,
     )
 
 
@@ -605,10 +734,19 @@ def process_folder_parallel(
     randomize: bool = False,
     recursive: bool = False,
     dryrun: bool = False,
+    image_output_root: Optional[str] = None,
+    video_output_root: Optional[str] = None,
 ) -> None:
     """Process ``base_dir`` using ``ngpu`` worker processes."""
 
-    out_dir = prepare_dirs(base_dir, verbosity)
+    _prepare_output_paths(
+        base_dir,
+        input_root=base_dir,
+        image_output_root=image_output_root,
+        video_output_root=video_output_root,
+        verbosity=verbosity,
+        cleanup=True,
+    )
 
     images = list_images(base_dir)
     if randomize:
@@ -625,7 +763,13 @@ def process_folder_parallel(
             continue
         p = mp.Process(
             target=_worker_process,
-            args=(idx, subset, base_dir, config, verbosity, out_dir, dryrun),
+            args=(idx, subset, base_dir, config, verbosity),
+            kwargs={
+                "dryrun": dryrun,
+                "image_output_root": image_output_root,
+                "video_output_root": video_output_root,
+                "input_root": base_dir,
+            },
         )
         p.start()
         procs.append(p)
@@ -642,6 +786,8 @@ def segment_images(
     randomize: bool = False,
     ngpu: int = 1,
     dryrun: bool = False,
+    image_output_root: Optional[str] = None,
+    video_output_root: Optional[str] = None,
 ) -> None:
     """Main entry point used by ``zap-it-batch.py``."""
 
@@ -666,7 +812,15 @@ def segment_images(
             from modules.output.yolo import YoloDatasetExporter
 
             yolo_exporter = YoloDatasetExporter(
-                parsed_config, base_dir, verbosity=vb, log_print_func=log_print
+                parsed_config,
+                base_dir,
+                output_root=_compute_yolo_root(
+                    base_dir,
+                    input_root=base_dir,
+                    image_output_root=image_output_root,
+                ),
+                verbosity=vb,
+                log_print_func=log_print,
             )
 
         device = "cpu" if dryrun else _resolve_device(None)
@@ -713,6 +867,9 @@ def segment_images(
                     device=device,
                     clip_state=clip_state,
                     blip3_state=blip3_state,
+                    image_output_root=image_output_root,
+                    video_output_root=video_output_root,
+                    input_root=base_dir,
                 )
         else:
             process_folder(
@@ -726,6 +883,9 @@ def segment_images(
                 device=device,
                 clip_state=clip_state,
                 blip3_state=blip3_state,
+                image_output_root=image_output_root,
+                video_output_root=video_output_root,
+                input_root=base_dir,
             )
     else:
         process_folder_parallel(
@@ -736,6 +896,8 @@ def segment_images(
             randomize=randomize,
             recursive=recursive,
             dryrun=dryrun,
+            image_output_root=image_output_root,
+            video_output_root=video_output_root,
         )
 
 
@@ -745,6 +907,8 @@ def segment_video(
     parsed_config: Optional[dict] = None,
     verbosity_level: str = "some",
     dryrun: bool = False,
+    image_output_root: Optional[str] = None,
+    video_output_root: Optional[str] = None,
 ) -> None:
     """Main entry point for processing a single video file."""
 
@@ -793,13 +957,20 @@ def segment_video(
         )
 
     yolo_exporter = None
+    video_dir = os.path.dirname(video_path) or "."
+    video_stem = os.path.splitext(os.path.basename(video_path))[0]
     if parsed_config.get("export_yolo_det"):
         from modules.output.yolo import YoloDatasetExporter
 
-        base_dir = os.path.dirname(video_path) or "."
         yolo_exporter = YoloDatasetExporter(
             parsed_config,
-            base_dir,
+            video_dir,
+            output_root=_compute_yolo_root(
+                video_dir,
+                input_root=video_dir,
+                image_output_root=image_output_root,
+                run_folder=video_stem,
+            ),
             verbosity=vb,
             log_print_func=log_print,
         )
@@ -814,4 +985,6 @@ def segment_video(
         device=device,
         clip_state=clip_state,
         blip3_state=blip3_state,
+        image_output_root=image_output_root,
+        video_output_root=video_output_root,
     )

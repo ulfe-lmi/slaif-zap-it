@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from os import fspath
 from typing import Dict, Mapping, MutableMapping
 
 import numpy as np
@@ -63,7 +64,7 @@ def build_image_writer(config: Mapping[str, str] | None, base_dir: str, *, verbo
     """Factory that returns a concrete ``ImageSequenceWriter`` (or a no-op surrogate)."""
     if not config:
         return NullImageWriter()
-    return ImageSequenceWriter(config, base_dir, verbosity=verbosity)
+    return ImageSequenceWriter(config, fspath(base_dir), verbosity=verbosity)
 
 
 __all__ = ["ImageSequenceWriter", "NullImageWriter", "build_image_writer"]
