@@ -30,7 +30,7 @@ from modules.output.video import build_video_writer
 from modules.segmenter import initialize_sam2, run_sam2
 from modules.verifier import initialize_blip3, run_blip3
 from modules.visualizer import generate_visualizations
-from zap_it_postseg_processing import filter_by_area_bbox
+from .postprocessing import filter_by_area_bbox
 
 
 def log_print(msg: str, needed_level: int, current_level: int) -> None:
