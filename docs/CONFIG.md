@@ -2,6 +2,8 @@
 
 Each run of ZAP-IT is driven by a YAML configuration file. The examples in `configs/` cover typical use cases. A configuration is composed of several sections:
 
+The batch driver accepts either an image directory (`--input-image-dir`) or a video file (`--input-video`). Video runs reuse the exact same configuration knobs; the rendered frames and JSON manifests are written under `output/<video-stem>/` next to the source file.
+
 ## preprocessing
 Defines optional region-of-interest cropping and resizing. Example:
 ```yaml
