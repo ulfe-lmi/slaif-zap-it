@@ -5,9 +5,23 @@ import os
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
-import torch
 from PIL import Image
-from transformers import CLIPModel, CLIPProcessor
+
+
+class _DryRunClipFilter:
+    """Simulates CLIP behaviour by emitting deterministic labels."""
+
+    def __init__(self, *, verbosity=1, log_print_func=None):
+        self.verbosity = verbosity
+        self.log_print = log_print_func if log_print_func else (lambda *a, **k: None)
+
+    def filter_masks(self, masks, _image_np, _out_dir, _fname_stem):
+        for idx, mask in enumerate(masks, start=1):
+            label = f"dryrun region {idx}"
+            mask["clip_label"] = label
+            mask["clip_score"] = 1.0
+        self.log_print(f"[_DryRunClipFilter] assigned {len(masks)} dry-run labels", 2, self.verbosity)
+        return masks
 
 
 class _ClipFilter:
@@ -45,6 +59,12 @@ class _ClipFilter:
                 self.all_prompts.append(prompt)
                 self.class_idx.append(cname)
 
+        # Local imports avoid touching transformers/torch when running in dry-run mode.
+        import torch
+        from transformers import CLIPModel, CLIPProcessor
+
+        self._torch = torch
+
         self.log_print("[_ClipFilter] loading clip-vit-base-patch32", 1, self.verbosity)
         self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
         self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
@@ -60,6 +80,8 @@ class _ClipFilter:
 
     def classify_single(self, patch: np.ndarray, mask_idx: int):
         import time
+
+        torch = self._torch
         t0 = time.time()
 
         if self.text_embeds is None or self.text_embeds.numel() == 0:
@@ -84,6 +106,7 @@ class _ClipFilter:
         return (best_label, best_score, best_prompt)
 
     def filter_masks(self, masks, image_np, out_dir, fname_stem):
+        torch = self._torch
         if self.text_embeds is None or self.text_embeds.numel() == 0 or not masks:
             return masks
 
@@ -107,7 +130,7 @@ class _ClipFilter:
             m["clip_label"] = best_lbl
             m["clip_score"] = best_sc
 
-            if self.debug:
+            if self.debug and best_prompt is not None:
                 safe_prompt = best_prompt.replace(' ', '_').replace(',', '_')
                 patch_file = f"{fname_stem}_patch{i}_{safe_prompt}.jpg"
                 patch_path = os.path.join(out_dir, patch_file)
@@ -115,6 +138,25 @@ class _ClipFilter:
                 self.log_print(f"[_ClipFilter debug] => wrote debug patch: {patch_file}", 2, self.verbosity)
 
         return masks
+
+
+def initialize(config: Dict[str, Any],
+               *,
+               dryrun: bool = False,
+               device="cuda",
+               verbosity: int = 1,
+               log_print_func=None) -> Dict[str, Any]:
+    """Create a CLIP filter or a dry-run stub."""
+
+    log = log_print_func or (lambda *a, **k: None)
+
+    if dryrun:
+        log("[classifier.clip] Initializing dry-run CLIP filter", 1, verbosity)
+        return {"clip_filter": _DryRunClipFilter(verbosity=verbosity, log_print_func=log)}
+
+    log("[classifier.clip] Initializing CLIP filter", 1, verbosity)
+    clip_filter = _ClipFilter(config, device=device, verbosity=verbosity, log_print_func=log)
+    return {"clip_filter": clip_filter}
 
 
 def run(state: Dict[str, Any] | None,
@@ -128,12 +170,15 @@ def run(state: Dict[str, Any] | None,
     if state is None:
         state = {}
 
-    clip_filter: _ClipFilter | None = state.get("clip_filter")
+    dryrun_mode = bool(params.get("dryrun", False))
+
+    clip_filter = state.get("clip_filter")
     if clip_filter is None:
         clip_cfg = params.get("config", {})
         device = params.get("device", "cuda")
-        clip_filter = _ClipFilter(clip_cfg, device=device, verbosity=verbosity, log_print_func=log)
-        state["clip_filter"] = clip_filter
+        init_state = initialize(clip_cfg, dryrun=dryrun_mode, device=device, verbosity=verbosity, log_print_func=log)
+        state.update(init_state)
+        clip_filter = state.get("clip_filter")
 
     image_np = images[0] if isinstance(images, (list, tuple)) else images
 
@@ -151,4 +196,4 @@ def run(state: Dict[str, Any] | None,
     return state, processed_masks, meta
 
 
-__all__ = ["run"]
+__all__ = ["initialize", "run"]
