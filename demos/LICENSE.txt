@@ -1,0 +1,8 @@
+All images have been acquired via Open Images Dataset V7 (https://storage.googleapis.com/openimages/web/index.html) and their copyright status is as follows:
+
+01-peppers.jpg License: https://creativecommons.org/licenses/by/2.0/ Author: Armando Aguayo Rivera
+02-peppers.jpg License: https://creativecommons.org/licenses/by/2.0/ Author: Sparkle Motion
+03-peppers.jpg License: https://creativecommons.org/licenses/by/2.0/ Author: Infrogmation of New Orleans
+04-harbor.jpg License: https://creativecommons.org/licenses/by/2.0/ Author: Dennis G. Jarvis
+05-harbor.jpg License: https://creativecommons.org/licenses/by/2.0/ Author: Jim Linwood
+06-harbor.jpg License: https://creativecommons.org/licenses/by/2.0/ Author: Marilyn Peddle
