@@ -46,6 +46,7 @@ class YoloDatasetExporter:
         base_dir: str,
         verbosity: int = 1,
         log_print_func: Callable | None = None,
+        output_root: str | None = None,
     ) -> None:
         yolo_cfg = config.get("export_yolo_det")
         if not yolo_cfg:
@@ -69,7 +70,10 @@ class YoloDatasetExporter:
         self.train_split = float(yolo_cfg.get("trainsplit", 80)) / 100.0
         self.sample_roi = bool(yolo_cfg.get("sample_roi", False))
 
-        self.results_root = os.path.join(base_dir, "yolo")
+        if output_root:
+            self.results_root = os.path.abspath(output_root)
+        else:
+            self.results_root = os.path.join(base_dir, "yolo")
         for sub in ["images/train", "images/val", "labels/train", "labels/val"]:
             os.makedirs(os.path.join(self.results_root, sub), exist_ok=True)
 
