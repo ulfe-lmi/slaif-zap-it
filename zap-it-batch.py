@@ -19,7 +19,7 @@ import multiprocessing as mp
 import os
 
 from src.config import load_config
-from src.pipeline import segment_images
+from src import segment_images
 
 
 if __name__ == "__main__":

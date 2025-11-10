@@ -29,6 +29,7 @@ from datetime import datetime
 from modules.segmenter import run_sam2
 from modules.classifier import run_clip
 from modules.verifier import run_blip3
+from src.postprocessing import filter_by_area_bbox
 
 
 # -----------------------------------------------------------------------------
@@ -153,7 +154,6 @@ def run_export_over_folder(
     base_dir: str, config: dict, randomize: bool = False, verbosity: int = 1
 ) -> None:
     """Convenience wrapper to build a dataset directly from a folder of images."""
-    from zap_it_postseg_processing import filter_by_area_bbox
     from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
     from sam2.build_sam import build_sam2_hf
     import torch
