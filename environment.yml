@@ -1,19 +1,29 @@
 name: zap-it
 channels:
   - pytorch
+  - nvidia
   - conda-forge
 dependencies:
   - python=3.10
   - numpy
   - pillow
-  - pytorch
-  - torchvision
-  - torchaudio
+  - pytorch=2.3.*
+  - torchvision=0.18.*
+  - torchaudio=2.3.*
+  - pytorch-cuda=12.1
   - pip
+  - cmake
+  - ninja
+  - git
   - pip:
-      - opencv-python-headless
-      - transformers
-      - matplotlib
+      - accelerate
       - detectron2
+      - huggingface-hub
+      - matplotlib
+      - opencv-python-headless
+      - open-clip-torch
       - pyyaml
+      - safetensors
+      - sentencepiece
+      - transformers>=4.41
       - git+https://github.com/facebookresearch/SAM2.git
