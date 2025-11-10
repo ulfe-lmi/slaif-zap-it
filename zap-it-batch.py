@@ -5,7 +5,7 @@ zap-it-batch.py
 Main orchestrator script for the ZAP-IT Zero-shot Anything Pipeline for Image Tasks.
 
 Steps in summary:
- 1) Load config from zap_it_config.py
+ 1) Load config from src.config
  2) Build SAM2 mask generator
  3) For each image:
     a) ROI or entire => optional resize => produce partial masks
@@ -18,7 +18,7 @@ import argparse
 import multiprocessing as mp
 import os
 
-from zap_it_config import load_config
+from src.config import load_config
 from src.pipeline import segment_images
 
 
