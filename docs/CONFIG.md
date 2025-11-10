@@ -67,7 +67,9 @@ blip3:
 ```
 
 ## geometry (optional)
-Canny and Hough settings for line detection if geometry analysis is enabled.
+Canny and Hough settings for line detection if geometry analysis is enabled. The
+implementation lives in `modules.geometry`, which can be imported by custom
+pipelines that need direct access to the geometry helpers.
 
 ## visualization
 Declares which mask stages should be rendered by the visualizer. Each stage (`sam2`, `clip`, `blip3`) accepts a list of
