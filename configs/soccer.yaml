@@ -137,6 +137,11 @@ clip:
 # • Patches that fail verification are automatically re-labeled as "negative".
 ###############################################################################
 blip3:
+  model_name: Salesforce/xgen-mm-phi3-mini-instruct-r-v1
+  dtype: bfloat16
+  use_fast_tokenizer: true
+  use_fast_processor: true
+
   soccer_player:
     question: "Is there a soccer player (human athlete) in this crop? Yes or no!"
     trueresult: "Yes"
