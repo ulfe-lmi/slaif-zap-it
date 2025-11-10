@@ -175,18 +175,27 @@ blip3:
 #
 # "labels": e.g. "goat,sign"
 #   The final set of clip_labels we actually want to keep. If a mask's best
-#   label isn't in this list, we discard it. 
+#   label isn't in this list, we discard it.
 #
 # "alpha": how transparent the color overlay is when rendering "annotated" images.
 #   0 => fully transparent, 1 => fully opaque.
-#
-# "composite-sam2": if true, build a "pre" 2x2 summary image from all SAM2 masks
-# "composite-clip": if true, build a "post" 2x2 summary image from final kept masks
-# "final": if true, also build a detectron2-based "panoptic" overlay -final.jpg
 ################################################################################
 visualization:
   labels: "soccer_player,soccer_ball"
   alpha: 0.75
-  composite-sam2: true
-  composite-clip: true
-  final: true
+  sam2:
+    - id: sam2-soccer-alpha
+      renderer: alpha-overlay
+      alpha: 0.75
+  clip:
+    - id: clip-soccer-alpha
+      renderer: alpha-overlay
+      alpha: 0.75
+  blip3:
+    - id: blip3-panoptic
+      renderer: panoptic
+
+images:
+  sam2-soccer-alpha: soccer-sam2
+  clip-soccer-alpha: soccer-clip
+  blip3-panoptic: soccer-panoptic
