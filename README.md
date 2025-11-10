@@ -27,14 +27,15 @@ ZAP-IT is a high level computer‑vision pipeline built from foundational models
 5. To process images on multiple GPUs simultaneously provide `--ngpu` with the
    desired number, e.g. `--ngpu 2` will handle two images in parallel.
 6. Upon loading the YAML configuration the script prints a short summary of
-   which optional modules are enabled (CLIP, BLIP3, geometry, YOLO export, etc.).
+   which optional modules are enabled (CLIP, BLIP3, YOLO export, etc.).
 
 ## Repository Layout
 
 - `zap-it-batch.py` – orchestrates the full pipeline.
 - `zap_it_config.py` – loads and fixes the YAML configuration.
-- `modules/input/` – helpers for loading and pre-processing image inputs.
-- `modules/output/` – visualization helpers and YOLO dataset exporter.
+- `modules/input/` – helpers for loading and pre-processing image/video inputs.
+- `modules/output/` – image/video writers and YOLO dataset exporter.
+- `modules/visualizer/` – rendering utilities that turn masks into RGB overlays.
 - `modules/segmenter/` – SAM2 segmentation implementation via the unified module API.
 - `modules/classifier/` – CLIP-based zero-shot classification module.
 - `modules/verifier/` – BLIP-3 verification module.

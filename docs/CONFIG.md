@@ -70,6 +70,45 @@ blip3:
 Canny and Hough settings for line detection if geometry analysis is enabled.
 
 ## visualization
-Settings for building composite images and panoptic overlays.
+Declares which mask stages should be rendered by the visualizer. Each stage (`sam2`, `clip`, `blip3`) accepts a list of
+entries with an `id`, a `renderer`, and optional renderer arguments. The resulting RGB arrays are keyed by `id` and can
+be consumed by the `images` and `video` sections described below.
 
-Use these sections as building blocks to express your own vision task. See the existing YAML files for concrete values.
+```yaml
+visualization:
+  labels: ["goat", "fencepost"]        # whitelist for the final mask filter
+  alpha: 0.75                           # default alpha for alpha-overlay renderer
+  sam2:
+    - id: sam2-goat-alpha               # visualization identifier
+      renderer: alpha-overlay           # available: alpha-overlay, panoptic
+      alpha: 0.75                       # overrides the default alpha for this entry
+  clip:
+    - id: clip-goat-alpha
+      renderer: alpha-overlay
+  blip3:
+    - id: clip-panoptic
+      renderer: panoptic
+```
+
+### images
+Associates visualization IDs with output directories. Each frame is written as a seven-digit JPEG sequence
+(`0000001.jpg`, `0000002.jpg`, …).
+
+```yaml
+images:
+  sam2-goat-alpha: goats-sam2
+  clip-goat-alpha: goats-clip
+```
+
+### video
+Associates visualization IDs with MJPEG AVI files. Provide a filename or a mapping with additional parameters such as
+`fps`.
+
+```yaml
+video:
+  clip-panoptic:
+    filename: goats-clip.avi
+    fps: 24
+```
+
+If a section is omitted the corresponding writer becomes a no-op.

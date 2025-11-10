@@ -430,11 +430,27 @@ blip3:
 # "final": if true, also build a detectron2-based "panoptic" overlay -final.jpg
 ################################################################################
 visualization:
-  labels: "goat"
+  labels: ["goat"]
   alpha: 0.75
-  composite-sam2: false
-  composite-clip: false
-  final: true
+  sam2:
+    - id: sam2-goat-alpha
+      renderer: alpha-overlay
+      alpha: 0.75
+  clip:
+    - id: clip-goat-alpha
+      renderer: alpha-overlay
+      alpha: 0.75
+  blip3:
+    - id: clip-panoptic
+      renderer: panoptic
+
+images:
+  sam2-goat-alpha: goats-sam2
+  clip-goat-alpha: goats-clip
+
+video:
+  clip-panoptic:
+    filename: goats-clip.avi
 
 
 # Export yolo detections into dataset
