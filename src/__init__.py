@@ -9,6 +9,7 @@ from .batch import (
     process_folder_parallel,
     segment_images,
 )
+from .postprocessing import filter_by_area_bbox
 
 __all__ = [
     "log_print",
@@ -18,4 +19,5 @@ __all__ = [
     "_worker_process",
     "process_folder_parallel",
     "segment_images",
+    "filter_by_area_bbox",
 ]
