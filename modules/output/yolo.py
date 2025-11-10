@@ -327,7 +327,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    from zap_it_config import load_config
+    from src.config import load_config
 
     config, vb = load_config(args.config, verbosity_level=args.verbose)
     run_export_over_folder(args.dir, config, randomize=args.randomize, verbosity=vb)

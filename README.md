@@ -32,7 +32,7 @@ ZAP-IT is a high level computer‑vision pipeline built from foundational models
 ## Repository Layout
 
 - `zap-it-batch.py` – orchestrates the full pipeline.
-- `zap_it_config.py` – loads and fixes the YAML configuration.
+- `src/config.py` – loads and fixes the YAML configuration.
 - `modules/input/` – helpers for loading and pre-processing image/video inputs.
 - `modules/output/` – image/video writers and YOLO dataset exporter.
 - `modules/visualizer.py` – rendering utilities that turn masks into RGB overlays.
