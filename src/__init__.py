@@ -42,7 +42,7 @@ from .batch import (
     segment_images,
     segment_video,
 )
-from .postprocessing import filter_by_area_bbox
+from .postprocessing import filter_by_area_bbox, krippendorff_alpha_ordinal, krippendorf_alfa
 
 __all__ = [
     "log_print",
@@ -58,4 +58,6 @@ __all__ = [
     "segment_images",
     "segment_video",
     "filter_by_area_bbox",
+    "krippendorff_alpha_ordinal",
+    "krippendorf_alfa",
 ]
