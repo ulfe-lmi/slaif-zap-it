@@ -96,10 +96,16 @@ clip:
 At each verbosity, verify the normalized five-field YOLO lines. L1 contains a
 16-bit `identity-mask.png` with original dimensions, background `0`, and IDs
 `1..N`; L2 contains only produced object/SAM/CLIP fields; L3 adds bounded stage
-status, timings, pinned model/device provenance, warnings, and available
-artifacts. ZIP contains `manifest.json`, `detections.yolo.txt`, and the same
-level-gated artifact names. A request containing BLIP3 is rejected with the
-stable `unsupported_profile` response before inference.
+status, timings, pinned model/device provenance, warnings, annotated/debug
+artifacts, and exact per-object column-major RLE. ZIP contains `manifest.json`,
+`detections.yolo.txt`, and the same level-gated artifact names. A request
+containing BLIP3, geometry or panoptic visualization is rejected before
+inference with a stable unsupported status.
+
+Scrape `GET /metrics` during the bounded run. It is process-local and contains
+only finite labels; it must not contain filenames, labels, prompts, answers,
+request IDs, paths, credentials or raw content. With an API key configured,
+scraping requires the same bearer key as completions.
 
 The smoke helper also has explicit operator-only checks for hostile input and
 recovery paths. Run them only against the matching test activation:

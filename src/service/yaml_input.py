@@ -21,6 +21,8 @@ they are stripped from the effective config with an explicit warning.
 from __future__ import annotations
 
 import io
+import math
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Tuple
 import yaml
@@ -116,6 +118,10 @@ _DEBUG_FLAG_PATHS = (
     ("postsam2processing", "debug"),
     ("clip", "debug"),
 )
+
+_VISUALIZATION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+_VISUALIZATION_STAGES = frozenset({"sam2", "clip", "blip3"})
+_VISUALIZATION_ENTRY_KEYS = frozenset({"id", "renderer", "alpha"})
 
 
 _ALLOWED_SCALAR_TAGS = frozenset(
@@ -259,6 +265,75 @@ def _strip_debug_flags(mapping: Dict[str, Any], warnings: List[str]) -> None:
             warnings.append(f"debug flag {section}.{flag} ignored at verbosity below 3")
 
 
+def _validate_visualization_policy(mapping: Mapping[str, Any], *, max_streams: int) -> None:
+    """Validate only the bounded in-memory renderer exposed by the service."""
+    if not mapping:
+        return
+    allowed = {"alpha", "labels", *_VISUALIZATION_STAGES}
+    unknown = sorted(set(mapping).difference(allowed))
+    if unknown:
+        raise ServiceError(
+            "unsupported visualization rule(s): " + ", ".join(map(str, unknown)),
+            code="unsupported_field",
+        )
+    alpha = mapping.get("alpha", DEFAULT_ALPHA)
+    if (
+        not isinstance(alpha, (int, float))
+        or not math.isfinite(float(alpha))
+        or not 0 <= float(alpha) <= 1
+    ):
+        raise ServiceError(
+            "visualization.alpha must be a finite number from 0 to 1", code="invalid_config"
+        )
+    stream_count = 0
+    for stage_name in _VISUALIZATION_STAGES:
+        entries = mapping.get(stage_name, [])
+        if entries is None:
+            continue
+        if not isinstance(entries, list):
+            raise ServiceError(
+                f"visualization.{stage_name} must be a list of mappings",
+                code="invalid_config",
+            )
+        stream_count += len(entries)
+        if stream_count > max_streams:
+            raise ServiceError("visualization stream limit exceeded", code="response_too_large")
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                raise ServiceError("visualization entries must be mappings", code="invalid_config")
+            unknown_entry = sorted(set(entry).difference(_VISUALIZATION_ENTRY_KEYS))
+            if unknown_entry:
+                raise ServiceError(
+                    "unsupported visualization entry field(s): "
+                    + ", ".join(map(str, unknown_entry)),
+                    code="unsupported_field",
+                )
+            identifier = entry.get("id")
+            renderer = entry.get("renderer")
+            if not isinstance(identifier, str) or not _VISUALIZATION_ID.fullmatch(identifier):
+                raise ServiceError(
+                    "visualization ids must be bounded safe identifiers", code="unsafe_config"
+                )
+            if not isinstance(renderer, str) or renderer.lower() not in {
+                "annotated",
+                "alpha-overlay",
+            }:
+                raise ServiceError(
+                    "only the annotated visualization renderer is supported",
+                    code="unsupported_field",
+                )
+            if "alpha" in entry:
+                value = entry["alpha"]
+                if (
+                    not isinstance(value, (int, float))
+                    or not math.isfinite(float(value))
+                    or not 0 <= float(value) <= 1
+                ):
+                    raise ServiceError(
+                        "visualization entry alpha must be from 0 to 1", code="invalid_config"
+                    )
+
+
 @dataclass(frozen=True)
 class ValidatedConfig:
     """Sanitized effective configuration plus honest provenance warnings."""
@@ -269,7 +344,9 @@ class ValidatedConfig:
     warnings: Tuple[str, ...] = field(default_factory=tuple)
 
 
-def parse_hostile_config(raw_bytes: bytes, *, verbosity: int) -> ValidatedConfig:
+def parse_hostile_config(
+    raw_bytes: bytes, *, verbosity: int, max_visualization_streams: int = 8
+) -> ValidatedConfig:
     """Parse, bound, allowlist and sanitize one uploaded config document."""
     loaded = _compose_and_load(raw_bytes)
     if not isinstance(loaded, dict):
@@ -293,6 +370,10 @@ def parse_hostile_config(raw_bytes: bytes, *, verbosity: int) -> ValidatedConfig
     _scan_hostile(effective, "")
 
     vis_cfg = effective.get("visualization")
+    if vis_cfg is not None and not isinstance(vis_cfg, Mapping):
+        raise ServiceError("visualization must be a mapping", code="invalid_config")
+    _validate_visualization_policy(vis_cfg or {}, max_streams=max_visualization_streams)
+
     vis_alpha = vis_cfg.get("alpha") if isinstance(vis_cfg, Mapping) else None
     alpha = float(vis_alpha) if isinstance(vis_alpha, (int, float)) else DEFAULT_ALPHA
     effective["alpha"] = alpha

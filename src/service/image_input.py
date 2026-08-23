@@ -26,7 +26,13 @@ __all__ = ["ALLOWED_IMAGE_FORMATS", "decode_image_safely"]
 ALLOWED_IMAGE_FORMATS = frozenset({"JPEG", "PNG", "WEBP"})
 
 
-def decode_image_safely(data: bytes, *, max_decoded_pixels: int) -> np.ndarray:
+def decode_image_safely(
+    data: bytes,
+    *,
+    max_decoded_pixels: int,
+    max_width: int = 8192,
+    max_height: int = 8192,
+) -> np.ndarray:
     """Decode ``data`` into an RGB ``uint8`` array under strict limits."""
     if not data:
         raise ServiceError("image part is empty", code="invalid_image")
@@ -43,6 +49,11 @@ def decode_image_safely(data: bytes, *, max_decoded_pixels: int) -> np.ndarray:
             width, height = opened.size
             if width < 1 or height < 1:
                 raise ServiceError("image has invalid dimensions", code="invalid_image")
+            if width > max_width or height > max_height:
+                raise ServiceError(
+                    "decoded image dimensions exceed the maximum allowed size",
+                    code="image_too_large",
+                )
             if width * height > max_decoded_pixels:
                 raise ServiceError(
                     "decoded image exceeds the maximum allowed pixel count",

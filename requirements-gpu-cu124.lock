@@ -19,6 +19,7 @@ numpy==1.26.4
 opencv-python-headless==4.10.0.84
 open-clip-torch==2.24.0
 packaging==24.1
+prometheus-client==0.21.1
 pillow==10.4.0
 pyyaml==6.0.2
 safetensors==0.4.3

@@ -100,18 +100,13 @@ Each rule supports these fields:
 Masks that match the false string are relabelled to `negative`; matches on the
 true string keep their label or take `newcategory` if provided.
 
-## `geometry` (optional)
+## `geometry` (legacy-only, not a service stage)
 
-Enables the Canny/Hough based geometry helpers in `modules.geometry`. Recognized
-parameters:
-
-- `debug` (bool): emit extra logging and write intermediate images/TSV files.
-- `canny_threshold1`, `canny_threshold2`, `canny_aperture`
-- `hough_rho`, `hough_theta`, `hough_threshold`
-- `hough_min_line_length`, `hough_max_line_gap`
-
-Geometry results are saved as TSV files per mask; when debug mode is on the
-Canny edge image is also stored.
+The Canny/Hough helpers remain available for trusted legacy integrations, but
+the canonical core does not execute them and the API rejects a top-level
+`geometry` field with `unsupported_field` before inference. They write TSV and
+debug files through their legacy adapter. Future service activation requires a
+separate governed scientific-stage order and an in-memory refactor.
 
 ## `visualization`
 
@@ -125,11 +120,13 @@ composite builder. Additional keys:
   entry must contain an `id` (used to reference the rendered frame) and a
   `renderer` name.
 
-Two renderer names are available:
+The service renderer policy exposes only bounded in-memory annotated streams:
 
-- `alpha-overlay`: draws colored masks on top of the original image. Supports an
-  `alpha` override per entry; otherwise `visualization.alpha` is used.
-- `panoptic`: builds a Detectron2-style panoptic visualization of the masks.
+- `annotated` (the legacy spelling `alpha-overlay` is accepted): draws masks on
+  top of the original image with an optional alpha override. At most eight safe
+  ID streams execute, and only at service verbosity 3.
+- `panoptic`, composite/file/video rules, unknown renderers and unsafe IDs are
+  rejected by the service. The trusted CLI retains its compatibility writers.
 
 ## `images`
 

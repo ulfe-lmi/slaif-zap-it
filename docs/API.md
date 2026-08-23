@@ -1,4 +1,4 @@
-# ZAP-IT HTTP API (objective 002 contract)
+# ZAP-IT HTTP API (Objective 005-a contract)
 
 ```text
 POST /v1/completions
@@ -8,10 +8,9 @@ Content-Type: multipart/form-data
 This is a **ZAP-IT-specific multimodal pipeline endpoint** using a conventional
 path. It is **not** drop-in OpenAI `text-completions` compatibility.
 
-**Objective 002 status:** this contract is implemented and tested CPU-only
-against a deterministic fake engine (`src.service.fake_engine.FakeEngine`).
-It does **not** prove live model or GPU readiness; SAM2/CLIP/BLIP3 activation
-is a later objective. No persistent listener is started by the package.
+The CPU contract is tested with `FakeEngine`; the operator launcher additionally
+wires the qualified resident SAM2+CLIP profile on freshly verified physical GPU1.
+No persistent listener is started by the package factory.
 
 ## Endpoints
 
@@ -20,6 +19,7 @@ is a later objective. No persistent listener is started by the package.
 | `/v1/completions` | POST | one image + one YAML config -> one result |
 | `/healthz` | GET | process/event-loop health (always unauthenticated) |
 | `/readyz` | GET | engine readiness via injected provider; honest `not_ready` |
+| `/metrics` | GET | process-local finite-cardinality Prometheus text |
 
 ## Request fields
 
@@ -49,7 +49,8 @@ rejected with stable codes before any expensive work.
   (bbox pixel+normalized, area, centroid, SAM quality, CLIP score, BLIP3
   answer when present, geometry hook when present).
 - **L3**: L2 + stage statuses, candidate counts, timings, provenance,
-  aggregate warnings and available debug/visualization artifacts.
+  aggregate warnings, bounded annotated/debug artifacts, and one exact
+  per-object uncompressed column-major COCO-style mask RLE.
 
 Lower levels never trigger extra optional stages solely to enrich output.
 Configured filesystem-style debug flags are honored only at verbosity 3
@@ -87,7 +88,18 @@ Binary artifacts use one stable object shape:
 ZIP responses contain `manifest.json` (the full envelope without base64
 payloads), `detections.yolo.txt`, `identity-mask.png` when applicable, and
 level-gated artifacts with matching hashes/sizes/media types. ZIP assembly
-is deterministic and bounded in memory.
+is deterministic and uses the prepared raw artifacts directly; it does not
+construct a duplicate base64 JSON payload first.
+
+At L3 each object has:
+
+```json
+{"encoding":"coco_rle_uncompressed", "size":[height,width],
+ "order":"column-major", "counts":[0, 3, 2]}
+```
+
+Counts begin with background and round-trip the complete source mask, including
+disconnected components and overlap.
 
 ## Configuration policy (hostile uploads)
 
@@ -125,13 +137,21 @@ document order.
 | max image upload | 20 MiB | `SLAIF_ZAP_IT_MAX_IMAGE_UPLOAD_BYTES` |
 | max config upload | 256 KiB | `SLAIF_ZAP_IT_MAX_CONFIG_UPLOAD_BYTES` |
 | max decoded pixels | 64 000 000 | `SLAIF_ZAP_IT_MAX_DECODED_PIXELS` |
+| max image width / height | 8192 / 8192 | `SLAIF_ZAP_IT_MAX_IMAGE_WIDTH`, `SLAIF_ZAP_IT_MAX_IMAGE_HEIGHT` |
+| max objects | 256 | `SLAIF_ZAP_IT_MAX_OBJECTS` |
+| max visualization streams | 8 | `SLAIF_ZAP_IT_MAX_VISUALIZATION_STREAMS` |
+| max response/debug artifacts | 64 / 48 | `SLAIF_ZAP_IT_MAX_RESPONSE_ARTIFACTS`, `SLAIF_ZAP_IT_MAX_DEBUG_ARTIFACTS` |
+| max single/total raw artifacts | 32 / 128 MiB | `SLAIF_ZAP_IT_MAX_SINGLE_ARTIFACT_BYTES`, `SLAIF_ZAP_IT_MAX_TOTAL_RAW_ARTIFACT_BYTES` |
+| max RLE runs/object/response | 250 000 / 1 000 000 | `SLAIF_ZAP_IT_MAX_MASK_RLE_RUNS_PER_OBJECT`, `SLAIF_ZAP_IT_MAX_MASK_RLE_RUNS_TOTAL` |
 | max total response | 256 MiB | `SLAIF_ZAP_IT_MAX_RESPONSE_BYTES` |
+| min available RAM / shm | 2 GiB / 64 MiB | `SLAIF_ZAP_IT_MIN_HOST_AVAILABLE_BYTES`, `SLAIF_ZAP_IT_MIN_SHM_FREE_BYTES` |
 | request deadline | 120 s | `SLAIF_ZAP_IT_REQUEST_DEADLINE_SECONDS` |
 | inference queue depth | 0 | `SLAIF_ZAP_IT_QUEUE_DEPTH` |
 | Retry-After value | 5 s | `SLAIF_ZAP_IT_RETRY_AFTER_SECONDS` |
 
 Encoded sizes are enforced while streaming (limit+1 pattern) before decode;
-decoded dimensions are checked from headers before pixel allocation.
+decoded width/height are checked from headers before pixel allocation; host RAM
+and `/dev/shm` floors are checked at readiness and request admission.
 
 ## Concurrency semantics
 
@@ -145,8 +165,9 @@ process model is one Uvicorn process, workers=1, no fork after CUDA init.
 
 Strict-loopback deployments default to NO key. Setting
 `SLAIF_ZAP_IT_API_KEY` before start enables mandatory
-`Authorization: Bearer <key>` on `/v1/completions` using constant-time
-comparison. Keys are never logged or echoed; health endpoints stay open.
+`Authorization: Bearer <key>` on `/v1/completions` and `/metrics` using
+constant-time comparison. Keys are never logged or echoed; health endpoints
+stay open.
 
 ## Errors
 
@@ -181,6 +202,7 @@ Stable sanitized envelope on every failure:
 | `not_ready` | 503 | readiness provider reports not ready |
 | `timeout` | 504 | request deadline exceeded |
 | `insufficient_memory` | 507 | reserved: RAM/`/dev/shm` pressure |
+| `insufficient_shm` | 507 | configured `/dev/shm` floor is not available |
 
 \* nginx-convention client-closed status, kept stable for this contract.
 
@@ -215,10 +237,19 @@ response = client.post(
 OpenAPI: run the app and read `/openapi.json` (or `/docs`). The schema is
 snapshot-tested against this document's contract.
 
+## Metrics and parity
+
+`/metrics` is process-local and resets on restart. It has no default process
+collectors and uses only finite stable labels. See
+[OUTPUT-PARITY.md](OUTPUT-PARITY.md) for the complete legacy/current output
+classification and [SERVICE-DATASHEET.md](SERVICE-DATASHEET.md) for hardware,
+measured evidence and deployment prerequisites.
+
 ## Limitations
 
-- CPU/fake-engine only; no GPU allocation, model loading or live readiness.
+- The package factory is CPU/fake-engine; live readiness requires the qualified
+  operator launcher and pinned GPU1 profile.
 - No streaming; no asynchronous jobs; no video API.
-- Identity-mask overlap uses the frozen larger-area winner; overlap-
-  preserving per-object masks arrive with objective 005.
+- Geometry and panoptic visualization remain explicitly unsupported service
+  capabilities; geometry activation requires a separate scientific-stage order.
 - `geometry`/`blip2` config sections are rejected until the core consumes them.

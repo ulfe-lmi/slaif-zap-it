@@ -41,6 +41,8 @@ from .results import (
 from .sinks import (
     ArtifactSink,
     ArtifactSinkError,
+    ArtifactBudget,
+    BoundedMemoryArtifactSink,
     FilesystemArtifactSink,
     MemoryArtifactSink,
     StoredArtifact,
@@ -51,6 +53,8 @@ __all__ = [
     "BATCH_ONLY_TOP_LEVEL_FIELDS",
     "ArtifactSink",
     "ArtifactSinkError",
+    "ArtifactBudget",
+    "BoundedMemoryArtifactSink",
     "ConfigClassification",
     "CoreConfig",
     "CoreError",
