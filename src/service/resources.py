@@ -67,7 +67,11 @@ def check_visualization_raw_budget(
     width: int,
 ) -> int:
     """Reject L3 rendering that cannot fit before the engine allocates arrays."""
-    reserved = visualization_raw_bytes(config, height=height, width=width)
+    stream_count = _visualization_stream_count(config.vis_cfg)
+    if stream_count == 0:
+        return 0
+
+    reserved = stream_count * max(int(height), 0) * max(int(width), 0) * 3
     per_stream = max(int(height), 0) * max(int(width), 0) * 3
     if per_stream > settings.max_single_artifact_bytes:
         raise ServiceError(

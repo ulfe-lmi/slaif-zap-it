@@ -229,7 +229,118 @@ visualization:
     assert observed_budgets == [0]
 
 
-def test_l2_visualization_config_does_not_trigger_raw_preflight():
+def test_l3_zero_visualization_streams_skip_hypothetical_raw_budget():
+    raw_stream_bytes = 8 * 6 * 3
+    settings = ServiceSettings(
+        max_single_artifact_bytes=raw_stream_bytes - 1,
+        max_total_raw_artifact_bytes=raw_stream_bytes - 1,
+    )
+
+    no_stream_engine = FakeEngine()
+    no_stream_app = create_app(
+        engine=no_stream_engine,
+        settings=settings,
+        readiness_provider=lambda: ReadyState(True, "ready"),
+    )
+    with TestClient(no_stream_app) as client:
+        no_stream = client.post("/v1/completions", files=_files(), data={"verbosity": "3"})
+    assert no_stream.status_code == 200
+    assert len(no_stream_engine.calls) == 1
+
+    configured_engine = FakeEngine()
+    configured_app = create_app(
+        engine=configured_engine,
+        settings=settings,
+        readiness_provider=lambda: ReadyState(True, "ready"),
+    )
+    config = b"""alpha: 0.5
+visualization:
+  sam2:
+    - id: view
+      renderer: annotated
+"""
+    with TestClient(configured_app) as client:
+        configured = client.post(
+            "/v1/completions",
+            files=_files(config),
+            data={"verbosity": "3"},
+        )
+    assert configured.status_code == 413
+    assert configured.json()["error"]["code"] == "response_too_large"
+    assert configured_engine.calls == []
+
+
+@pytest.mark.parametrize("response_format", ["json", "zip"])
+def test_serialization_timeout_metrics_are_exclusive_and_recover(response_format):
+    settings = ServiceSettings(
+        request_deadline_seconds=0.5,
+        test_serialization_delay_seconds=0.75,
+    )
+    app = create_app(
+        engine=FakeEngine(),
+        settings=settings,
+        readiness_provider=lambda: ReadyState(True, "ready"),
+    )
+
+    def metric_value(text, name, labels=None):
+        for line in text.splitlines():
+            if not line.startswith(name + ("{" if labels else " ")):
+                continue
+            if labels and not all(label in line for label in labels.split(",")):
+                continue
+            if " " in line:
+                return float(line.rsplit(" ", 1)[1])
+        return 0.0
+
+    with TestClient(app) as client:
+        timed_out = client.post(
+            "/v1/completions",
+            files=_files(),
+            data={"verbosity": "2", "response_format": response_format},
+        )
+        assert timed_out.status_code == 504
+        timed_out_metrics = client.get("/metrics").text
+        assert metric_value(timed_out_metrics, "zap_it_timeout_total") == 1
+        assert metric_value(timed_out_metrics, "zap_it_requests_total", 'outcome="success"') == 0
+        assert (
+            metric_value(
+                timed_out_metrics,
+                "zap_it_completions_total",
+                f'verbosity="2",response_format="{response_format}"',
+            )
+            == 0
+        )
+        assert metric_value(timed_out_metrics, "zap_it_response_bytes_count") == 0
+        assert metric_value(timed_out_metrics, "zap_it_object_count_count") == 0
+        assert metric_value(timed_out_metrics, "zap_it_artifact_count_count") == 0
+        assert metric_value(timed_out_metrics, "zap_it_serialization_duration_seconds_count") == 1
+
+        object.__setattr__(settings, "test_serialization_delay_seconds", 0.0)
+        recovered = client.post(
+            "/v1/completions",
+            files=_files(),
+            data={"verbosity": "2", "response_format": response_format},
+        )
+        assert recovered.status_code == 200
+        recovered_metrics = client.get("/metrics").text
+        assert metric_value(recovered_metrics, "zap_it_timeout_total") == 1
+        assert metric_value(recovered_metrics, "zap_it_requests_total", 'outcome="success"') == 1
+        assert (
+            metric_value(
+                recovered_metrics,
+                "zap_it_completions_total",
+                f'verbosity="2",response_format="{response_format}"',
+            )
+            == 1
+        )
+        assert metric_value(recovered_metrics, "zap_it_response_bytes_count") == 1
+        assert metric_value(recovered_metrics, "zap_it_object_count_count") == 1
+        assert metric_value(recovered_metrics, "zap_it_artifact_count_count") == 1
+        assert metric_value(recovered_metrics, "zap_it_serialization_duration_seconds_count") == 2
+
+
+@pytest.mark.parametrize("verbosity", [0, 1, 2])
+def test_l0_l2_visualization_config_does_not_trigger_raw_preflight(verbosity):
     config = b"""alpha: 0.5
 visualization:
   sam2:
@@ -243,7 +354,9 @@ visualization:
         readiness_provider=lambda: ReadyState(True, "ready"),
     )
     with TestClient(app) as client:
-        response = client.post("/v1/completions", files=_files(config), data={"verbosity": "2"})
+        response = client.post(
+            "/v1/completions", files=_files(config), data={"verbosity": str(verbosity)}
+        )
     assert response.status_code == 200
     assert len(engine.calls) == 1
 
