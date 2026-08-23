@@ -46,14 +46,27 @@ def make_frame_pipeline_result(frame_id):
 
 
 def test_process_folder_writes_outputs(monkeypatch, tmp_path, simple_config):
-    calls = []
+    monkeypatch.setattr(
+        batch, "build_image_writer", lambda cfg, base_dir, verbosity=1: DummyWriter(base_dir)
+    )
+    monkeypatch.setattr(
+        batch, "build_video_writer", lambda cfg, base_dir, **kwargs: DummyWriter(base_dir)
+    )
 
-    monkeypatch.setattr(batch, "build_image_writer", lambda cfg, base_dir, verbosity=1: DummyWriter(base_dir))
-    monkeypatch.setattr(batch, "build_video_writer", lambda cfg, base_dir, **kwargs: DummyWriter(base_dir))
-
-    monkeypatch.setattr(batch, "run_frame_pipeline", lambda frame_id, orig_np, **kwargs: (make_frame_pipeline_result(frame_id), kwargs.get("segmenter_state"), kwargs.get("clip_state"), kwargs.get("blip3_state")))
+    monkeypatch.setattr(
+        batch,
+        "run_frame_pipeline",
+        lambda frame_id, orig_np, **kwargs: (
+            make_frame_pipeline_result(frame_id),
+            kwargs.get("segmenter_state"),
+            kwargs.get("clip_state"),
+            kwargs.get("blip3_state"),
+        ),
+    )
     images = ["a.jpg", "b.jpg"]
-    monkeypatch.setattr(batch, "load_image", lambda path: (None, np.zeros((2, 2, 3), dtype=np.uint8)))
+    monkeypatch.setattr(
+        batch, "load_image", lambda path: (None, np.zeros((2, 2, 3), dtype=np.uint8))
+    )
 
     out_dir = tmp_path / "input"
     out_dir.mkdir()
@@ -99,9 +112,22 @@ def test_process_video_streams_frames(monkeypatch, tmp_path, simple_config):
             self.closed = True
 
     monkeypatch.setattr(batch, "FFmpegVideoReader", FakeReader)
-    monkeypatch.setattr(batch, "build_image_writer", lambda cfg, base_dir, verbosity=1: DummyWriter(base_dir))
-    monkeypatch.setattr(batch, "build_video_writer", lambda cfg, base_dir, **kwargs: DummyWriter(base_dir))
-    monkeypatch.setattr(batch, "run_frame_pipeline", lambda frame_id, orig_np, **kwargs: (make_frame_pipeline_result(frame_id), kwargs.get("segmenter_state"), kwargs.get("clip_state"), kwargs.get("blip3_state")))
+    monkeypatch.setattr(
+        batch, "build_image_writer", lambda cfg, base_dir, verbosity=1: DummyWriter(base_dir)
+    )
+    monkeypatch.setattr(
+        batch, "build_video_writer", lambda cfg, base_dir, **kwargs: DummyWriter(base_dir)
+    )
+    monkeypatch.setattr(
+        batch,
+        "run_frame_pipeline",
+        lambda frame_id, orig_np, **kwargs: (
+            make_frame_pipeline_result(frame_id),
+            kwargs.get("segmenter_state"),
+            kwargs.get("clip_state"),
+            kwargs.get("blip3_state"),
+        ),
+    )
 
     video_path = tmp_path / "video.mp4"
     video_path.write_bytes(b"fake")
@@ -120,7 +146,7 @@ def test_process_video_streams_frames(monkeypatch, tmp_path, simple_config):
         video_output_root=str(tmp_path / "videos"),
     )
 
-    out_dir = (tmp_path / "images" / video_path.stem)
+    out_dir = tmp_path / "images" / video_path.stem
     json_files = sorted(out_dir.glob("*.json"))
     assert len(json_files) == 2
 
@@ -129,8 +155,14 @@ def test_worker_process_initializes_modules(monkeypatch, simple_config, tmp_path
     calls = {"sam": 0, "clip": 0, "blip": 0, "processed": 0}
 
     monkeypatch.setattr(batch, "initialize_sam2", lambda *a, **k: {"mask_generator": "mg"})
-    monkeypatch.setattr(batch, "initialize_clip", lambda *a, **k: calls.__setitem__("clip", calls["clip"] + 1) or {})
-    monkeypatch.setattr(batch, "initialize_blip3", lambda *a, **k: calls.__setitem__("blip", calls["blip"] + 1) or {})
+    monkeypatch.setattr(
+        batch, "initialize_clip", lambda *a, **k: calls.__setitem__("clip", calls["clip"] + 1) or {}
+    )
+    monkeypatch.setattr(
+        batch,
+        "initialize_blip3",
+        lambda *a, **k: calls.__setitem__("blip", calls["blip"] + 1) or {},
+    )
 
     def fake_process_folder(*args, **kwargs):
         calls["processed"] += 1
@@ -175,10 +207,25 @@ def test_process_folder_parallel_spawns_processes(monkeypatch, simple_config, tm
             return
 
     monkeypatch.setattr(batch.mp, "Process", FakeProcess)
-    monkeypatch.setattr(batch, "build_image_writer", lambda cfg, base_dir, verbosity=1: DummyWriter(base_dir))
-    monkeypatch.setattr(batch, "build_video_writer", lambda cfg, base_dir, **kwargs: DummyWriter(base_dir))
-    monkeypatch.setattr(batch, "run_frame_pipeline", lambda frame_id, orig_np, **kwargs: (make_frame_pipeline_result(frame_id), kwargs.get("segmenter_state"), kwargs.get("clip_state"), kwargs.get("blip3_state")))
-    monkeypatch.setattr(batch, "load_image", lambda path: (None, np.zeros((2, 2, 3), dtype=np.uint8)))
+    monkeypatch.setattr(
+        batch, "build_image_writer", lambda cfg, base_dir, verbosity=1: DummyWriter(base_dir)
+    )
+    monkeypatch.setattr(
+        batch, "build_video_writer", lambda cfg, base_dir, **kwargs: DummyWriter(base_dir)
+    )
+    monkeypatch.setattr(
+        batch,
+        "run_frame_pipeline",
+        lambda frame_id, orig_np, **kwargs: (
+            make_frame_pipeline_result(frame_id),
+            kwargs.get("segmenter_state"),
+            kwargs.get("clip_state"),
+            kwargs.get("blip3_state"),
+        ),
+    )
+    monkeypatch.setattr(
+        batch, "load_image", lambda path: (None, np.zeros((2, 2, 3), dtype=np.uint8))
+    )
 
     batch.process_folder_parallel(
         str(tmp_path),
@@ -206,9 +253,21 @@ def test_segment_images_dryrun_initializes(monkeypatch, tmp_path, simple_config)
 
     created = {"sam": 0, "clip": 0, "blip": 0, "yolo": 0}
 
-    monkeypatch.setattr(batch, "initialize_sam2", lambda *a, **k: created.__setitem__("sam", created["sam"] + 1) or {"mask_generator": "dry"})
-    monkeypatch.setattr(batch, "initialize_clip", lambda *a, **k: created.__setitem__("clip", created["clip"] + 1) or {})
-    monkeypatch.setattr(batch, "initialize_blip3", lambda *a, **k: created.__setitem__("blip", created["blip"] + 1) or {})
+    monkeypatch.setattr(
+        batch,
+        "initialize_sam2",
+        lambda *a, **k: created.__setitem__("sam", created["sam"] + 1) or {"mask_generator": "dry"},
+    )
+    monkeypatch.setattr(
+        batch,
+        "initialize_clip",
+        lambda *a, **k: created.__setitem__("clip", created["clip"] + 1) or {},
+    )
+    monkeypatch.setattr(
+        batch,
+        "initialize_blip3",
+        lambda *a, **k: created.__setitem__("blip", created["blip"] + 1) or {},
+    )
 
     def fake_process_folder(*args, **kwargs):
         assert kwargs["dryrun"] is True
@@ -255,9 +314,19 @@ def test_segment_video_dryrun(monkeypatch, tmp_path, simple_config):
 
     calls = {"sam": 0, "clip": 0, "blip": 0, "yolo": 0, "process": 0}
 
-    monkeypatch.setattr(batch, "initialize_sam2", lambda *a, **k: calls.__setitem__("sam", calls["sam"] + 1) or {"mask_generator": "dry"})
-    monkeypatch.setattr(batch, "initialize_clip", lambda *a, **k: calls.__setitem__("clip", calls["clip"] + 1) or {})
-    monkeypatch.setattr(batch, "initialize_blip3", lambda *a, **k: calls.__setitem__("blip", calls["blip"] + 1) or {})
+    monkeypatch.setattr(
+        batch,
+        "initialize_sam2",
+        lambda *a, **k: calls.__setitem__("sam", calls["sam"] + 1) or {"mask_generator": "dry"},
+    )
+    monkeypatch.setattr(
+        batch, "initialize_clip", lambda *a, **k: calls.__setitem__("clip", calls["clip"] + 1) or {}
+    )
+    monkeypatch.setattr(
+        batch,
+        "initialize_blip3",
+        lambda *a, **k: calls.__setitem__("blip", calls["blip"] + 1) or {},
+    )
 
     def fake_process_video(*args, **kwargs):
         calls["process"] += 1

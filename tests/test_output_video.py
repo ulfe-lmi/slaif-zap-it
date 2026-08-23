@@ -93,8 +93,18 @@ def test_ffmpeg_writer_detects_size_mismatch(monkeypatch, tmp_path):
     def fake_start(self, width, height):
         self._width = width
         self._height = height
-        pipe = type("Pipe", (), {"write": lambda self, data: None, "flush": lambda self: None, "close": lambda self: None})()
-        self._proc = type("Proc", (), {"stdin": pipe, "stderr": None, "wait": lambda self, timeout=None: 0})()
+        pipe = type(
+            "Pipe",
+            (),
+            {
+                "write": lambda self, data: None,
+                "flush": lambda self: None,
+                "close": lambda self: None,
+            },
+        )()
+        self._proc = type(
+            "Proc", (), {"stdin": pipe, "stderr": None, "wait": lambda self, timeout=None: 0}
+        )()
 
     monkeypatch.setattr(out_video._FFmpegMJPEGWriter, "_start", fake_start, raising=False)
     writer = out_video._FFmpegMJPEGWriter(str(tmp_path / "video.avi"), fps=10.0)

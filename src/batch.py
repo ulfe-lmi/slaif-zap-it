@@ -322,7 +322,7 @@ def run_frame_pipeline(
         if len(rr) == 0:
             continue
         seg_global = np.zeros((H_orig, W_orig), dtype=bool)
-        for (rpos, cpos) in zip(rr, cc):
+        for rpos, cpos in zip(rr, cc):
             Yg = y + int(rpos * scaleY)
             Xg = x + int(cpos * scaleX)
             if 0 <= Yg < H_orig and 0 <= Xg < W_orig:
@@ -465,7 +465,9 @@ def run_frame_pipeline(
     if yolo_exporter is not None:
         yolo_exporter.process_image(orig_np, final_masks, roi_val=context.roi_val)
 
-    result = FramePipelineResult(rendered=rendered or {}, final_masks=final_masks, serialized=serialized)
+    result = FramePipelineResult(
+        rendered=rendered or {}, final_masks=final_masks, serialized=serialized
+    )
     return result, segmenter_state, clip_state, blip3_state
 
 
@@ -759,7 +761,9 @@ def process_video_parallel(
     result_queue: Optional[mp.Queue] = None
     worker_error: Optional[Exception] = None
 
-    def emit_frame(frame_id: str, result: FramePipelineResult, frame_np: Optional[np.ndarray]) -> None:
+    def emit_frame(
+        frame_id: str, result: FramePipelineResult, frame_np: Optional[np.ndarray]
+    ) -> None:
         if result.rendered:
             image_writer.write(result.rendered)
             video_writer.write(result.rendered)
@@ -897,9 +901,7 @@ def process_video_parallel(
 
         for proc in workers:
             if proc.exitcode not in (0, None) and worker_error is None:
-                worker_error = RuntimeError(
-                    f"Worker process exited with code {proc.exitcode}"
-                )
+                worker_error = RuntimeError(f"Worker process exited with code {proc.exitcode}")
 
     if worker_error is not None:
         raise worker_error
@@ -925,9 +927,7 @@ def _worker_process(
     if dryrun or torch is None:
         device = "cpu"
     else:
-        device = torch.device(
-            f"cuda:{gpu_idx}" if torch.cuda.device_count() > gpu_idx else "cpu"
-        )
+        device = torch.device(f"cuda:{gpu_idx}" if torch.cuda.device_count() > gpu_idx else "cpu")
 
     if verbosity >= 1:
         mode = "dry-run" if dryrun else "full"

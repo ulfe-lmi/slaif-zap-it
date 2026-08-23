@@ -119,7 +119,9 @@ class RecordingYoloExporter:
 @pytest.fixture
 def fake_pipeline(monkeypatch):
     monkeypatch.setattr(batch, "initialize_sam2", lambda *args, **kwargs: {})
-    monkeypatch.setattr(batch, "load_image", lambda path: (None, np.zeros((4, 4, 3), dtype=np.uint8)))
+    monkeypatch.setattr(
+        batch, "load_image", lambda path: (None, np.zeros((4, 4, 3), dtype=np.uint8))
+    )
 
     def _fake_run_frame_pipeline(frame_id, orig_np, **kwargs):
         yolo_exporter = kwargs.get("yolo_exporter")
@@ -135,7 +137,12 @@ def fake_pipeline(monkeypatch):
             final_masks=[{"segmentation": np.zeros((1, 1), dtype=bool)}],
             serialized=[{"frame": frame_id}],
         )
-        return result, kwargs.get("segmenter_state"), kwargs.get("clip_state"), kwargs.get("blip3_state")
+        return (
+            result,
+            kwargs.get("segmenter_state"),
+            kwargs.get("clip_state"),
+            kwargs.get("blip3_state"),
+        )
 
     monkeypatch.setattr(batch, "run_frame_pipeline", _fake_run_frame_pipeline)
 
@@ -228,18 +235,12 @@ def test_segment_images_uses_custom_output_roots(fake_pipeline, tmp_path):
     assert expected_root_video in video_dirs
     assert expected_nested_video in video_dirs
 
-    assert sorted(p.name for p in expected_root_image.glob("frame_*.txt")) == [
-        "frame_0000001.txt"
-    ]
+    assert sorted(p.name for p in expected_root_image.glob("frame_*.txt")) == ["frame_0000001.txt"]
     assert sorted(p.name for p in expected_nested_image.glob("frame_*.txt")) == [
         "frame_0000001.txt"
     ]
-    assert sorted(p.name for p in expected_root_video.glob("clip_*.txt")) == [
-        "clip_0000001.txt"
-    ]
-    assert sorted(p.name for p in expected_nested_video.glob("clip_*.txt")) == [
-        "clip_0000001.txt"
-    ]
+    assert sorted(p.name for p in expected_root_video.glob("clip_*.txt")) == ["clip_0000001.txt"]
+    assert sorted(p.name for p in expected_nested_video.glob("clip_*.txt")) == ["clip_0000001.txt"]
     assert sorted(p.name for p in expected_yolo.glob("sample_*.txt")) == [
         "sample_0000000.txt",
         "sample_0000001.txt",

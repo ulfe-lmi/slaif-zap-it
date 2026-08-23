@@ -48,8 +48,7 @@ def apply_geometry_on_mask(
     if debug and verbosity >= 1:
         print(
             "[geometry] => applying canny on mask %s, shape=(%s,%s), thr=(%s,%s), "
-            "aperture=%s"
-            % (mask_index, height, width, thr1, thr2, aperture)
+            "aperture=%s" % (mask_index, height, width, thr1, thr2, aperture)
         )
 
     edges = cv2.Canny(mask_u8, threshold1=thr1, threshold2=thr2, apertureSize=aperture)
@@ -59,9 +58,7 @@ def apply_geometry_on_mask(
         canny_file = f"{base_name}_mask{mask_index}_canny.png"
         canny_path = os.path.join(out_dir, canny_file)
         cv2.imwrite(canny_path, edges)
-        print(
-            f"[geometry debug] => wrote canny image => {canny_path} (nonzero={edge_nonzero})"
-        )
+        print(f"[geometry debug] => wrote canny image => {canny_path} (nonzero={edge_nonzero})")
 
     theta_rad = np.deg2rad(theta_deg)
     lines_p = cv2.HoughLinesP(
@@ -131,8 +128,22 @@ def draw_geometry_on_image(
     bgr = image_arr[..., ::-1].copy()
 
     for x1, y1, x2, y2 in lines_data:
-        cv2.line(bgr, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 0), thickness=3, lineType=cv2.LINE_AA)
-        cv2.line(bgr, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), thickness=1, lineType=cv2.LINE_AA)
+        cv2.line(
+            bgr,
+            (int(x1), int(y1)),
+            (int(x2), int(y2)),
+            (0, 0, 0),
+            thickness=3,
+            lineType=cv2.LINE_AA,
+        )
+        cv2.line(
+            bgr,
+            (int(x1), int(y1)),
+            (int(x2), int(y2)),
+            (0, 255, 0),
+            thickness=1,
+            lineType=cv2.LINE_AA,
+        )
 
     for ix, iy in intersections:
         center = (int(ix), int(iy))

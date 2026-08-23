@@ -47,5 +47,3 @@ def test_apply_roi_with_valid_string():
 
     assert bounds == (1, 2, 4, 6)
     assert cropped.shape == (4, 3, 3)
-
-
