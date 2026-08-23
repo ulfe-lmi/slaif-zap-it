@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from typing import Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
-from PIL import Image
 
 from queue import Empty
 
@@ -35,7 +34,51 @@ from modules.input.video import FFmpegVideoReader, probe_video
 from modules.segmenter import initialize_sam2, run_sam2
 from modules.verifier import initialize_blip3, run_blip3
 from modules.visualizer import generate_visualizations
+from .core import (
+    CoreConfig,
+    FilesystemArtifactSink,
+    ObjectResult,
+    PipelineResult,
+    StageFunctions,
+    run_single_image,
+)
 from .postprocessing import filter_by_area_bbox
+
+# Stage callables and legacy helpers are re-exported here so that historical
+# monkeypatch targets (``src.batch.run_sam2``, ``src.batch.save_roi_debug``...)
+# keep working through the adapter.
+__all__ = [
+    "FFmpegVideoReader",
+    "FramePipelineResult",
+    "PipelineContext",
+    "apply_roi",
+    "build_image_writer",
+    "build_video_writer",
+    "core_config_from_context",
+    "filter_by_area_bbox",
+    "generate_visualizations",
+    "initialize_blip3",
+    "initialize_clip",
+    "initialize_sam2",
+    "list_images",
+    "load_image",
+    "log_print",
+    "pipeline_context_from_core_config",
+    "prepare_dirs",
+    "prepare_output_dir",
+    "process_folder",
+    "process_folder_parallel",
+    "process_video",
+    "process_video_parallel",
+    "resize_image",
+    "run_blip3",
+    "run_clip",
+    "run_frame_pipeline",
+    "run_sam2",
+    "save_roi_debug",
+    "segment_images",
+    "segment_video",
+]
 
 
 @dataclass
@@ -56,14 +99,42 @@ class PipelineContext:
     max_w: int
     max_h: int
 
+    def to_core_config(self) -> CoreConfig:
+        """Return the normalized core view of this context."""
+        return CoreConfig(
+            alpha=self.alpha,
+            roi_val=self.roi_val,
+            resize_val=self.resize_val,
+            prep_debug=self.prep_debug,
+            clip_cfg=self.clip_cfg,
+            blip3_cfg=self.blip3_cfg,
+            sam2_cfg=self.sam2_cfg,
+            postsam2_cfg=self.postsam2_cfg,
+            vis_cfg=self.vis_cfg,
+            keep_labels=tuple(self.keep_labels),
+            post_maxsize=self.post_maxsize,
+            max_w=self.max_w,
+            max_h=self.max_h,
+        )
+
+
+def core_config_from_context(context: PipelineContext) -> CoreConfig:
+    """Public helper returning the normalized :class:`CoreConfig`."""
+    return context.to_core_config()
+
 
 @dataclass
 class FramePipelineResult:
-    """Outputs produced by :func:`run_frame_pipeline`."""
+    """Outputs produced by :func:`run_frame_pipeline`.
+
+    ``rendered``, ``final_masks`` and ``serialized`` preserve the historical
+    adapter shape; ``core_result`` carries the typed in-memory core result.
+    """
 
     rendered: Mapping[str, np.ndarray]
     final_masks: List[dict]
     serialized: List[dict]
+    core_result: Optional[PipelineResult] = None
 
 
 def log_print(msg: str, needed_level: int, current_level: int) -> None:
@@ -192,46 +263,30 @@ def _compute_yolo_root(
 
 
 def _build_pipeline_context(config: dict) -> PipelineContext:
-    """Derive static configuration used by :func:`run_frame_pipeline`."""
+    """Derive static configuration used by :func:`run_frame_pipeline`.
 
-    prep = config.get("preprocessing", {})
-    clip_cfg = config.get("clip", {})
-    blip3_cfg = config.get("blip3", {})
-    sam2_cfg = config.get("mask_generator", {})
-    alpha_val = config["alpha"]
-    postsam2_cfg = config.get("postsam2processing", {})
-    vis_cfg = config.get("visualization", {})
+    Normalization is delegated to :meth:`CoreConfig.from_mapping` so the batch
+    adapter and the in-memory core share one definition.
+    """
+    return pipeline_context_from_core_config(CoreConfig.from_mapping(config))
 
-    post_maxsize = postsam2_cfg.get("maxsize", 999_999_999)
-    max_w = postsam2_cfg.get("max_w", 999_999_999)
-    max_h = postsam2_cfg.get("max_h", 999_999_999)
 
-    labels_cfg = vis_cfg.get("labels", [])
-    if isinstance(labels_cfg, str):
-        keep_labels = [s.strip() for s in labels_cfg.split(",") if s.strip()]
-    elif isinstance(labels_cfg, (list, tuple, set)):
-        keep_labels = [str(item).strip() for item in labels_cfg if str(item).strip()]
-    else:
-        keep_labels = []
-
-    roi_val = prep.get("roi", None)
-    resize_val = prep.get("resize", None)
-    prep_debug = bool(prep.get("debug", False))
-
+def pipeline_context_from_core_config(core_config: CoreConfig) -> PipelineContext:
+    """Build a legacy :class:`PipelineContext` from normalized core config."""
     return PipelineContext(
-        alpha=alpha_val,
-        roi_val=roi_val,
-        resize_val=resize_val,
-        prep_debug=prep_debug,
-        clip_cfg=clip_cfg,
-        blip3_cfg=blip3_cfg,
-        sam2_cfg=sam2_cfg,
-        postsam2_cfg=postsam2_cfg,
-        vis_cfg=vis_cfg,
-        keep_labels=keep_labels,
-        post_maxsize=post_maxsize,
-        max_w=max_w,
-        max_h=max_h,
+        alpha=core_config.alpha,
+        roi_val=core_config.roi_val,
+        resize_val=core_config.resize_val,
+        prep_debug=core_config.prep_debug,
+        clip_cfg=dict(core_config.clip_cfg),
+        blip3_cfg=dict(core_config.blip3_cfg),
+        sam2_cfg=dict(core_config.sam2_cfg),
+        postsam2_cfg=dict(core_config.postsam2_cfg),
+        vis_cfg=dict(core_config.vis_cfg),
+        keep_labels=list(core_config.keep_labels),
+        post_maxsize=core_config.post_maxsize,
+        max_w=core_config.max_w,
+        max_h=core_config.max_h,
     )
 
 
@@ -243,6 +298,29 @@ def _resolve_device(preferred: Optional[torch.device] = None):  # type: ignore[n
     if torch is not None:
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return "cpu"
+
+
+def _adapter_stage_functions() -> StageFunctions:
+    """Resolve stage callables from this module's namespace.
+
+    Reading the module globals at call time keeps legacy monkeypatching of
+    ``src.batch.*`` stage functions working through the adapter.
+    """
+    module_globals = globals()
+    return StageFunctions(
+        apply_roi=module_globals["apply_roi"],
+        resize_image=module_globals["resize_image"],
+        run_sam2=module_globals["run_sam2"],
+        filter_by_area_bbox=module_globals["filter_by_area_bbox"],
+        run_clip=module_globals["run_clip"],
+        run_blip3=module_globals["run_blip3"],
+        generate_visualizations=module_globals["generate_visualizations"],
+    )
+
+
+def _objects_to_final_masks(objects: Sequence[ObjectResult]) -> List[dict]:
+    """Rebuild the historical mask-dict view from typed core objects."""
+    return [{**dict(obj.metadata), "segmentation": obj.mask} for obj in objects]
 
 
 def run_frame_pipeline(
@@ -259,216 +337,41 @@ def run_frame_pipeline(
     device=None,
     yolo_exporter=None,
 ) -> tuple[FramePipelineResult, dict, Optional[dict], Optional[dict]]:
-    """Execute the segmentation pipeline for a single frame."""
+    """Compatibility adapter executing one frame through the in-memory core.
 
-    if segmenter_state is None:
-        segmenter_state = {}
-    if clip_state is None and context.clip_cfg:
-        clip_state = {}
-    if blip3_state is None and context.blip3_cfg:
-        blip3_state = {}
-
-    H_orig, W_orig = orig_np.shape[:2]
-    log_print(f" => Original shape = {W_orig}x{H_orig}", 1, verbosity)
-
-    partial_np, (x, y, x2, y2) = apply_roi(orig_np, context.roi_val)
-    if context.roi_val:
-        log_print(
-            f" => ROI=({context.roi_val}) => partial shape={partial_np.shape[1]}x{partial_np.shape[0]}",
-            1,
-            verbosity,
-        )
-
-    if context.prep_debug and context.roi_val:
-        roi_file = f"{frame_id}-roi01.jpg"
-        roi_path = os.path.join(out_dir, roi_file)
-        save_roi_debug(partial_np, roi_path)
-        log_print(f" => saved ROI debug => {roi_file}", 1, verbosity)
-
-    resized_np, resize_info = resize_image(partial_np, context.resize_val)
-    if resize_info["mode"] == "native":
-        log_print(" => Single pass @native", 1, verbosity)
-    else:
-        new_w, new_h = resize_info["size"]
-        log_print(
-            f" => {resize_info['mode']} => {new_w}x{new_h} (factor={resize_info['factor']:.2f})",
-            1,
-            verbosity,
-        )
-
-    segmenter_params = {
-        "alpha": context.alpha,
-        "dryrun": dryrun,
-    }
-    if "mask_generator" in segmenter_state:
-        segmenter_params["mask_generator"] = segmenter_state["mask_generator"]
-    segmenter_state, partial_masks, _ = run_sam2(
-        segmenter_state,
-        segmenter_params,
-        resized_np,
-        verbosity=verbosity,
-        log_print_func=log_print,
-    )
-
-    H_res, W_res = resized_np.shape[:2]
-
-    scaleX = (x2 - x) / float(W_res)
-    scaleY = (y2 - y) / float(H_res)
-
-    all_masks_pre: List[dict] = []
-    for m in partial_masks:
-        seg_rs = m["segmentation"]
-        rr, cc = np.where(seg_rs)
-        if len(rr) == 0:
-            continue
-        seg_global = np.zeros((H_orig, W_orig), dtype=bool)
-        for rpos, cpos in zip(rr, cc):
-            Yg = y + int(rpos * scaleY)
-            Xg = x + int(cpos * scaleX)
-            if 0 <= Yg < H_orig and 0 <= Xg < W_orig:
-                seg_global[Yg, Xg] = True
-
-        all_masks_pre.append(
-            {
-                "segmentation": seg_global,
-                "area": seg_global.sum(),
-                "predicted_iou": m.get("predicted_iou", None),
-                "stability_score": m.get("stability_score", None),
-            }
-        )
-
-    if context.sam2_cfg.get("debug", False):
-        log_print("[mask_generator debug] => saving raw SAM2 patches...", 1, verbosity)
-        for idx, mm in enumerate(all_masks_pre):
-            seg = mm["segmentation"]
-            rr, cc = np.where(seg)
-            if len(rr) == 0:
-                continue
-            y_min, y_max = rr.min(), rr.max()
-            x_min, x_max = cc.min(), cc.max()
-            patch = orig_np[y_min : y_max + 1, x_min : x_max + 1, :]
-            patch_file = f"{frame_id}_sam2-patch{idx:04d}.jpg"
-            patch_path = os.path.join(out_dir, patch_file)
-            Image.fromarray(patch).save(patch_path, "JPEG")
-            log_print(f"  => wrote {patch_file}", 2, verbosity)
-
-    filtered_for_clip = filter_by_area_bbox(
-        all_masks_pre,
-        context.post_maxsize,
-        context.max_w,
-        context.max_h,
-        verbosity=verbosity,
-        log_print_func=log_print,
-    )
-
-    if context.clip_cfg:
-        log_print(
-            f"[clip] => classifying {len(filtered_for_clip)} bounding boxes...",
-            1,
-            verbosity,
-        )
-        clip_params = {
-            "config": context.clip_cfg,
-            "device": _resolve_device(device),
-            "masks": filtered_for_clip,
-            "out_dir": out_dir,
-            "fname_stem": frame_id,
-            "dryrun": dryrun,
-        }
-        clip_state, masked_after_clip, _ = run_clip(
-            clip_state,
-            clip_params,
-            orig_np,
-            verbosity=verbosity,
-            log_print_func=log_print,
-        )
-        log_print("[clip] => classification done, now final label filter...", 1, verbosity)
-    else:
-        masked_after_clip = filtered_for_clip
-
-    clip_only_masks = [dict(m) for m in masked_after_clip]
-
-    if context.blip3_cfg:
-        log_print("[blip3] => verifying masks...", 1, verbosity)
-        blip3_params = {
-            "config": context.blip3_cfg,
-            "device": _resolve_device(device),
-            "masks": masked_after_clip,
-            "out_dir": out_dir,
-            "fname_stem": frame_id,
-            "dryrun": dryrun,
-        }
-        blip3_state, masked_after_clip, _ = run_blip3(
-            blip3_state,
-            blip3_params,
-            orig_np,
-            verbosity=verbosity,
-            log_print_func=log_print,
-        )
-
-    final_masks = []
-    for mm in masked_after_clip:
-        lbl = mm.get("clip_label", None)
-        if context.keep_labels and lbl not in context.keep_labels:
-            continue
-        final_masks.append(mm)
-
-    post_debug_flag = bool(context.postsam2_cfg.get("debug", False))
-    if post_debug_flag:
-        log_print(
-            "[postsam2processing debug] => saving final patches after classification...",
-            1,
-            verbosity,
-        )
-        for idx, mm in enumerate(final_masks):
-            seg = mm["segmentation"]
-            rr, cc = np.where(seg)
-            if len(rr) == 0:
-                continue
-            y_min, y_max = rr.min(), rr.max()
-            x_min, x_max = cc.min(), cc.max()
-            patch = orig_np[y_min : y_max + 1, x_min : x_max + 1, :]
-            patch_file = f"{frame_id}_sam2-filtered-patch{idx:04d}.jpg"
-            patch_path = os.path.join(out_dir, patch_file)
-            Image.fromarray(patch).save(patch_path, "JPEG")
-            log_print(f"  => wrote final patch => {patch_file}", 2, verbosity)
-
-    stage_masks = {
-        "sam2": all_masks_pre,
-        "clip": clip_only_masks,
-        "blip3": final_masks,
-    }
-
-    rendered = generate_visualizations(
+    The core performs all computation; this adapter only binds the legacy
+    ``out_dir`` as a filesystem artifact sink so configured debug artifacts
+    keep landing in the operator-selected output directory, and forwards the
+    optional YOLO dataset exporter hook.
+    """
+    outcome = run_single_image(
         orig_np,
-        stage_masks,
-        context.vis_cfg,
-        default_alpha=context.alpha,
+        context.to_core_config(),
+        frame_id=frame_id,
+        segmenter_state=segmenter_state,
+        clip_state=clip_state,
+        blip3_state=blip3_state,
+        dryrun=dryrun,
         verbosity=verbosity,
+        device=device,
         log_print_func=log_print,
+        artifact_sink=FilesystemArtifactSink(out_dir),
+        stages=_adapter_stage_functions(),
     )
 
-    serialized: List[dict] = []
-    for fm in final_masks:
-        d = {}
-        for k, v in fm.items():
-            if isinstance(v, np.ndarray):
-                continue
-            if isinstance(v, (np.int32, np.int64)):
-                d[k] = int(v)
-            elif isinstance(v, (np.float32, np.float64)):
-                d[k] = float(v)
-            else:
-                d[k] = v
-        serialized.append(d)
+    final_masks = _objects_to_final_masks(outcome.result.objects)
+    serialized = [obj.serialized_metadata() for obj in outcome.result.objects]
 
     if yolo_exporter is not None:
         yolo_exporter.process_image(orig_np, final_masks, roi_val=context.roi_val)
 
     result = FramePipelineResult(
-        rendered=rendered or {}, final_masks=final_masks, serialized=serialized
+        rendered=outcome.result.rendered or {},
+        final_masks=final_masks,
+        serialized=serialized,
+        core_result=outcome.result,
     )
-    return result, segmenter_state, clip_state, blip3_state
+    return result, outcome.segmenter_state, outcome.clip_state, outcome.blip3_state
 
 
 def process_folder(

@@ -67,59 +67,75 @@ if "torch" not in sys.modules:
     sys.modules["torch"] = torch_mod
 
 if "PIL" not in sys.modules:
-    pil_mod = types.ModuleType("PIL")
-    image_mod = types.ModuleType("PIL.Image")
-    image_ops_mod = types.ModuleType("PIL.ImageOps")
+    try:
+        # Prefer the REAL Pillow when installed so image encoding/decoding is
+        # genuinely exercised (mirrors the PyYAML policy below and lets the
+        # objective 001-a identity-PNG tests inspect decoded pixels); only
+        # stub when absent.
+        import PIL  # noqa: F401
+        import PIL.Image  # noqa: F401
+        import PIL.ImageOps  # noqa: F401
+    except ImportError:
+        pil_mod = types.ModuleType("PIL")
+        image_mod = types.ModuleType("PIL.Image")
+        image_ops_mod = types.ModuleType("PIL.ImageOps")
 
-    class _FakeImage:
-        def __init__(self, array):
-            self._array = np.array(array, copy=True)
-            if self._array.ndim == 2:
-                self._array = np.expand_dims(self._array, -1)
-            self.size = (self._array.shape[1], self._array.shape[0])
+        class _FakeImage:
+            def __init__(self, array):
+                self._array = np.array(array, copy=True)
+                if self._array.ndim == 2:
+                    self._array = np.expand_dims(self._array, -1)
+                self.size = (self._array.shape[1], self._array.shape[0])
 
-        def convert(self, mode):
-            return self
+            def convert(self, mode):
+                return self
 
-        def resize(self, size, resample=None):
+            def resize(self, size, resample=None):
+                w, h = size
+                new_arr = np.zeros((h, w, self._array.shape[2]), dtype=self._array.dtype)
+                return _FakeImage(new_arr)
+
+            def save(self, path, *_args, **_kwargs):
+                payload = getattr(self, "_stub_bytes", b"fake-image")
+                if hasattr(path, "write"):
+                    path.write(payload)
+                else:
+                    Path(path).write_bytes(payload)
+
+            def __array__(self, dtype=None, copy=None):
+                return np.array(self._array, dtype=dtype, copy=copy)
+
+        def _fromarray(array, mode=None):
+            image = _FakeImage(array)
+            if mode is not None:
+                image._stub_bytes = b"fake-image"
+            return image
+
+        def _open(path):
+            return _FakeImage(np.zeros((1, 1, 3), dtype=np.uint8))
+
+        def _new(mode, size, color=(0, 0, 0)):
             w, h = size
-            new_arr = np.zeros((h, w, self._array.shape[2]), dtype=self._array.dtype)
-            return _FakeImage(new_arr)
+            arr = np.zeros((h, w, 3), dtype=np.uint8)
+            return _FakeImage(arr)
 
-        def save(self, path, *_args, **_kwargs):
-            Path(path).write_bytes(b"fake-image")
+        class _Resampling:
+            LANCZOS = 0
 
-        def __array__(self, dtype=None, copy=None):
-            return np.array(self._array, dtype=dtype, copy=copy)
+        image_mod.fromarray = _fromarray
+        image_mod.open = _open
+        image_mod.new = _new
+        image_mod.Image = _FakeImage
+        image_mod.Resampling = _Resampling
 
-    def _fromarray(array):
-        return _FakeImage(array)
+        image_ops_mod.exif_transpose = lambda img: img
 
-    def _open(path):
-        return _FakeImage(np.zeros((1, 1, 3), dtype=np.uint8))
+        pil_mod.Image = image_mod
+        pil_mod.ImageOps = image_ops_mod
 
-    def _new(mode, size, color=(0, 0, 0)):
-        w, h = size
-        arr = np.zeros((h, w, 3), dtype=np.uint8)
-        return _FakeImage(arr)
-
-    class _Resampling:
-        LANCZOS = 0
-
-    image_mod.fromarray = _fromarray
-    image_mod.open = _open
-    image_mod.new = _new
-    image_mod.Image = _FakeImage
-    image_mod.Resampling = _Resampling
-
-    image_ops_mod.exif_transpose = lambda img: img
-
-    pil_mod.Image = image_mod
-    pil_mod.ImageOps = image_ops_mod
-
-    sys.modules["PIL"] = pil_mod
-    sys.modules["PIL.Image"] = image_mod
-    sys.modules["PIL.ImageOps"] = image_ops_mod
+        sys.modules["PIL"] = pil_mod
+        sys.modules["PIL.Image"] = image_mod
+        sys.modules["PIL.ImageOps"] = image_ops_mod
 
 if "detectron2" not in sys.modules:
     detectron2_mod = types.ModuleType("detectron2")

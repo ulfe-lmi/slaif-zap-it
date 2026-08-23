@@ -10,8 +10,11 @@ Steps in summary:
  3) For each image:
     a) ROI or entire => optional resize => produce partial masks
     b) Scale partial => global => post-sam2 filters => clip => final label filter
-    c) Optionally do geometry on each final mask if "geometry" is in config
-    d) Produce summary composites, panoptic overlay, JSON, etc.
+    c) Produce summary composites, panoptic overlay, JSON, etc.
+
+Note: the optional Canny/Hough geometry stage (modules/geometry) is NOT
+invoked by this canonical frame path; the "geometry" config section has no
+effect here. See docs/CORE.md for the typed result hooks reserved for it.
 """
 
 import argparse
