@@ -1,4 +1,5 @@
 """Image sequence writer for visualization outputs."""
+
 from __future__ import annotations
 
 import os
@@ -12,7 +13,9 @@ from PIL import Image
 class ImageSequenceWriter:
     """Persist visualization frames as zero-padded JPEG sequences."""
 
-    def __init__(self, targets: Mapping[str, str], base_dir: str, *, quality: int = 95, verbosity: int = 1):
+    def __init__(
+        self, targets: Mapping[str, str], base_dir: str, *, quality: int = 95, verbosity: int = 1
+    ):
         self._quality = quality
         self._verbosity = verbosity
         self._counters: MutableMapping[str, int] = {}
@@ -20,7 +23,9 @@ class ImageSequenceWriter:
 
         for vis_id, relative_path in targets.items():
             if not isinstance(relative_path, str):
-                raise ValueError(f"images.{vis_id} must map to a directory name (got {type(relative_path)!r})")
+                raise ValueError(
+                    f"images.{vis_id} must map to a directory name (got {type(relative_path)!r})"
+                )
             directory = os.path.join(base_dir, relative_path)
             os.makedirs(directory, exist_ok=True)
             self._directories[vis_id] = directory
@@ -53,14 +58,18 @@ class NullImageWriter(ImageSequenceWriter):
         self._quality = 95
         self._verbosity = 0
 
-    def write(self, frames: Mapping[str, np.ndarray]) -> None:  # pragma: no cover - intentionally empty
+    def write(
+        self, frames: Mapping[str, np.ndarray]
+    ) -> None:  # pragma: no cover - intentionally empty
         return
 
     def close(self) -> None:  # pragma: no cover - intentionally empty
         return
 
 
-def build_image_writer(config: Mapping[str, str] | None, base_dir: str, *, verbosity: int = 1) -> ImageSequenceWriter:
+def build_image_writer(
+    config: Mapping[str, str] | None, base_dir: str, *, verbosity: int = 1
+) -> ImageSequenceWriter:
     """Factory that returns a concrete ``ImageSequenceWriter`` (or a no-op surrogate)."""
     if not config:
         return NullImageWriter()

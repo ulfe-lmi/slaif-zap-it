@@ -26,6 +26,8 @@ def test_run_uses_existing_generator(monkeypatch):
             return [{"segmentation": seg}]
 
     state = {"mask_generator": DummyGen()}
-    state, masks, meta = sam2_mod.run(state, {"dryrun": False, "alpha": 0.5}, np.zeros((2, 2, 3), dtype=np.uint8))
+    state, masks, meta = sam2_mod.run(
+        state, {"dryrun": False, "alpha": 0.5}, np.zeros((2, 2, 3), dtype=np.uint8)
+    )
     assert meta["num_masks"] == 1
     assert masks[0]["segmentation"].sum() == 1

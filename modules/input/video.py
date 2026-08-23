@@ -1,4 +1,5 @@
 """FFmpeg-based video reader utilities."""
+
 from __future__ import annotations
 
 import json
@@ -70,7 +71,9 @@ def probe_video(path: str, *, ffprobe_bin: str = "ffprobe") -> VideoMetadata:
     if fps is None:
         fps = 25.0
 
-    return VideoMetadata(width=width, height=height, fps=float(fps), nb_frames=n_frames, duration=duration_f)
+    return VideoMetadata(
+        width=width, height=height, fps=float(fps), nb_frames=n_frames, duration=duration_f
+    )
 
 
 class FFmpegVideoReader:
@@ -112,7 +115,9 @@ class FFmpegVideoReader:
                 pass
 
         assert self._proc.stderr is not None
-        self._stderr_thread = threading.Thread(target=_drain, args=(self._proc.stderr,), daemon=True)
+        self._stderr_thread = threading.Thread(
+            target=_drain, args=(self._proc.stderr,), daemon=True
+        )
         self._stderr_thread.start()
 
     def __iter__(self) -> Iterator[bytes]:
@@ -126,7 +131,9 @@ class FFmpegVideoReader:
             if not chunk:
                 break
             if len(chunk) < frame_size:
-                raise EOFError(f"Unexpected EOF from ffmpeg reader (wanted {frame_size} bytes, got {len(chunk)})")
+                raise EOFError(
+                    f"Unexpected EOF from ffmpeg reader (wanted {frame_size} bytes, got {len(chunk)})"
+                )
             yield chunk
 
     def close(self) -> None:

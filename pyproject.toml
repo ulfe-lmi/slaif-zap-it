@@ -1,0 +1,92 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zap-it"
+version = "0.1.0"
+description = "ZAP-IT: YAML-driven zero-shot segmentation/classification pipeline (SAM2 + CLIP + BLIP-3)."
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "Janez Pers" }]
+keywords = ["segmentation", "sam2", "clip", "zero-shot", "computer-vision"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+]
+
+# The heavy GPU stack (torch/torchvision, SAM-2, detectron2, transformers,
+# open-clip-torch, opencv) is intentionally NOT declared here; it is provided by
+# the operator-managed conda environment documented in INSTALL.md and
+# environment.yml. This keeps CPU/dev installs free of model downloads.
+dependencies = [
+    "numpy",
+    "pillow",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build",
+    "coverage[toml]",
+    "pytest",
+    "pytest-cov",
+    "ruff",
+]
+
+[tool.setuptools]
+packages = [
+    "src",
+    "modules",
+    "modules.classifier",
+    "modules.geometry",
+    "modules.input",
+    "modules.output",
+    "modules.segmenter",
+    "modules.verifier",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["demos", "assets", "oap"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+ignore = [
+    # modules.input.images patches PIL and imports optional heavy deps lazily;
+    # several legacy entry scripts import after top-level statements by design.
+    "E402",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test stubs intentionally shadow real library APIs with short names.
+"tests/conftest.py" = ["E741"]
+
+[tool.coverage.run]
+source = ["src", "modules"]
+branch = true
+
+[tool.coverage.report]
+# Ratchet policy (objective 000-a): measured 67% on CPython 3.12 with branch
+# coverage; gate set 3 points lower to absorb variance across the 3.10-3.12
+# matrix. Raise this only when coverage measurably improves.
+fail_under = 64
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]

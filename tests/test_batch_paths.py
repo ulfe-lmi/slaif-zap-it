@@ -71,9 +71,7 @@ def test_compute_yolo_root_prefers_image_root(tmp_path):
     img_root = tmp_path / "images"
     img_root.mkdir()
 
-    yolo_root = _compute_yolo_root(
-        str(base), input_root=str(base), image_output_root=str(img_root)
-    )
+    yolo_root = _compute_yolo_root(str(base), input_root=str(base), image_output_root=str(img_root))
     assert Path(yolo_root) == img_root / base.name / "yolo"
 
     fallback = _compute_yolo_root(str(base), input_root=None, image_output_root=None)

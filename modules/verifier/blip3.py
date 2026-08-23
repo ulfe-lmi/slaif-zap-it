@@ -1,5 +1,6 @@
 # modules/verifier/blip3.py
 """BLIP-3 based verification module with unified interface."""
+
 from __future__ import annotations
 
 from typing import Any, Dict, Tuple
@@ -13,6 +14,7 @@ from PIL import Image
 try:
     from transformers import StoppingCriteria
 except ImportError:  # pragma: no cover
+
     class StoppingCriteria:  # type: ignore
         def __call__(self, *args, **kwargs):
             raise RuntimeError("transformers is required for BLIP-3 execution")
@@ -20,13 +22,14 @@ except ImportError:  # pragma: no cover
 
 class _EosListStoppingCriteria(StoppingCriteria):
     """Stops generation when the special BLIP-3 end-of-answer sequence appears."""
+
     def __init__(self, eos_sequence=(32007,)):
         self.eos_sequence = list(eos_sequence)
 
     def __call__(self, input_ids, _scores, **kwargs):
         if len(input_ids[0]) < len(self.eos_sequence):
             return False
-        return input_ids[0][-len(self.eos_sequence):].tolist() == self.eos_sequence
+        return input_ids[0][-len(self.eos_sequence) :].tolist() == self.eos_sequence
 
 
 # -------------------------------------------------------------------------
@@ -38,6 +41,7 @@ def _install_safe_to_for_meta():
     to_empty(device=...) instead of raising NotImplementedError.
     """
     import torch.nn as nn
+
     if getattr(nn.Module, "_zap_it_meta_to_patched", False):
         return
     _orig_to = nn.Module.to
@@ -80,14 +84,16 @@ def _force_openclip_default_pretrained(default_tag: str = "laion2b_s32b_b79k"):
         return _orig(model_name, *args, **kwargs)
 
     ocf.create_model_and_transforms = _wrapped  # type: ignore[attr-defined]
-    ocf._zap_it_pretrained_wrapped = True       # type: ignore[attr-defined]
+    ocf._zap_it_pretrained_wrapped = True  # type: ignore[attr-defined]
 
 
 # -------------------------------------------------------------------------
 # BLIP-3 QA core
 # -------------------------------------------------------------------------
 class _Blip3QA:
-    def __init__(self, blip_config: Dict[str, Any], device="cuda", verbosity: int = 1, log_print_func=None):
+    def __init__(
+        self, blip_config: Dict[str, Any], device="cuda", verbosity: int = 1, log_print_func=None
+    ):
         import torch
         from transformers import (
             AutoImageProcessor,
@@ -102,17 +108,23 @@ class _Blip3QA:
         self.log_print = log_print_func or (lambda *a, **k: None)
 
         # ---- Config knobs (all optional) ----
-        self.model_name = blip_config.get("model_name", "Salesforce/xgen-mm-phi3-mini-instruct-r-v1")
+        self.model_name = blip_config.get(
+            "model_name", "Salesforce/xgen-mm-phi3-mini-instruct-r-v1"
+        )
 
         # dtype: "auto" | "float16" | "bfloat16" | "float32"
         dtype_cfg = str(blip_config.get("dtype", "auto")).lower()
 
         def _bf16_ok() -> bool:
-            return (self.device.type == "cuda") and getattr(torch.cuda, "is_bf16_supported", lambda: False)()
+            return (self.device.type == "cuda") and getattr(
+                torch.cuda, "is_bf16_supported", lambda: False
+            )()
 
         if dtype_cfg == "auto":
             # XGen-MM (Phi-3) prefers BF16; mixing FP16/BF16 can break generate()
-            if ("phi3" in self.model_name.lower() or "xgen-mm" in self.model_name.lower()) and _bf16_ok():
+            if (
+                "phi3" in self.model_name.lower() or "xgen-mm" in self.model_name.lower()
+            ) and _bf16_ok():
                 dtype = torch.bfloat16
             else:
                 dtype = torch.float16 if self.device.type == "cuda" else torch.float32
@@ -142,10 +154,10 @@ class _Blip3QA:
             self.model_name,
             trust_remote_code=True,
             use_safetensors=True,
-            dtype=dtype,                # remote class prefers 'dtype='
-            low_cpu_mem_usage=False,    # <<< critical: don't init on meta
-            device_map=None,            # avoid accelerate sharding/meta route
-            attn_implementation="eager" # optional; remove if your stack complains
+            dtype=dtype,  # remote class prefers 'dtype='
+            low_cpu_mem_usage=False,  # <<< critical: don't init on meta
+            device_map=None,  # avoid accelerate sharding/meta route
+            attn_implementation="eager",  # optional; remove if your stack complains
         )
 
         # Unify device & dtype; prevents BF16/FP16 mismatches in remote generate()
@@ -184,6 +196,7 @@ class _Blip3QA:
 
     def answer(self, image, query: str, max_new_tokens: int = 768) -> str:
         from PIL import Image as _PILImage
+
         if not isinstance(image, _PILImage.Image):
             image = _PILImage.fromarray(image)
 
@@ -205,7 +218,11 @@ class _Blip3QA:
 
         def _to_dev_dtype(x):
             if torch.is_tensor(x):
-                return x.to(self.device, dtype=model_dtype) if x.is_floating_point() else x.to(self.device)
+                return (
+                    x.to(self.device, dtype=model_dtype)
+                    if x.is_floating_point()
+                    else x.to(self.device)
+                )
             if isinstance(x, (list, tuple)):
                 return type(x)(_to_dev_dtype(t) for t in x)
             if isinstance(x, dict):
@@ -234,10 +251,15 @@ class _Blip3QA:
 # BLIP3 filter wrapper
 # -------------------------------------------------------------------------
 class _Blip3Filter:
-    def __init__(self, blip_config: Dict[str, Any], device="cuda", verbosity: int = 1, log_print_func=None):
+    def __init__(
+        self, blip_config: Dict[str, Any], device="cuda", verbosity: int = 1, log_print_func=None
+    ):
         import torch
+
         self._torch = torch
-        self.device = torch.device("cuda" if (str(device).startswith("cuda") and torch.cuda.is_available()) else "cpu")
+        self.device = torch.device(
+            "cuda" if (str(device).startswith("cuda") and torch.cuda.is_available()) else "cpu"
+        )
         self.verbosity = verbosity
         self.log_print = log_print_func or (lambda *a, **k: None)
 
@@ -246,7 +268,9 @@ class _Blip3Filter:
         for k, v in blip_config.items():
             (self.label_cfg if isinstance(v, dict) else model_cfg)[k] = v
 
-        self.qa = _Blip3QA(model_cfg, device=device, verbosity=verbosity, log_print_func=self.log_print)
+        self.qa = _Blip3QA(
+            model_cfg, device=device, verbosity=verbosity, log_print_func=self.log_print
+        )
 
     def filter_masks(self, masks, image_np, out_dir, fname_stem):
         if not self.label_cfg:
@@ -361,6 +385,7 @@ class _Blip3Filter:
 # -------------------------------------------------------------------------
 class _DryRunBlip3Filter:
     """Simulate BLIP-3 by deterministically approving/rejecting masks."""
+
     def __init__(self, *, verbosity: int = 1, log_print_func=None):
         self.verbosity = verbosity
         self.log_print = log_print_func or (lambda *a, **k: None)
@@ -382,12 +407,14 @@ class _DryRunBlip3Filter:
 # -------------------------------------------------------------------------
 # Entry points
 # -------------------------------------------------------------------------
-def run(state: Dict[str, Any] | None,
-        params: Dict[str, Any],
-        images,
-        *,
-        verbosity: int = 1,
-        log_print_func=None) -> Tuple[Dict[str, Any], Any, Dict[str, Any]]:
+def run(
+    state: Dict[str, Any] | None,
+    params: Dict[str, Any],
+    images,
+    *,
+    verbosity: int = 1,
+    log_print_func=None,
+) -> Tuple[Dict[str, Any], Any, Dict[str, Any]]:
     """Run BLIP-3 verification using the unified module interface."""
     log = log_print_func or (lambda *a, **k: None)
     if state is None:
@@ -399,9 +426,11 @@ def run(state: Dict[str, Any] | None,
     if blip_filter is None:
         blip_cfg = params.get("config", {})
         device = params.get("device", "cuda")
-        blip_filter = (_DryRunBlip3Filter(verbosity=verbosity, log_print_func=log)
-                       if dryrun_mode else
-                       _Blip3Filter(blip_cfg, device=device, verbosity=verbosity, log_print_func=log))
+        blip_filter = (
+            _DryRunBlip3Filter(verbosity=verbosity, log_print_func=log)
+            if dryrun_mode
+            else _Blip3Filter(blip_cfg, device=device, verbosity=verbosity, log_print_func=log)
+        )
         state["blip3_filter"] = blip_filter
 
     image_np = images[0] if isinstance(images, (list, tuple)) else images
@@ -421,12 +450,14 @@ def run(state: Dict[str, Any] | None,
     return state, updated_masks, meta
 
 
-def initialize(config: Dict[str, Any],
-               *,
-               dryrun: bool = False,
-               device="cuda",
-               verbosity: int = 1,
-               log_print_func=None) -> Dict[str, Any]:
+def initialize(
+    config: Dict[str, Any],
+    *,
+    dryrun: bool = False,
+    device="cuda",
+    verbosity: int = 1,
+    log_print_func=None,
+) -> Dict[str, Any]:
     """Prepare a BLIP-3 filter or its dry-run counterpart."""
     log = log_print_func or (lambda *a, **k: None)
 

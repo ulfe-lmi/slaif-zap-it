@@ -6,6 +6,7 @@ import os
 from typing import Optional, Sequence, Tuple
 
 import numpy as np
+
 try:
     from PIL import Image, ImageOps
 except ImportError:  # pragma: no cover - pillow is optional in some environments
@@ -22,8 +23,7 @@ def list_images(base_dir: str, extensions: Sequence[str] = _SUPPORTED_EXTENSIONS
     images = [
         name
         for name in os.listdir(base_dir)
-        if name.lower().endswith(lowered_exts)
-        and os.path.isfile(os.path.join(base_dir, name))
+        if name.lower().endswith(lowered_exts) and os.path.isfile(os.path.join(base_dir, name))
     ]
     images.sort()
     return images
@@ -54,16 +54,14 @@ def apply_roi(
     parts = [part.strip() for part in roi_str.split(",")]
     if len(parts) != 4:
         raise ValueError(
-            "ROI must contain exactly four comma-separated integers; got:"
-            f" {roi_value!r}"
+            f"ROI must contain exactly four comma-separated integers; got: {roi_value!r}"
         )
 
     try:
         x, y, w, h = [int(part) for part in parts]
     except ValueError as exc:
         raise ValueError(
-            "ROI must contain exactly four comma-separated integers; got:"
-            f" {roi_value!r}"
+            f"ROI must contain exactly four comma-separated integers; got: {roi_value!r}"
         ) from exc
 
     # Clamp the coordinates so negative inputs do not wrap around the image by
@@ -92,9 +90,7 @@ def resize_image(
     if Image is None:  # pragma: no cover - dependent on pillow being missing
         raise RuntimeError("Pillow is required to resize images.")
 
-    resized = np.array(
-        Image.fromarray(image_np).resize((new_w, new_h), Image.Resampling.LANCZOS)
-    )
+    resized = np.array(Image.fromarray(image_np).resize((new_w, new_h), Image.Resampling.LANCZOS))
 
     mode = "downscale" if factor < 1.0 else "upscale"
     return resized, {"mode": mode, "factor": factor, "size": (new_w, new_h)}

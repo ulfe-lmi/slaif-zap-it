@@ -230,9 +230,7 @@ def run_export_over_folder(
                 new_w = int(roi_np.shape[1] * rv)
                 new_h = int(roi_np.shape[0] * rv)
                 resized_np = np.array(
-                    Image.fromarray(roi_np).resize(
-                        (new_w, new_h), Image.Resampling.LANCZOS
-                    )
+                    Image.fromarray(roi_np).resize((new_w, new_h), Image.Resampling.LANCZOS)
                 )
 
         segmenter_params = {
@@ -273,9 +271,7 @@ def run_export_over_folder(
                 }
             )
 
-        masks = filter_by_area_bbox(
-            all_masks_pre, post_max, max_w, max_h, verbosity=verbosity
-        )
+        masks = filter_by_area_bbox(all_masks_pre, post_max, max_w, max_h, verbosity=verbosity)
         if clip_cfg:
             clip_params = {
                 "config": clip_cfg,
@@ -320,9 +316,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--dir", required=True, help="Directory with .jpg images")
     parser.add_argument("--config", required=True, help="Path to config YAML")
-    parser.add_argument(
-        "--randomize", action="store_true", help="Process images in random order"
-    )
+    parser.add_argument("--randomize", action="store_true", help="Process images in random order")
     parser.add_argument(
         "--verbose",
         default="some",
