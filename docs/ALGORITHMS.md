@@ -16,8 +16,13 @@ configured false string, the mask is re-labelled as `negative` and discarded.
 ## Post‑Segmentation Filtering
 After SAM2, masks can be discarded based on area or bounding-box size. This keeps only relevant regions before classification or visualization.
 
-## Geometry (Canny + Hough)
-If enabled, each final mask can be analysed with Canny edge detection followed by a probabilistic Hough transform. The resulting lines and intersections are stored in TSV files and can be drawn on the output images.
+## Geometry (Canny + Hough, legacy-only)
+The repository retains Canny/Hough helpers for trusted legacy integrations, but
+the canonical in-memory core does not execute this stage. The current service
+rejects geometry before inference; future activation requires a governed
+scientific-stage order and an in-memory refactor of the file-writing helper.
 
 ## Visualization
-Composites showing intermediate SAM2 results, CLIP-filtered masks and final panoptic overlays are generated using `matplotlib` and `detectron2` utilities.
+The core can return configured in-memory overlays. The service supports only
+bounded `annotated` streams at L3; panoptic and file/video writers remain
+legacy-only capabilities.

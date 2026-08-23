@@ -27,6 +27,7 @@ an explicit operational order creates and secures it.
 - uint16 PNG dimensions/dtype/0 background/IDs/object bijection;
 - disconnected components share one object ID;
 - overlap winner policy and full overlap-preserving masks;
+- L3 uncompressed column-major RLE round-trip, ID association, overlap and run limits;
 - ROI/resize maps to original image;
 - absent optional stages do not fabricate fields;
 - lower verbosity does not execute extra expensive stages;
@@ -35,6 +36,9 @@ an explicit operational order creates and secures it.
 - no persistent files after success/error/cancel;
 - model/request state isolation across repeated/concurrent calls;
 - physical GPU1 visibility and no GPU0 allocation in live tier.
+- bounded artifact count/per-item/total/base64/ZIP budget and no-truncation checks;
+- visualization execution policy, geometry pre-inference rejection, metrics
+  privacy/cardinality and A/B/A state-isolation checks;
 
 Every OAP order names exact commands and broad/focused scope. “All tests passed”
 means the entire named set ran and passed. Local success never substitutes for a

@@ -381,6 +381,7 @@ def live_engine_callable(
         artifact_sink: Any = None,
         stages: Any = None,
         class_labels: Any = (),
+        render_visualizations: Optional[bool] = None,
         **_: Any,
     ) -> Any:
         from src.service.errors import ServiceError
@@ -419,6 +420,8 @@ def live_engine_callable(
             artifact_sink=artifact_sink,
             stages=None,
             class_labels=tuple(class_labels),
+            render_visualizations=render_visualizations,
+            service_safe_artifact_names=True,
         )
 
     return engine

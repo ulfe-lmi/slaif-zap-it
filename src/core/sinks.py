@@ -2,7 +2,7 @@
 
 Sinks receive artifacts under *logical names* (for example
 ``frame-0001-roi01.jpg``). They never accept caller-controlled filesystem
-paths. The memory sink keeps everything in RAM for the future service; the
+paths. The memory sinks keep everything in RAM for the stateless service; the
 filesystem sink is the compatibility adapter used by the legacy CLI so that
 configured debug/visualization outputs keep landing in the operator-selected
 output directory.
@@ -27,6 +27,8 @@ __all__ = [
     "ArtifactSinkError",
     "ArtifactSink",
     "MemoryArtifactSink",
+    "BoundedMemoryArtifactSink",
+    "ArtifactBudget",
     "FilesystemArtifactSink",
     "StoredArtifact",
 ]
@@ -39,6 +41,17 @@ _KIND_RECORD = "record"
 
 class ArtifactSinkError(ValueError):
     """A logical artifact name was rejected by the sink."""
+
+    code = "response_too_large"
+
+
+@dataclass(frozen=True)
+class ArtifactBudget:
+    """Raw, pre-encoding budget for request-scoped debug artifacts."""
+
+    max_artifacts: int = 48
+    max_single_bytes: int = 32 * 1024 * 1024
+    max_total_bytes: int = 128 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -135,6 +148,40 @@ class MemoryArtifactSink(ArtifactSink):
     def _commit(self, artifact: StoredArtifact) -> StoredArtifact:
         self._artifacts[artifact.name] = artifact
         return artifact
+
+
+def _raw_artifact_size(artifact: StoredArtifact) -> int:
+    if artifact.kind == _KIND_IMAGE:
+        return int(artifact.array.nbytes) if artifact.array is not None else 0
+    if artifact.kind == _KIND_RECORD:
+        return len(json.dumps(artifact.record, default=str, sort_keys=True).encode("utf-8"))
+    return len(artifact.data or b"")
+
+
+class BoundedMemoryArtifactSink(MemoryArtifactSink):
+    """Memory sink that refuses debug growth before retaining an artifact."""
+
+    def __init__(self, budget: ArtifactBudget | None = None) -> None:
+        super().__init__()
+        self.budget = budget or ArtifactBudget()
+        if self.budget.max_artifacts <= 0:
+            raise ValueError("max_artifacts must be positive")
+        if self.budget.max_single_bytes <= 0 or self.budget.max_total_bytes < 0:
+            raise ValueError("artifact byte budgets must be non-negative")
+        self.raw_bytes = 0
+
+    def _commit(self, artifact: StoredArtifact) -> StoredArtifact:
+        replacing = artifact.name in self._artifacts
+        if not replacing and len(self._artifacts) >= self.budget.max_artifacts:
+            raise ArtifactSinkError("debug artifact count exceeds the configured limit")
+        raw_size = _raw_artifact_size(artifact)
+        if raw_size > self.budget.max_single_bytes:
+            raise ArtifactSinkError("debug artifact exceeds the configured per-artifact limit")
+        previous_size = _raw_artifact_size(self._artifacts[artifact.name]) if replacing else 0
+        if self.raw_bytes - previous_size + raw_size > self.budget.max_total_bytes:
+            raise ArtifactSinkError("debug artifacts exceed the configured total byte limit")
+        self.raw_bytes = self.raw_bytes - previous_size + raw_size
+        return super()._commit(artifact)
 
 
 class FilesystemArtifactSink(ArtifactSink):

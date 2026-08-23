@@ -48,6 +48,10 @@ class ObjectRecord(BaseModel):
     clip_score: Optional[float] = None
     blip3_answer: Optional[str] = None
     geometry: Optional[Dict[str, Any]] = None
+    mask_rle: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="L3-only uncompressed column-major COCO-style mask RLE",
+    )
     warnings: Optional[List[str]] = None
 
 

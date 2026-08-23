@@ -47,6 +47,7 @@ dev = [
 service = [
     "fastapi>=0.115,<1",
     "python-multipart>=0.0.9",
+    "prometheus-client>=0.21,<1",
     "uvicorn>=0.30,<1",
 ]
 

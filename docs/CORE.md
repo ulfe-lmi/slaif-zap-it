@@ -1,6 +1,6 @@
 # ZAP-IT in-memory single-image core (objective 001-a)
 
-Status: implemented in objective `001-a`. This document describes the
+Status: implemented in objectives `001-a` and `005-a`. This document describes the
 canonical single-image core entry point, its typed results, the deterministic
 ordering and renderer semantics, the artifact-sink boundary and the
 compatibility guarantees for the legacy CLI/batch path. It does **not** claim
@@ -23,6 +23,7 @@ outcome = run_single_image(
     device=None,
     artifact_sink=sink,  # required when any debug flag is configured
     class_labels=("cat",),  # effective class mapping order
+    render_visualizations=True,  # service enables this only for L3
 )
 outcome.result  # typed PipelineResult
 outcome.segmenter_state  # model states to thread forward
@@ -52,7 +53,7 @@ The chain matches the historical behavior:
 ```text
 ROI crop -> optional resize -> SAM2 masks -> area/bbox filter
         -> optional CLIP labeling -> optional BLIP3 verification
-        -> keep-label filter -> visualization arrays
+        -> keep-label filter -> optional visualization arrays
         -> deterministic final-object ordering + id assignment
 ```
 
@@ -138,7 +139,10 @@ between object list, YOLO lines and PNG IDs holds by construction.
 Sinks accept logical names only (relative, no traversal, no absolute paths):
 
 - `MemoryArtifactSink` — stores bytes/text/image-arrays/records in RAM in
-  insertion order; the future service path uses this and never touches disk.
+  insertion order; trusted CLI compatibility uses this boundary.
+- `BoundedMemoryArtifactSink` — service-only bounded sink that refuses a new
+  artifact before retention when count, per-item or total raw-byte limits would
+  be exceeded.
 - `FilesystemArtifactSink(root_dir)` — compatibility adapter for the legacy
   CLI: writes artifacts under the operator-selected output directory with
   atomic writes and mode `0600`.
@@ -165,8 +169,8 @@ equivalent when configured.
   unchanged.
 - Final objects are now emitted in the deterministic order defined above
   rather than raw arrival order.
-- Visualization composites still use random colors today; they are explicitly
-  out of scope for the deterministic renderers above and remain unchanged.
+- Service annotated overlays use a stable bounded palette. Legacy composite and
+  writer behavior remains a trusted CLI concern.
 
 ## Geometry drift resolution
 

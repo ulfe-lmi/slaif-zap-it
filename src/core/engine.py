@@ -130,6 +130,8 @@ def run_single_image(
     artifact_sink: Optional[ArtifactSink] = None,
     stages: Optional[StageFunctions] = None,
     class_labels: Sequence[str] = (),
+    render_visualizations: Optional[bool] = None,
+    service_safe_artifact_names: bool = False,
 ) -> SingleImageOutcome:
     """Execute the single-image pipeline fully in memory.
 
@@ -278,6 +280,7 @@ def run_single_image(
         }
         if config.clip_cfg.get("debug", False):
             clip_params["artifact_sink"] = _require_sink("clip.debug")
+        clip_params["safe_artifact_names"] = service_safe_artifact_names
 
         def _run_clip():
             return stages.run_clip(
@@ -351,6 +354,11 @@ def run_single_image(
             )
 
     # -- visualization (arrays only; writers stay outside the core) ----------
+    # ``None`` preserves the legacy CLI behavior.  The service passes an
+    # explicit value so L0-L2 cannot spend work merely enriching a response.
+    should_render_visualizations = (
+        bool(render_visualizations) if render_visualizations is not None else True
+    )
     stage_masks = {
         "sam2": all_masks_pre,
         "clip": clip_only_masks,
@@ -369,6 +377,8 @@ def run_single_image(
             ),
         )
         or {}
+        if should_render_visualizations
+        else {}
     )
 
     # -- deterministic identity/ordering -------------------------------------
@@ -443,8 +453,16 @@ def run_single_image(
         ),
         StageStatus(
             name="visualization",
-            status="executed" if rendered else "not_configured",
-            detail=f"{len(rendered)} stream(s)",
+            status=(
+                "executed"
+                if rendered
+                else ("skipped" if not should_render_visualizations else "not_configured")
+            ),
+            detail=(
+                f"{len(rendered)} stream(s)"
+                if should_render_visualizations
+                else "rendering disabled for this service verbosity"
+            ),
             duration_ms=timings.get("stage.visualization") if rendered else None,
         ),
         StageStatus(

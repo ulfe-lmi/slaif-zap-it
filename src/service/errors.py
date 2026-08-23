@@ -41,11 +41,14 @@ ERROR_STATUS_CODES: Mapping[str, int] = {
     "service_busy": 503,
     "not_ready": 503,
     "insufficient_memory": 507,
+    "insufficient_shm": 507,
     "timeout": 504,
 }
 
 #: Error codes that justify advertising a retry to well-behaved clients.
-RETRYABLE_ERROR_CODES = frozenset({"service_busy", "not_ready", "timeout", "insufficient_memory"})
+RETRYABLE_ERROR_CODES = frozenset(
+    {"service_busy", "not_ready", "timeout", "insufficient_memory", "insufficient_shm"}
+)
 
 
 def error_status_for(code: str) -> int:

@@ -20,7 +20,9 @@ unconditional cleanup. No silent persistent-disk fallback.
 
 Logs/errors/metrics exclude images, YAML, prompts/labels if sensitive, BLIP
 answers, filenames, headers, keys, host paths, stack traces and high-cardinality
-content. Use opaque request IDs, hashes/counts/status/timings.
+content. The custom `/metrics` registry uses only finite stable outcome,
+verbosity and format labels plus unlabeled sizes/counts/timings. Use opaque
+request IDs, hashes/counts/status/timings in safe diagnostics.
 
 ## GPU and host
 

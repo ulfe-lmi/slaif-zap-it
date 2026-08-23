@@ -22,11 +22,20 @@ def render_annotated(
     """Return an alpha-blended overlay of ``masks`` on top of ``image_np``."""
     out = image_np.astype(np.float32, copy=True)
     sorted_masks = sorted(masks, key=lambda x: x.get("area", 0), reverse=True)
-    for ann in sorted_masks:
+    for color_index, ann in enumerate(sorted_masks):
         seg = ann.get("segmentation")
         if seg is None or not np.any(seg):
             continue
-        color = np.random.randint(0, 256, size=(3,), dtype=np.uint8)
+        # Stable palette: request A/B/A output must not differ merely because
+        # NumPy's process-global RNG advanced between calls.
+        color = np.asarray(
+            (
+                (53 + color_index * 97) % 256,
+                (109 + color_index * 67) % 256,
+                (191 + color_index * 31) % 256,
+            ),
+            dtype=np.uint8,
+        )
         out[seg, :] = alpha * color + (1.0 - alpha) * out[seg, :]
 
     np.clip(out, 0, 255, out=out)
@@ -177,7 +186,7 @@ def generate_visualizations(
             verbosity,
         )
 
-        if renderer == "alpha-overlay":
+        if renderer in {"annotated", "alpha-overlay"}:
             alpha = float(entry.get("alpha", default_alpha))
             outputs[vis_id] = render_annotated(image_np, masks, alpha=alpha)
         elif renderer == "panoptic":

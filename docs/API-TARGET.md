@@ -1,7 +1,7 @@
 # API target
 
-> Status (objective 002-a): the v1 request/response/error contract below is
-> now **implemented and CPU-tested** with a fake engine; see
+> Status (objective 005-a): the v1 contract below is implemented, bounded and
+> CPU-tested with a fake engine; see
 > [docs/API.md](API.md) for the binding wire documentation. This file remains
 > as the original target statement.
 
@@ -23,12 +23,12 @@ OpenAI text-completions compatibility.
 | 0 | YOLO 5-field normalized lines in `choices[0].text` |
 | 1 | uint16 identity PNG: 0 background, 1..N request-local objects |
 | 2 | per-object bbox/area/SAM/CLIP/BLIP/geometry fields actually produced |
-| 3 | bounded stage/full metadata, masks, overlays, timings, provenance, warnings |
+| 3 | bounded stage/full metadata, overlap-preserving RLE masks, overlays, timings, provenance, warnings |
 
 Levels are monotonic but do not force disabled expensive stages. Same object
 ordering drives YOLO, object list and PNG. Disconnected components may share ID.
 Overlaps use a documented deterministic raster winner; full output preserves
-per-object masks.
+per-object masks as uncompressed column-major COCO-style RLE.
 
 JSON artifacts use `{name,media_type,encoding:"base64",sha256,size,data}`. ZIP
 contains stable `manifest.json`, `detections.yolo.txt`, `identity-mask.png` and
