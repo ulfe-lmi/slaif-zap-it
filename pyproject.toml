@@ -45,6 +45,7 @@ dev = [
 [tool.setuptools]
 packages = [
     "src",
+    "src.core",
     "modules",
     "modules.classifier",
     "modules.geometry",
