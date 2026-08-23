@@ -32,9 +32,7 @@ def pipeline_context():
 
 
 def test_run_frame_pipeline_happy_path(monkeypatch, tmp_path, pipeline_context):
-    saved_rois = []
     monkeypatch.setattr("src.batch.apply_roi", lambda img, roi: (img[1:3, 1:3], (1, 1, 3, 3)))
-    monkeypatch.setattr("src.batch.save_roi_debug", lambda arr, path: saved_rois.append(path))
 
     def fake_resize(image_np, resize_value):
         return image_np, {
@@ -107,7 +105,9 @@ def test_run_frame_pipeline_happy_path(monkeypatch, tmp_path, pipeline_context):
         yolo_exporter=exporter,
     )
 
-    assert saved_rois
+    # prep_debug + ROI now routes through the artifact sink bound to out_dir
+    roi_debug = tmp_path / "frame-0001-roi01.jpg"
+    assert roi_debug.exists()
     assert (
         isinstance(segmenter_state, dict) and segmenter_state.get("mask_generator") == "generator"
     )
@@ -121,3 +121,8 @@ def test_run_frame_pipeline_happy_path(monkeypatch, tmp_path, pipeline_context):
     assert final_mask["segmentation"].sum() == 1
     assert result.serialized[0]["np_int"] == 4
     assert result.serialized[0]["np_float"] == pytest.approx(0.25)
+
+    # typed core result is attached alongside the legacy adapter shape
+    assert result.core_result is not None
+    assert len(result.core_result.objects) == 1
+    assert result.core_result.objects[0].instance_id == 1

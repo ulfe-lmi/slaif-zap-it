@@ -42,6 +42,24 @@ from .batch import (
     segment_images,
     segment_video,
 )
+from .core import (
+    CoreConfig,
+    CoreError,
+    FilesystemArtifactSink,
+    IdentityMaskOverflowError,
+    MemoryArtifactSink,
+    ObjectResult,
+    PipelineResult,
+    SingleImageOutcome,
+    StageFunctions,
+    StageStatus,
+    classify_config_fields,
+    config_digest,
+    order_final_objects,
+    render_identity_png,
+    render_yolo,
+    run_single_image,
+)
 from .postprocessing import filter_by_area_bbox
 
 __all__ = [
@@ -58,4 +76,20 @@ __all__ = [
     "segment_images",
     "segment_video",
     "filter_by_area_bbox",
+    "CoreConfig",
+    "CoreError",
+    "FilesystemArtifactSink",
+    "IdentityMaskOverflowError",
+    "MemoryArtifactSink",
+    "ObjectResult",
+    "PipelineResult",
+    "SingleImageOutcome",
+    "StageFunctions",
+    "StageStatus",
+    "classify_config_fields",
+    "config_digest",
+    "order_final_objects",
+    "render_identity_png",
+    "render_yolo",
+    "run_single_image",
 ]
