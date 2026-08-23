@@ -32,21 +32,40 @@ artifacts. One image+YAML; RAM or `/dev/shm`; no persistent request data. Upload
 YAML cannot control paths/devices/models/network/code. Preserve legacy CLI until
 explicit deprecation.
 
+## HWP draft authority
+
+Human-level decomposition for Objectives 000–006 is preloaded in
+`initial-orders/NNN-a-*.md` and indexed by `INITIAL-ROADMAP.md`. Those drafts are
+not active orders and MUST NOT be published verbatim. Before each numeric
+objective, reconcile its draft with the newly merged remote main, predecessor
+report/CI, current architecture, current `CRITICAL.md`, and relevant live host
+facts; replace all draft/VERIFY markers and make exact decisions.
+
+The drafts embody intended outcome, scope, non-goals, acceptance and verification
+burden. Do not casually reinvent the project or discard them for convenience.
+Refine details, split an unreviewable scope, or reorder only when verified reality
+requires it, preserving dependency gates and explaining material deviations.
+
 ## Multi-GPU law
 
-Expected physical GPU1 RTX 2080 Ti-class 22/24GB is hypothesis. Before any GPU
-order verify every device index/UUID/PCI/name/VRAM/process, driver/CUDA/PyTorch,
-`/dev/shm`, and free ports. Launch service with `CUDA_VISIBLE_DEVICES=1`, use
-logical `cuda:0`, pin UUID. Never touch GPU0 or unrelated workloads. One process/
-worker/request initially. No system driver/firewall/network/service mutation in
-ordinary objectives.
+Human/operator preflight on 2026-08-23 observed physical GPU1 as an ordinary
+NVIDIA GeForce RTX 2080 Ti with **11264 MiB** VRAM, UUID
+`GPU-c457dbaf-991c-dc23-c781-0dc030776dd8`; GPU0 was another 11264-MiB RTX 2080 Ti
+with an unrelated Python workload. Treat this as planning evidence, not permanent
+runtime truth. Before every GPU order verify every device index/UUID/PCI/name/VRAM/
+process, driver/CUDA/PyTorch, `/dev/shm`, and free ports. Launch service with
+`CUDA_VISIBLE_DEVICES=1`, use logical `cuda:0`, pin/verify UUID. Never touch GPU0
+or unrelated workloads even if GPU0 later appears idle. One process/worker/request
+initially. With ~11 GB VRAM, never assume SAM2+CLIP+BLIP3 co-residency; Objective
+003 must measure and choose an explicit safe supported strategy. No system driver/
+firewall/network/service mutation in ordinary objectives.
 
 ## Human work preloading and Human Judgment Postloading
 
 HWP concentrates human judgment before the loop in architecture, constraints,
-roadmap and acceptance criteria. Therefore strategic is expected to decide—not
-stop merely because a security, trust-model or architecture choice is
-consequential or uncomfortable.
+roadmap, detailed preloaded objective drafts and acceptance criteria. Therefore
+strategic is expected to decide—not stop merely because a security, trust-model
+or architecture choice is consequential or uncomfortable.
 
 When existing law/evidence does not resolve a dilemma, strategic MUST investigate,
 choose the best provisional option, prefer least privilege/reversibility, require
@@ -80,7 +99,8 @@ weaken it. Autonomous mitigation is appended as an update; only a human-appended
 
 ## Strategic remit
 
-- translate intent into PR-sized objectives;
+- preserve and operationalize the preloaded 000–006 objective sequence;
+- translate each draft into a live-evidence-reconciled PR-sized final order;
 - independently query GitHub/host before order and review;
 - choose `NNN-a` vs same-PR next letter;
 - specify scope/non-goals/observable acceptance/tests/docs/security/resource
