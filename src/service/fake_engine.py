@@ -80,6 +80,8 @@ class FakeEngine:
         artifact_sink=None,
         stages=None,
         class_labels=(),
+        render_visualizations=None,
+        service_safe_artifact_names=False,
     ) -> SingleImageOutcome:
         if not isinstance(image_rgb, np.ndarray) or image_rgb.ndim < 2:
             raise ValueError("image_rgb must be a decoded numpy array")

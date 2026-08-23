@@ -45,6 +45,8 @@ from .batch import (
 from .core import (
     CoreConfig,
     CoreError,
+    ArtifactBudget,
+    BoundedMemoryArtifactSink,
     FilesystemArtifactSink,
     IdentityMaskOverflowError,
     IdentityMaskProjectionError,
@@ -79,6 +81,8 @@ __all__ = [
     "filter_by_area_bbox",
     "CoreConfig",
     "CoreError",
+    "ArtifactBudget",
+    "BoundedMemoryArtifactSink",
     "FilesystemArtifactSink",
     "IdentityMaskOverflowError",
     "IdentityMaskProjectionError",

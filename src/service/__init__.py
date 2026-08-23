@@ -12,6 +12,7 @@ from .errors import ERROR_STATUS_CODES, ServiceError
 from .fake_engine import FakeEngine
 from .gate import InferenceGate
 from .settings import SERVICE_MODEL_ID, ServiceSettings
+from .rle import MaskRLEError, decode_mask_rle, encode_mask_rle
 
 __all__ = [
     "create_app",
@@ -23,4 +24,7 @@ __all__ = [
     "ERROR_STATUS_CODES",
     "ServiceSettings",
     "SERVICE_MODEL_ID",
+    "MaskRLEError",
+    "encode_mask_rle",
+    "decode_mask_rle",
 ]

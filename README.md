@@ -2,7 +2,7 @@
 
 # ZAP-IT - Zero-shot Anything Pipeline for Image Tasks
 
-ZAP-IT is a high level computer‑vision pipeline built from foundational models. The goal is to describe your image task in a YAML file and let the pipeline handle segmentation, classification and optional geometry analysis. It assumes access to a powerful machine (GPU) so you can focus on the configuration rather than coding details.
+ZAP-IT is a high level computer‑vision pipeline built from foundational models. The goal is to describe your image task in a YAML file and let the pipeline handle segmentation and classification while preserving optional legacy geometry helpers. The local service deliberately does not activate geometry.
 
 - **Installation instructions:** see [INSTALL.md](INSTALL.md).
 - **Configuration guide:** see [docs/CONFIG.md](docs/CONFIG.md).
@@ -80,6 +80,8 @@ CI runs formatting/lint/wheel-build checks plus the CPU test suite on Python
 - [INSTALL.md](INSTALL.md) – CPU development and pinned GPU runtime setup.
 - [docs/CONFIG.md](docs/CONFIG.md) – YAML configuration reference.
 - [docs/API.md](docs/API.md) – HTTP `/v1/completions` contract (CPU/fake-engine).
+- [docs/OUTPUT-PARITY.md](docs/OUTPUT-PARITY.md) – complete legacy/current output classification.
+- [docs/SERVICE-DATASHEET.md](docs/SERVICE-DATASHEET.md) – bounded service levels, limits, evidence and prerequisites.
 - [ALGORITHMS-DETAILED.md](ALGORITHMS-DETAILED.md) – stage-by-stage walkthrough.
 - [docs/ALGORITHMS.md](docs/ALGORITHMS.md) – short algorithm overview.
 - [CONTRIBUTING.md](CONTRIBUTING.md) – development workflow and rules.

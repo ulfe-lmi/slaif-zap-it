@@ -22,10 +22,11 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.requests import ClientDisconnect
 from starlette.responses import Response
 
 from src.core.config import CoreConfig, config_digest
-from src.core.sinks import MemoryArtifactSink
+from src.core.sinks import ArtifactBudget, ArtifactSinkError, BoundedMemoryArtifactSink
 from src.runtime.strategy import RuntimePolicy, UnsupportedProfileError
 
 from .auth import verify_bearer_key
@@ -40,7 +41,9 @@ from .errors import ServiceError, error_envelope
 from .fake_engine import EngineCallable, FakeEngine
 from .gate import InferenceGate
 from .image_input import decode_image_safely
+from .metrics import CONTENT_TYPE_LATEST, ServiceMetrics
 from .multipart import parse_strict_multipart
+from .resources import check_request_resources
 from .schemas import (
     CompletionResponse,
     ErrorEnvelope,
@@ -95,9 +98,10 @@ async def _run_engine_bounded(
     core_config: CoreConfig,
     frame_id: str,
     verbosity: int,
-    sink: MemoryArtifactSink,
+    sink: BoundedMemoryArtifactSink,
     class_labels: List[str],
     timeout_seconds: float,
+    render_visualizations: bool,
 ) -> Any:
     """Run one inference in the single-slot executor under the deadline."""
 
@@ -116,6 +120,8 @@ async def _run_engine_bounded(
             artifact_sink=sink,
             stages=None,
             class_labels=tuple(class_labels),
+            render_visualizations=render_visualizations,
+            service_safe_artifact_names=True,
         )
 
     future = loop.run_in_executor(executor, _call)
@@ -157,6 +163,7 @@ def create_app(
         retry_after_seconds=resolved_settings.retry_after_seconds,
     )
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="zap-it-inference")
+    metrics = ServiceMetrics()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -173,6 +180,15 @@ def create_app(
             return
         verify_bearer_key(request.headers.get("authorization"), expected)
 
+    def record_error(request: Request, code: str) -> None:
+        if getattr(request.state, "metrics_recorded", False):
+            return
+        metrics.observe_error(code)
+        started = getattr(request.state, "metrics_started", None)
+        if started is not None:
+            metrics.request_duration.observe(time.monotonic() - started)
+        request.state.metrics_recorded = True
+
     app = FastAPI(
         title="SLAIF ZAP-IT API",
         version=SCHEMA_VERSION,
@@ -184,9 +200,11 @@ def create_app(
     app.state.gate = gate
     app.state.runtime_policy = runtime_policy
     app.state.started_monotonic = time.monotonic()
+    app.state.metrics = metrics
 
     @app.exception_handler(ServiceError)
     async def handle_service_error(request: Request, exc: ServiceError) -> JSONResponse:
+        record_error(request, exc.code)
         return _error_response(request, exc)
 
     @app.exception_handler(RequestValidationError)
@@ -212,6 +230,7 @@ def create_app(
 
     @app.exception_handler(Exception)
     async def handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
+        record_error(request, "internal_error")
         return JSONResponse(
             status_code=500,
             content=error_envelope(
@@ -228,12 +247,20 @@ def create_app(
 
     @app.get("/readyz", tags=["health"])
     async def readyz(request: Request) -> JSONResponse:
+        try:
+            check_request_resources(resolved_settings)
+        except ServiceError as exc:
+            metrics.readiness.set(0)
+            record_error(request, exc.code)
+            return _error_response(request, exc)
         state = readiness()
         request_id = _request_id_for(request)
         if state.ready:
+            metrics.readiness.set(1)
             return JSONResponse(
                 status_code=200, content={"status": "ready", "detail": state.detail}
             )
+        metrics.readiness.set(0)
         return JSONResponse(
             status_code=503,
             content=error_envelope("not_ready", state.detail or "engine not ready", request_id),
@@ -250,6 +277,10 @@ def create_app(
         504: {"model": ErrorEnvelope},
         507: {"model": ErrorEnvelope},
     }
+
+    @app.get("/metrics", tags=["health"], dependencies=[Depends(require_api_key)])
+    async def metrics_endpoint() -> Response:
+        return Response(content=metrics.scrape(), media_type=CONTENT_TYPE_LATEST)
 
     @app.post(
         "/v1/completions",
@@ -301,6 +332,7 @@ def create_app(
     )
     async def completions(request: Request) -> Any:
         started = time.monotonic()
+        request.state.metrics_started = started
         request_id = _request_id_for(request)
         settings_local = resolved_settings
 
@@ -308,6 +340,7 @@ def create_app(
             return settings_local.request_deadline_seconds - (time.monotonic() - started)
 
         content_length = request.headers.get("content-length")
+        check_request_resources(settings_local)
         if content_length and content_length.isdigit():
             if int(content_length) > settings_local.max_request_bytes:
                 raise ServiceError(
@@ -318,22 +351,32 @@ def create_app(
         content_type = request.headers.get("content-type", "")
         chunks: List[bytes] = []
         streamed_total = 0
-        async for chunk in request.stream():
-            if not chunk:
-                continue
-            streamed_total += len(chunk)
-            if streamed_total > settings_local.max_request_bytes:
-                raise ServiceError(
-                    "request body exceeds the maximum allowed size",
-                    code="payload_too_large",
-                )
-            chunks.append(chunk)
+        try:
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                streamed_total += len(chunk)
+                if streamed_total > settings_local.max_request_bytes:
+                    raise ServiceError(
+                        "request body exceeds the maximum allowed size",
+                        code="payload_too_large",
+                    )
+                chunks.append(chunk)
+        except ClientDisconnect as exc:
+            raise ServiceError("request was cancelled before completion", code="cancelled") from exc
         parsed = parse_strict_multipart(content_type, chunks, settings_local)
 
         image_rgb = decode_image_safely(
-            parsed.image_bytes, max_decoded_pixels=settings_local.max_decoded_pixels
+            parsed.image_bytes,
+            max_decoded_pixels=settings_local.max_decoded_pixels,
+            max_width=settings_local.max_image_width,
+            max_height=settings_local.max_image_height,
         )
-        validated = parse_hostile_config(parsed.config_bytes, verbosity=parsed.verbosity)
+        validated = parse_hostile_config(
+            parsed.config_bytes,
+            verbosity=parsed.verbosity,
+            max_visualization_streams=settings_local.max_visualization_streams,
+        )
         core_config = CoreConfig.from_mapping(validated.effective_mapping)
         if runtime_policy is not None:
             try:
@@ -343,17 +386,27 @@ def create_app(
 
         ready = readiness()
         if not ready.ready:
+            metrics.readiness.set(0)
             raise ServiceError(ready.detail or "engine not ready", code="not_ready")
+        metrics.readiness.set(1)
 
         class_labels = list(validated.class_labels)
-        sink = MemoryArtifactSink()
+        sink = BoundedMemoryArtifactSink(
+            ArtifactBudget(
+                max_artifacts=settings_local.max_debug_artifacts,
+                max_single_bytes=settings_local.max_single_artifact_bytes,
+                max_total_bytes=settings_local.max_total_raw_artifact_bytes,
+            )
+        )
         loop = asyncio.get_running_loop()
         try:
             async with gate.slot():
+                metrics.active.set(1)
                 budget = remaining_budget()
                 if budget <= 0:
                     raise ServiceError("request deadline exceeded", code="timeout")
                 try:
+                    inference_started = time.monotonic()
                     outcome = await _run_engine_bounded(
                         engine,
                         loop=loop,
@@ -365,24 +418,38 @@ def create_app(
                         sink=sink,
                         class_labels=class_labels,
                         timeout_seconds=budget,
+                        render_visualizations=parsed.verbosity >= 3,
                     )
+                    metrics.inference_duration.observe(time.monotonic() - inference_started)
+                    metrics.update_gpu()
                 except asyncio.TimeoutError as exc:
+                    metrics.inference_duration.observe(time.monotonic() - inference_started)
                     raise ServiceError(
                         "inference exceeded the request deadline", code="timeout"
                     ) from exc
                 except asyncio.CancelledError as exc:
+                    metrics.inference_duration.observe(time.monotonic() - inference_started)
                     raise ServiceError(
                         "request was cancelled before completion", code="cancelled"
                     ) from exc
                 except ServiceError:
+                    metrics.inference_duration.observe(time.monotonic() - inference_started)
                     raise
+                except ArtifactSinkError as exc:
+                    metrics.inference_duration.observe(time.monotonic() - inference_started)
+                    raise ServiceError(
+                        "artifact budget exceeded", code="response_too_large"
+                    ) from exc
                 except Exception as exc:
+                    metrics.inference_duration.observe(time.monotonic() - inference_started)
                     raise ServiceError(
                         "inference failed inside the engine",
                         code="inference_failure",
                     ) from exc
         except asyncio.CancelledError:
             raise ServiceError("request was cancelled before completion", code="cancelled")
+        finally:
+            metrics.active.set(0)
 
         class_mapping: Dict[str, int] = {}
         for index, label in enumerate(class_labels):
@@ -397,8 +464,16 @@ def create_app(
             class_mapping=class_mapping,
             config_warnings=validated.warnings,
             runtime_metadata=runtime_metadata or {},
+            max_objects=settings_local.max_objects,
+            max_response_artifacts=settings_local.max_response_artifacts,
+            max_single_artifact_bytes=settings_local.max_single_artifact_bytes,
+            max_total_raw_artifact_bytes=settings_local.max_total_raw_artifact_bytes,
+            max_mask_rle_runs_per_object=settings_local.max_mask_rle_runs_per_object,
+            max_mask_rle_runs_total=settings_local.max_mask_rle_runs_total,
+            max_response_bytes=settings_local.max_response_bytes,
         )
 
+        serialization_started = time.monotonic()
         if parsed.response_format == "zip":
             payload = build_completion_zip(
                 outcome,
@@ -406,15 +481,41 @@ def create_app(
                 sink=sink,
                 max_bytes=settings_local.max_response_bytes,
             )
-            return Response(
+            response = Response(
                 content=payload,
                 media_type="application/zip",
                 headers={"Content-Disposition": 'attachment; filename="zap-it-result.zip"'},
             )
+            metrics.serialization_duration.observe(time.monotonic() - serialization_started)
+            metrics.update_gpu()
+            metrics.observe_success(
+                verbosity=parsed.verbosity,
+                response_format="zip",
+                response_bytes=len(payload),
+                objects=len(outcome.result.objects),
+                artifacts=len(outcome.result.rendered)
+                + (1 if parsed.verbosity >= 1 else 0)
+                + len(sink.artifacts()),
+            )
+            metrics.request_duration.observe(time.monotonic() - started)
+            request.state.metrics_recorded = True
+            return response
 
         document = build_completion_json(outcome, context, sink=sink)
         bound_json_size(document, settings_local.max_response_bytes)
-        return JSONResponse(status_code=200, content=document)
+        response = JSONResponse(status_code=200, content=document)
+        metrics.serialization_duration.observe(time.monotonic() - serialization_started)
+        metrics.update_gpu()
+        metrics.observe_success(
+            verbosity=parsed.verbosity,
+            response_format="json",
+            response_bytes=len(response.body or b""),
+            objects=len(outcome.result.objects),
+            artifacts=len(document["service"].get("artifacts", [])),
+        )
+        metrics.request_duration.observe(time.monotonic() - started)
+        request.state.metrics_recorded = True
+        return response
 
     return app
 
