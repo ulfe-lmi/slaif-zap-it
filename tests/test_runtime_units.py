@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import shutil
+from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -39,6 +42,15 @@ class _FakeCuda:
 
 def _fake_torch(**kwargs):
     return SimpleNamespace(cuda=_FakeCuda(**kwargs))
+
+
+@pytest.fixture
+def shm_test_root():
+    root = Path("/dev/shm") / f"zap-it-pytest-{uuid4().hex}"
+    try:
+        yield root
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def test_launch_environment_is_the_physical_gpu1_contract():
@@ -124,8 +136,8 @@ def test_readiness_provider_fails_closed_without_the_launch_mask():
     assert "strict GPU mode" in state.detail
 
 
-def test_shm_workspace_has_opaque_permissions_and_cleans_up(tmp_path):
-    root = ensure_shm_root(tmp_path / "shm")
+def test_shm_workspace_has_opaque_permissions_and_cleans_up(shm_test_root):
+    root = ensure_shm_root(shm_test_root)
     assert root.stat().st_mode & 0o777 == 0o700
     with ShmWorkspace(root) as workspace:
         request_dir = workspace.path
@@ -140,11 +152,52 @@ def test_shm_workspace_has_opaque_permissions_and_cleans_up(tmp_path):
     assert not request_dir.exists()
 
 
-def test_shm_root_refuses_insecure_existing_directory(tmp_path):
-    root = tmp_path / "shm"
+def test_shm_root_accepts_a_canonical_descendant(shm_test_root):
+    root = ensure_shm_root(shm_test_root / "nested" / ".." / "canonical")
+    assert root == (shm_test_root / "canonical").resolve()
+    assert root.stat().st_mode & 0o777 == 0o700
+
+
+def test_shm_root_refuses_insecure_existing_directory(shm_test_root):
+    root = shm_test_root
     root.mkdir(mode=0o755)
+    root.chmod(0o755)
     with pytest.raises(ShmError, match="0700"):
         ensure_shm_root(root)
+
+
+@pytest.mark.parametrize("kind", ["escape", "root", "persistent"])
+def test_shm_root_rejects_outside_or_non_descendant_paths(kind, shm_test_root):
+    if kind == "escape":
+        candidate = Path("/dev/shm/../../tmp") / f"zap-it-{uuid4().hex}"
+    elif kind == "root":
+        candidate = Path("/dev/shm")
+    else:
+        candidate = Path("/tmp") / f"zap-it-{uuid4().hex}"
+    with pytest.raises(ShmError, match="strict descendant") as excinfo:
+        ensure_shm_root(candidate)
+    if kind != "root":
+        assert str(candidate) not in str(excinfo.value)
+
+
+def test_shm_root_rejects_intermediate_symlink_escape(shm_test_root, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    intermediate = shm_test_root / "intermediate"
+    shm_test_root.mkdir(mode=0o700)
+    intermediate.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ShmError, match="strict descendant"):
+        ensure_shm_root(intermediate / "child")
+
+
+def test_shm_root_rejects_final_symlink(shm_test_root, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    shm_test_root.mkdir(mode=0o700)
+    final = shm_test_root / "final"
+    final.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ShmError, match="must not be a symlink"):
+        ensure_shm_root(final)
 
 
 def test_port_check_requires_both_inspection_and_transient_bind():

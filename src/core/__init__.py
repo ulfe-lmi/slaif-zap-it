@@ -22,7 +22,7 @@ from .config import (
     config_digest,
 )
 from .engine import StageFunctions, default_stage_functions, run_single_image
-from .errors import CoreError, IdentityMaskOverflowError
+from .errors import CoreError, IdentityMaskOverflowError, IdentityMaskProjectionError
 from .ordering import mask_centroid_rc, order_final_objects, ordering_key
 from .renderers import (
     MAX_IDENTITY_OBJECTS,
@@ -56,6 +56,7 @@ __all__ = [
     "CoreError",
     "FilesystemArtifactSink",
     "IdentityMaskOverflowError",
+    "IdentityMaskProjectionError",
     "MAX_IDENTITY_OBJECTS",
     "MemoryArtifactSink",
     "ObjectResult",

@@ -153,6 +153,18 @@ def preflight(config: LiveServiceConfig) -> PreflightReport:
     )
 
 
+def _startup_log_line(config: LiveServiceConfig, report: PreflightReport) -> str:
+    """Format startup evidence without disclosing operator filesystem paths."""
+    return (
+        "serve_local: pid={pid} host={host}:{port} shm_ready=true shm_free_mib={shm_free}"
+    ).format(
+        pid=os.getpid(),
+        host=config.host,
+        port=config.port,
+        shm_free=report.shm_free_mib,
+    )
+
+
 def masked_gpu_uuid(
     nvidia_smi: str = "nvidia-smi", *, torch_module: Any | None = None
 ) -> str | None:
@@ -486,12 +498,6 @@ def main() -> int:
     if not config.strict_gpu:
         print("serve_local: strict physical GPU1 mode cannot be disabled", file=sys.stderr)
         return 2
-    if not str(Path(config.tmp_root)).startswith("/dev/shm/"):
-        print(
-            "serve_local: SLAIF_ZAP_IT_TMP_ROOT must be an ephemeral directory below /dev/shm",
-            file=sys.stderr,
-        )
-        return 2
     if config.model_cache_root:
         # Set the operator cache before importing model libraries.  The value
         # is never printed or returned to a client.
@@ -578,16 +584,7 @@ def main() -> int:
     )
 
     # Sanitized facts only: identifiers, counts, timings. Never secrets.
-    print(
-        "serve_local: pid={pid} host={host}:{port} shm_root={shm} shm_free_mib={shm_free}".format(
-            pid=os.getpid(),
-            host=config.host,
-            port=config.port,
-            shm=report.shm_root,
-            shm_free=report.shm_free_mib,
-        ),
-        flush=True,
-    )
+    print(_startup_log_line(config, report), flush=True)
     print(
         "serve_local: device mode={mode} count={count} logical={logical} "
         "name={name} uuid={uuid} total_mib={total} strategy={strategy} "

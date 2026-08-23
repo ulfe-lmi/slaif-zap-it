@@ -35,7 +35,7 @@ try:
 except ImportError:  # pragma: no cover - pillow is a required dependency
     Image = None  # type: ignore[assignment]
 
-from src.core.errors import CoreError
+from src.core.errors import CoreError, IdentityMaskProjectionError
 from src.core.renderers import render_identity_png, render_yolo
 from src.core.results import ObjectResult, SingleImageOutcome
 from src.core.sinks import ArtifactSink, ArtifactSinkError, StoredArtifact
@@ -181,6 +181,11 @@ def build_completion_json(
             result.objects, image_width=result.image_width, image_height=result.image_height
         )
         artifacts = _collect_artifacts(outcome, context, sink, warnings_out)
+    except IdentityMaskProjectionError as exc:
+        raise ServiceError(
+            "identity representation cannot preserve a distinct source pixel for every object",
+            code="inference_failure",
+        ) from exc
     except CoreError as exc:
         raise ServiceError(
             "pipeline result exceeds the representable object limit",

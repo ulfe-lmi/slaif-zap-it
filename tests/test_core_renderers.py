@@ -11,6 +11,7 @@ from src.core import (
     MAX_IDENTITY_OBJECTS,
     ObjectResult,
     IdentityMaskOverflowError,
+    IdentityMaskProjectionError,
     format_yolo_line,
     render_identity_png,
     render_yolo,
@@ -113,6 +114,58 @@ def test_service_identity_projection_preserves_fully_occluded_ids():
     assert decoded[0, 1] == 2
 
 
+def test_service_identity_projection_reassigns_an_occluded_object_deterministically():
+    small = obj(1, [(0, 0)], shape=(2, 2))
+    large = obj(2, [(0, 0), (0, 1), (1, 0)], shape=(2, 2))
+    decoded = np.array(
+        Image.open(
+            io.BytesIO(render_identity_png([small, large], width=2, height=2, ensure_all_ids=True))
+        )
+    )
+    assert decoded[0, 0] == 1
+    assert decoded[0, 1] == 2
+
+
+def test_service_identity_projection_solves_adversarial_two_object_reservation():
+    first = obj(1, [(0, 0), (0, 1)], shape=(1, 3))
+    second = obj(2, [(0, 0)], shape=(1, 3))
+    blocker = obj(3, [(0, 0), (0, 1), (0, 2)], shape=(1, 3))
+    decoded = np.array(
+        Image.open(
+            io.BytesIO(
+                render_identity_png(
+                    [first, second, blocker], width=3, height=1, ensure_all_ids=True
+                )
+            )
+        )
+    )
+    assert decoded.tolist() == [[2, 1, 3]]
+
+
+def test_service_identity_projection_performs_three_way_reassignment():
+    first = obj(1, [(0, 0), (0, 1)], shape=(1, 4))
+    second = obj(2, [(0, 0), (0, 2)], shape=(1, 4))
+    third = obj(3, [(0, 0)], shape=(1, 4))
+    blocker = obj(4, [(0, 0), (0, 1), (0, 2), (0, 3)], shape=(1, 4))
+    decoded = np.array(
+        Image.open(
+            io.BytesIO(
+                render_identity_png(
+                    [first, second, third, blocker], width=4, height=1, ensure_all_ids=True
+                )
+            )
+        )
+    )
+    assert decoded.tolist() == [[3, 1, 2, 4]]
+
+
+def test_service_identity_projection_rejects_impossible_distinct_pixels():
+    one = obj(1, [(0, 0)], shape=(1, 1))
+    two = obj(2, [(0, 0)], shape=(1, 1))
+    with pytest.raises(IdentityMaskProjectionError, match="distinct source pixel"):
+        render_identity_png([one, two], width=1, height=1, ensure_all_ids=True)
+
+
 def test_area_tie_wins_by_smaller_instance_id():
     one = obj(1, [(0, 0)], shape=(1, 1))
     two = obj(2, [(0, 0)], shape=(1, 1))
@@ -131,6 +184,19 @@ def test_identity_png_bytes_are_deterministic():
     first = render_identity_png(build(), width=8, height=8)
     second = render_identity_png(build(), width=8, height=8)
     assert first == second
+
+
+def test_service_identity_png_bytes_are_deterministic_after_matching():
+    def build():
+        return [
+            obj(1, [(0, 0), (0, 1)], shape=(1, 3)),
+            obj(2, [(0, 0)], shape=(1, 3)),
+            obj(3, [(0, 0), (0, 1), (0, 2)], shape=(1, 3)),
+        ]
+
+    assert render_identity_png(
+        build(), width=3, height=1, ensure_all_ids=True
+    ) == render_identity_png(build(), width=3, height=1, ensure_all_ids=True)
 
 
 def test_identity_overflow_guard_raises_before_allocation():
