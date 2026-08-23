@@ -4,6 +4,9 @@
 
 ZAP-IT is a high level computer‑vision pipeline built from foundational models. The goal is to describe your image task in a YAML file and let the pipeline handle segmentation and classification while preserving optional legacy geometry helpers. The local service deliberately does not activate geometry.
 
+Version 0.1.0 is an unpublished release candidate. It is a bounded local
+handoff, not a public-release, accuracy, SLA or rights-clearance claim.
+
 - **Installation instructions:** see [INSTALL.md](INSTALL.md).
 - **Configuration guide:** see [docs/CONFIG.md](docs/CONFIG.md).
 - **Algorithms overview:** see [docs/ALGORITHMS.md](docs/ALGORITHMS.md).
@@ -61,7 +64,7 @@ linting, packaging and the unit-test suite:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -e '.[dev]'
+.venv/bin/pip install -e '.[dev,service]'
 .venv/bin/pytest -q --cov=src --cov=modules --cov-report=term-missing
 .venv/bin/ruff format --check .
 .venv/bin/ruff check .
@@ -89,9 +92,15 @@ CI runs formatting/lint/wheel-build checks plus the CPU test suite on Python
 - [SECURITY.md](SECURITY.md) – input/data/host security law.
 - [docs/runtime.md](docs/runtime.md) – Objective 003-a hardware, provenance and measured resource strategy.
 - [docs/RUNBOOK.md](docs/RUNBOOK.md) – operator start/stop, live smoke, evidence and rollback.
+- [docs/GATEWAY-INTEGRATION.md](docs/GATEWAY-INTEGRATION.md) – separate future gateway contract (not implemented).
+- [docs/RELEASE-GATE-INVENTORY.md](docs/RELEASE-GATE-INVENTORY.md) – rights, model, media and repository-setting gates.
+- [CHANGELOG.md](CHANGELOG.md) and [RELEASE_NOTES.md](RELEASE_NOTES.md) – unpublished candidate history and limitations.
 
 ZAP-IT ships the batch CLI, the CPU-tested HTTP contract (`POST
 /v1/completions`) and the operator-controlled Objective 004 loopback launcher.
 The live service is deliberately limited to the measured resident SAM2+CLIP
 profile on freshly verified physical GPU1; BLIP3, LAN/public exposure and
-release readiness remain outside this objective.
+release readiness is governed by the unpublished 0.1.0 candidate gates in
+docs/RELEASE-GATE-INVENTORY.md. Wheels and sdists deliberately contain no
+demos, media, goat fixtures, model weights, caches, outputs or OAP transcript
+material.
