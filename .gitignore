@@ -176,3 +176,6 @@ cython_debug/
 # Generated/legacy artifacts (objective 000-a audit)
 everything.txt
 last_results/
+
+# Operator-only service settings; keep checked-in templates visible.
+deploy/*.env

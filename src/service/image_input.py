@@ -49,7 +49,10 @@ def decode_image_safely(data: bytes, *, max_decoded_pixels: int) -> np.ndarray:
                     code="image_too_large",
                 )
             rgb = opened.convert("RGB")
-            return np.asarray(rgb, dtype=np.uint8)
+            # PIL may expose a read-only view.  Own a writable request-local
+            # buffer so downstream tensor adapters do not emit warnings that
+            # disclose package paths into the operator log.
+            return np.array(rgb, dtype=np.uint8, copy=True)
     except ServiceError:
         raise
     except UnidentifiedImageError as exc:

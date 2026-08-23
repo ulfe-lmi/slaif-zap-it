@@ -30,6 +30,7 @@ def test_src_re_exports_core_surface():
         "CoreError",
         "FilesystemArtifactSink",
         "IdentityMaskOverflowError",
+        "IdentityMaskProjectionError",
         "MemoryArtifactSink",
         "ObjectResult",
         "PipelineResult",

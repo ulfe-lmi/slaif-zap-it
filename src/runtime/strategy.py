@@ -8,6 +8,8 @@ from typing import Any, Mapping
 
 __all__ = [
     "PROFILE_NAMES",
+    "SUPPORTED_RESIDENT_PROFILES",
+    "SUPPORTED_RESIDENT_STRATEGY",
     "RuntimePolicy",
     "RuntimeReadiness",
     "UnsupportedProfileError",
@@ -21,6 +23,12 @@ PROFILE_NAMES = (
     "sam2_blip3",
     "sam2_clip_blip3",
 )
+
+# Objective 003 measured this exact resident combination on the target card.
+# Keep it as an explicit operator invariant for the live launcher; a request
+# cannot select a different strategy or model residency policy.
+SUPPORTED_RESIDENT_STRATEGY = "sam2_clip_resident_blip3_rejected"
+SUPPORTED_RESIDENT_PROFILES = ("sam2", "clip", "sam2_clip")
 
 
 class UnsupportedProfileError(ValueError):
@@ -43,8 +51,8 @@ def _csv(value: str) -> tuple[str, ...]:
 class RuntimePolicy:
     """Immutable operator policy; uploaded YAML cannot change these fields."""
 
-    strategy: str = "sam2_clip_resident_blip3_rejected"
-    supported_profiles: tuple[str, ...] = ("sam2", "clip", "sam2_clip")
+    strategy: str = SUPPORTED_RESIDENT_STRATEGY
+    supported_profiles: tuple[str, ...] = SUPPORTED_RESIDENT_PROFILES
     expected_gpu_uuid: str | None = None
     physical_gpu_index: int = 1
     strict_gpu: bool = True
@@ -116,7 +124,11 @@ class RuntimePolicy:
                 return RuntimeReadiness(False, "strict GPU device evidence is not available")
             if getattr(device_report, "mode", None) != "gpu":
                 return RuntimeReadiness(False, "strict GPU device evidence is not a GPU")
-            if getattr(device_report, "uuid", None) != self.expected_gpu_uuid:
+            visible_uuid = getattr(device_report, "uuid", None)
+            expected_uuid = self.expected_gpu_uuid
+            if expected_uuid and not expected_uuid.startswith("GPU-"):
+                expected_uuid = f"GPU-{expected_uuid}"
+            if visible_uuid != expected_uuid:
                 return RuntimeReadiness(False, "visible GPU UUID does not match the operator pin")
         elif device_report is None:
             return RuntimeReadiness(False, "runtime device evidence is not available")

@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from src.core import ObjectResult, PipelineResult, Provenance, SingleImageOutcome
+from src.service.envelope import ResponseContext, build_completion_json
 from src.service.errors import ERROR_STATUS_CODES, ServiceError, error_envelope
 from src.service.fake_engine import FakeEngine
 from src.service.gate import InferenceGate
@@ -97,6 +99,44 @@ def test_service_error_busy_headers():
     err = ServiceError("busy", code="service_busy", headers={"Retry-After": "7"})
     assert err.status_code == 503
     assert err.headers["Retry-After"] == "7"
+
+
+def test_identity_projection_failure_maps_to_stable_sanitized_service_error():
+    mask = np.ones((1, 1), dtype=bool)
+    objects = (
+        ObjectResult(instance_id=1, source_index=0, mask=mask),
+        ObjectResult(instance_id=2, source_index=1, mask=mask),
+    )
+    result = PipelineResult(
+        image_height=1,
+        image_width=1,
+        roi_box=(0, 0, 0, 0),
+        resize_info={},
+        objects=objects,
+        stage_statuses=(),
+        candidate_counts={},
+        rendered={},
+        warnings=(),
+        timings={},
+        provenance=Provenance(config_digest="digest"),
+    )
+    context = ResponseContext(
+        request_id="req-identity",
+        model_id="zap-it-1",
+        verbosity=1,
+        response_format="json",
+        config_digest="digest",
+        class_mapping={},
+    )
+    with pytest.raises(ServiceError) as excinfo:
+        build_completion_json(
+            SingleImageOutcome(result, segmenter_state=None, clip_state=None, blip3_state=None),
+            context,
+        )
+    assert excinfo.value.code == "inference_failure"
+    assert str(excinfo.value) == (
+        "identity representation cannot preserve a distinct source pixel for every object"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +318,7 @@ def test_decode_png_to_rgb_array():
     array = decode_image_safely(png_bytes(), max_decoded_pixels=10_000)
     assert array.shape == (6, 8, 3)
     assert array.dtype == np.uint8
+    assert array.flags.writeable
 
 
 def test_decode_jpeg_allowed():

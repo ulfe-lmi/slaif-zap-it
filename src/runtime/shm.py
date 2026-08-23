@@ -25,20 +25,28 @@ def ensure_shm_root(
     min_free_bytes: int = 0,
 ) -> Path:
     """Create/validate an operator workspace root with mode 0700."""
-    path = Path(root)
-    if path.exists() and path.is_symlink():
-        raise ShmError("shared-memory root must not be a symlink")
-    try:
-        path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    except OSError as exc:
-        raise ShmError("shared-memory root could not be created") from exc
-    if path.is_symlink() or (path.stat().st_mode & 0o777) != 0o700:
-        raise ShmError("shared-memory root must have mode 0700")
     if min_free_bytes < 0:
         raise ValueError("min_free_bytes must be non-negative")
-    if shm_free_bytes(path) < min_free_bytes:
+    path = Path(root)
+    if path.is_symlink():
+        raise ShmError("shared-memory root must not be a symlink")
+    try:
+        shm_root = Path("/dev/shm").resolve(strict=True)
+        resolved = path.resolve(strict=False)
+        relative = resolved.relative_to(shm_root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ShmError("shared-memory root must be a strict descendant of /dev/shm") from exc
+    if not relative.parts:
+        raise ShmError("shared-memory root must be a strict descendant of /dev/shm")
+    try:
+        resolved.mkdir(parents=True, exist_ok=True, mode=0o700)
+    except OSError as exc:
+        raise ShmError("shared-memory root could not be created") from exc
+    if path.is_symlink() or resolved.is_symlink() or (resolved.stat().st_mode & 0o777) != 0o700:
+        raise ShmError("shared-memory root must have mode 0700")
+    if shm_free_bytes(resolved) < min_free_bytes:
         raise ShmError("shared-memory capacity is below the configured minimum")
-    return path
+    return resolved
 
 
 def _logical_name(name: str) -> str:
@@ -63,6 +71,7 @@ class ShmWorkspace:
 
     def __enter__(self) -> "ShmWorkspace":
         root = ensure_shm_root(self.root, min_free_bytes=self.min_free_bytes)
+        self.root = root
         try:
             created = Path(tempfile.mkdtemp(prefix="req-", dir=root))
             if (created.stat().st_mode & 0o777) != 0o700:

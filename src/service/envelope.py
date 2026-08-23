@@ -35,7 +35,7 @@ try:
 except ImportError:  # pragma: no cover - pillow is a required dependency
     Image = None  # type: ignore[assignment]
 
-from src.core.errors import CoreError
+from src.core.errors import CoreError, IdentityMaskProjectionError
 from src.core.renderers import render_identity_png, render_yolo
 from src.core.results import ObjectResult, SingleImageOutcome
 from src.core.sinks import ArtifactSink, ArtifactSinkError, StoredArtifact
@@ -67,6 +67,7 @@ class ResponseContext:
     config_digest: str
     class_mapping: Mapping[str, int]
     config_warnings: Sequence[str] = field(default_factory=tuple)
+    runtime_metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 def _artifact(name: str, media_type: str, payload: bytes) -> Dict[str, Any]:
@@ -129,7 +130,10 @@ def _collect_artifacts(
     artifacts: List[Dict[str, Any]] = []
     if context.verbosity >= 1:
         png = render_identity_png(
-            result.objects, width=result.image_width, height=result.image_height
+            result.objects,
+            width=result.image_width,
+            height=result.image_height,
+            ensure_all_ids=True,
         )
         artifacts.append(_artifact("identity-mask.png", "image/png", png))
     if context.verbosity >= 3:
@@ -177,6 +181,11 @@ def build_completion_json(
             result.objects, image_width=result.image_width, image_height=result.image_height
         )
         artifacts = _collect_artifacts(outcome, context, sink, warnings_out)
+    except IdentityMaskProjectionError as exc:
+        raise ServiceError(
+            "identity representation cannot preserve a distinct source pixel for every object",
+            code="inference_failure",
+        ) from exc
     except CoreError as exc:
         raise ServiceError(
             "pipeline result exceeds the representable object limit",
@@ -218,7 +227,10 @@ def build_completion_json(
         service_meta["timings_ms"] = {
             key: round(value, 3) for key, value in sorted(result.timings.items())
         }
-        service_meta["provenance"] = result.provenance.as_dict()
+        provenance = result.provenance.as_dict()
+        if context.runtime_metadata:
+            provenance["runtime"] = dict(context.runtime_metadata)
+        service_meta["provenance"] = provenance
         service_meta["warnings"] = list(result.warnings) + warnings_out
 
     return {
