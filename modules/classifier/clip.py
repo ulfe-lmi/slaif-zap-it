@@ -16,7 +16,16 @@ class _DryRunClipFilter:
         self.verbosity = verbosity
         self.log_print = log_print_func if log_print_func else (lambda *a, **k: None)
 
-    def filter_masks(self, masks, _image_np, _out_dir, _fname_stem, artifact_sink=None):
+    def filter_masks(
+        self,
+        masks,
+        _image_np,
+        _out_dir,
+        _fname_stem,
+        artifact_sink=None,
+        safe_artifact_names=False,
+    ):
+        del safe_artifact_names
         for idx, mask in enumerate(masks, start=1):
             label = f"dryrun region {idx}"
             mask["clip_label"] = label
@@ -153,7 +162,9 @@ class _ClipFilter:
         )
         return (best_label, best_score, best_prompt)
 
-    def filter_masks(self, masks, image_np, out_dir, fname_stem, artifact_sink=None):
+    def filter_masks(
+        self, masks, image_np, out_dir, fname_stem, artifact_sink=None, safe_artifact_names=False
+    ):
         if self.text_embeds is None or self.text_embeds.numel() == 0 or not masks:
             return masks
 
@@ -178,8 +189,13 @@ class _ClipFilter:
             m["clip_score"] = best_sc
 
             if self.debug and best_prompt is not None:
-                safe_prompt = best_prompt.replace(" ", "_").replace(",", "_")
-                patch_file = f"{fname_stem}_patch{i}_{safe_prompt}.jpg"
+                if safe_artifact_names:
+                    # Prompts are user-provided content.  They must never
+                    # become artifact names or log/path fragments in service.
+                    patch_file = f"{fname_stem}_clip-patch{i:04d}.jpg"
+                else:
+                    safe_prompt = best_prompt.replace(" ", "_").replace(",", "_")
+                    patch_file = f"{fname_stem}_patch{i}_{safe_prompt}.jpg"
                 if artifact_sink is not None:
                     artifact_sink.store_image(patch_file, patch)
                 else:
@@ -260,13 +276,25 @@ def run(
     out_dir = params.get("out_dir")
     fname_stem = params.get("fname_stem", "image")
     artifact_sink = params.get("artifact_sink")
+    safe_artifact_names = bool(params.get("safe_artifact_names", False))
 
     if artifact_sink is not None:
         processed_masks = clip_filter.filter_masks(
-            masks, image_np, out_dir, fname_stem, artifact_sink=artifact_sink
+            masks,
+            image_np,
+            out_dir,
+            fname_stem,
+            artifact_sink=artifact_sink,
+            safe_artifact_names=safe_artifact_names,
         )
     else:
-        processed_masks = clip_filter.filter_masks(masks, image_np, out_dir, fname_stem)
+        processed_masks = clip_filter.filter_masks(
+            masks,
+            image_np,
+            out_dir,
+            fname_stem,
+            safe_artifact_names=safe_artifact_names,
+        )
     meta = {
         "num_masks": len(processed_masks) if processed_masks is not None else 0,
     }

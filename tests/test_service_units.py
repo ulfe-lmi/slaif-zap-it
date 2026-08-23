@@ -161,12 +161,14 @@ def test_settings_from_environment_overrides():
         "SLAIF_ZAP_IT_MAX_IMAGE_UPLOAD_BYTES": "1024",
         "SLAIF_ZAP_IT_QUEUE_DEPTH": "2",
         "SLAIF_ZAP_IT_REQUEST_DEADLINE_SECONDS": "3.5",
+        "SLAIF_ZAP_IT_TEST_SERIALIZATION_DELAY_SECONDS": "0.25",
     }
     s = ServiceSettings.from_environment(env)
     assert s.api_key == "secret-key"
     assert s.max_image_upload_bytes == 1024
     assert s.queue_depth == 2
     assert s.request_deadline_seconds == 3.5
+    assert s.test_serialization_delay_seconds == 0.25
 
 
 def test_settings_reject_invalid_values():

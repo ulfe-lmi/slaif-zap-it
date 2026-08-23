@@ -3,8 +3,8 @@
 The legacy CLI loads a trusted YAML file into a plain ``dict``. The core needs
 a typed, normalized view of only the *algorithmic* fields, plus an explicit
 classification of which top-level keys are batch/deployment concerns that the
-core must ignore. This module is deliberately NOT the future hostile-upload
-validator (Objective 002); it only establishes the boundary.
+core must ignore. The service's separate hostile-upload validator applies its
+untrusted request policy before this trusted core boundary.
 """
 
 from __future__ import annotations
