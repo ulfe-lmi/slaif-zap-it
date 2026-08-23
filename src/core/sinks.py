@@ -166,8 +166,8 @@ class BoundedMemoryArtifactSink(MemoryArtifactSink):
         self.budget = budget or ArtifactBudget()
         if self.budget.max_artifacts <= 0:
             raise ValueError("max_artifacts must be positive")
-        if self.budget.max_single_bytes <= 0 or self.budget.max_total_bytes <= 0:
-            raise ValueError("artifact byte budgets must be positive")
+        if self.budget.max_single_bytes <= 0 or self.budget.max_total_bytes < 0:
+            raise ValueError("artifact byte budgets must be non-negative")
         self.raw_bytes = 0
 
     def _commit(self, artifact: StoredArtifact) -> StoredArtifact:

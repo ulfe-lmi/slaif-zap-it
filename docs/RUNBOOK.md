@@ -125,6 +125,10 @@ they are never selectable through request YAML. For response-size rejection,
 use a deliberately small operator cap such as
 `SLAIF_ZAP_IT_MAX_RESPONSE_BYTES=1` and run
 `--response-too-large`, then restore the normal cap before the final E2E.
+For a bounded serialization-deadline recovery check, an operator may combine a
+short `SLAIF_ZAP_IT_REQUEST_DEADLINE_SECONDS` with the private
+`SLAIF_ZAP_IT_TEST_SERIALIZATION_DELAY_SECONDS` hook; both are process-start
+settings and are unset for normal operation.
 
 The service keeps request bytes, decoded arrays, results, and artifacts in
 memory. If a future compatibility stage needs a path, it must use a unique

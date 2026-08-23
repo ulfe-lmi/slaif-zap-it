@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import time
 import zipfile
 
 import numpy as np
@@ -15,9 +16,11 @@ from src.core import ArtifactBudget, BoundedMemoryArtifactSink
 from src.core.config import CoreConfig
 from src.core.engine import StageFunctions, run_single_image
 from src.service import ReadyState, ServiceSettings, create_app
+from src.service.envelope import ResponseContext, build_completion_json
 from src.service.errors import ServiceError
 from src.service.fake_engine import FakeEngine
 from src.service.rle import MaskRLEError, decode_mask_rle, encode_mask_rle
+from src.service import rle as rle_module
 from src.service import resources
 from src.service.yaml_input import parse_hostile_config
 
@@ -54,6 +57,58 @@ def test_mask_rle_run_limit_fails_before_unbounded_growth():
     checkerboard = np.indices((8, 8)).sum(axis=0) % 2 == 0
     with pytest.raises(MaskRLEError):
         encode_mask_rle(checkerboard, max_runs=4)
+
+
+def test_mask_rle_chunked_uniform_and_checkerboard_are_deterministic(monkeypatch):
+    monkeypatch.setattr(rle_module, "RLE_CHUNK_ELEMENTS", 17)
+    uniform = np.zeros((41, 53), dtype=bool)
+    uniform_encoded = encode_mask_rle(uniform, max_runs=10)
+    assert uniform_encoded["counts"] == [41 * 53]
+    assert np.array_equal(uniform, decode_mask_rle(uniform_encoded))
+
+    checkerboard = np.indices((41, 53)).sum(axis=0) % 2 == 0
+    first = encode_mask_rle(checkerboard, max_runs=10_000)
+    second = encode_mask_rle(checkerboard, max_runs=10_000)
+    assert first == second
+    assert len(first["counts"]) > 41
+    assert np.array_equal(checkerboard, decode_mask_rle(first))
+
+
+def test_mask_rle_large_uniform_has_bounded_transition_work():
+    mask = np.zeros((1024, 1024), dtype=bool)
+    encoded = encode_mask_rle(mask, max_runs=4)
+    assert encoded["counts"] == [mask.size]
+
+
+def test_serialization_deadline_rejects_then_successfully_reuses_result():
+    engine = FakeEngine()
+    outcome = engine(
+        np.zeros((6, 8, 3), dtype=np.uint8),
+        CoreConfig(alpha=0.5, roi_val=None, resize_val=None, prep_debug=False),
+    )
+    expired = ResponseContext(
+        request_id="deadline",
+        model_id="zap-it-1",
+        verbosity=3,
+        response_format="json",
+        config_digest="digest",
+        class_mapping={},
+        deadline_monotonic=time.monotonic() - 1,
+    )
+    with pytest.raises(ServiceError) as excinfo:
+        build_completion_json(outcome, expired)
+    assert excinfo.value.code == "timeout"
+
+    recovered = ResponseContext(
+        request_id="recovered",
+        model_id="zap-it-1",
+        verbosity=3,
+        response_format="json",
+        config_digest="digest",
+        class_mapping={},
+    )
+    document = build_completion_json(outcome, recovered)
+    assert document["service"]["objects"]
 
 
 def test_visualization_policy_rejects_panoptic_and_unsafe_ids():
@@ -128,6 +183,71 @@ def test_service_rejects_image_dimensions_before_pixel_allocation():
     assert response.json()["error"]["code"] == "image_too_large"
 
 
+def test_visualization_raw_budget_rejects_before_engine_and_accepts_boundary():
+    config = b"""alpha: 0.5
+visualization:
+  sam2:
+    - id: view-a
+      renderer: annotated
+    - id: view-b
+      renderer: alpha-overlay
+"""
+    raw_bytes = 8 * 6 * 3 * 2
+    rejected_engine = FakeEngine()
+    rejected_app = create_app(
+        engine=rejected_engine,
+        settings=ServiceSettings(
+            max_single_artifact_bytes=raw_bytes,
+            max_total_raw_artifact_bytes=raw_bytes - 1,
+        ),
+        readiness_provider=lambda: ReadyState(True, "ready"),
+    )
+    with TestClient(rejected_app) as client:
+        rejected = client.post("/v1/completions", files=_files(config), data={"verbosity": "3"})
+    assert rejected.status_code == 413
+    assert rejected.json()["error"]["code"] == "response_too_large"
+    assert rejected_engine.calls == []
+
+    observed_budgets = []
+
+    class _BudgetSpy(FakeEngine):
+        def __call__(self, *args, **kwargs):
+            observed_budgets.append(kwargs["artifact_sink"].budget.max_total_bytes)
+            return super().__call__(*args, **kwargs)
+
+    accepted_app = create_app(
+        engine=_BudgetSpy(),
+        settings=ServiceSettings(
+            max_single_artifact_bytes=raw_bytes,
+            max_total_raw_artifact_bytes=raw_bytes,
+        ),
+        readiness_provider=lambda: ReadyState(True, "ready"),
+    )
+    with TestClient(accepted_app) as client:
+        accepted = client.post("/v1/completions", files=_files(config), data={"verbosity": "3"})
+    assert accepted.status_code == 200
+    assert observed_budgets == [0]
+
+
+def test_l2_visualization_config_does_not_trigger_raw_preflight():
+    config = b"""alpha: 0.5
+visualization:
+  sam2:
+    - id: view
+      renderer: annotated
+"""
+    engine = FakeEngine()
+    app = create_app(
+        engine=engine,
+        settings=ServiceSettings(max_single_artifact_bytes=128),
+        readiness_provider=lambda: ReadyState(True, "ready"),
+    )
+    with TestClient(app) as client:
+        response = client.post("/v1/completions", files=_files(config), data={"verbosity": "2"})
+    assert response.status_code == 200
+    assert len(engine.calls) == 1
+
+
 def test_l0_l2_disable_core_visualization_execution():
     called = []
 
@@ -192,3 +312,18 @@ def test_resource_admission_fails_before_engine_and_recovers(monkeypatch, resour
     assert response.status_code == 507
     assert response.json()["error"]["code"] == code
     assert engine.calls == []
+
+
+def test_resource_admission_recovers_without_resident_engine_leak(monkeypatch):
+    engine = FakeEngine()
+    app = create_app(engine=engine, readiness_provider=lambda: ReadyState(True, "ready"))
+    monkeypatch.setattr(resources, "host_available_bytes", lambda: 0)
+    with TestClient(app) as client:
+        rejected = client.post("/v1/completions", files=_files())
+        assert rejected.status_code == 507
+        assert rejected.json()["error"]["code"] == "insufficient_memory"
+
+        monkeypatch.setattr(resources, "host_available_bytes", lambda: 1 << 60)
+        recovered = client.post("/v1/completions", files=_files())
+    assert recovered.status_code == 200
+    assert len(engine.calls) == 1

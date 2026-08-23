@@ -24,7 +24,7 @@ from src.core.results import ObjectResult, SingleImageOutcome
 from src.core.sinks import ArtifactSink, ArtifactSinkError, StoredArtifact
 
 from .errors import ServiceError
-from .rle import MaskRLEError, encode_mask_rle
+from .rle import MaskRLEError, SerializationTimeout, encode_mask_rle
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -63,6 +63,7 @@ class ResponseContext:
     max_mask_rle_runs_per_object: int = _DEFAULT_RLE_RUNS_PER_OBJECT
     max_mask_rle_runs_total: int = _DEFAULT_RLE_RUNS_TOTAL
     max_response_bytes: int = 256 * 1024 * 1024
+    deadline_monotonic: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,15 @@ def _encode_png(array: np.ndarray) -> bytes:
     buffer = io.BytesIO()
     Image.fromarray(array).save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def _check_absolute_deadline(deadline_monotonic: Optional[float]) -> None:
+    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+        raise ServiceError("request serialization exceeded the deadline", code="timeout")
+
+
+def _check_deadline(context: ResponseContext) -> None:
+    _check_absolute_deadline(context.deadline_monotonic)
 
 
 def _object_record(
@@ -160,6 +170,7 @@ def _collect_raw_artifacts(
 ) -> tuple[_RawArtifact, ...]:
     result = outcome.result
     artifacts: List[_RawArtifact] = []
+    _check_deadline(context)
     if context.verbosity >= 1:
         try:
             payload = render_identity_png(
@@ -174,20 +185,27 @@ def _collect_raw_artifacts(
                 code="inference_failure",
             ) from exc
         artifacts.append(_RawArtifact("identity-mask.png", "image/png", payload))
+        _check_deadline(context)
     if context.verbosity >= 3:
         for key, array in sorted(result.rendered.items(), key=lambda item: str(item[0])):
+            _check_deadline(context)
             safe_key = str(key).replace("\\", "_").strip("/.") or "stream"
             artifacts.append(
                 _RawArtifact(f"visualization/{safe_key}.png", "image/png", _encode_png(array))
             )
+            _check_deadline(context)
         if sink is not None:
-            artifacts.extend(_stored_sink_artifact(stored) for stored in sink.artifacts())
+            for stored in sink.artifacts():
+                _check_deadline(context)
+                artifacts.append(_stored_sink_artifact(stored))
+                _check_deadline(context)
     if len(artifacts) > context.max_response_artifacts:
         raise ServiceError(
             "response artifact count exceeds the configured limit", code="response_too_large"
         )
     total = 0
     for artifact in artifacts:
+        _check_deadline(context)
         size = len(artifact.payload)
         if size > context.max_single_artifact_bytes:
             raise ServiceError(
@@ -198,12 +216,18 @@ def _collect_raw_artifacts(
             raise ServiceError(
                 "raw artifacts exceed the configured total size limit", code="response_too_large"
             )
+    _check_deadline(context)
     return tuple(artifacts)
 
 
 def _artifact_descriptor(
-    artifact: _RawArtifact, *, include_data: bool, json_skeleton: bool = False
+    artifact: _RawArtifact,
+    *,
+    include_data: bool,
+    json_skeleton: bool = False,
+    deadline_monotonic: Optional[float] = None,
 ) -> Dict[str, Any]:
+    _check_absolute_deadline(deadline_monotonic)
     descriptor: Dict[str, Any] = {
         "name": artifact.name,
         "media_type": artifact.media_type,
@@ -212,7 +236,9 @@ def _artifact_descriptor(
         "size": len(artifact.payload),
     }
     if include_data:
+        _check_absolute_deadline(deadline_monotonic)
         descriptor["data"] = base64.b64encode(artifact.payload).decode("ascii")
+        _check_absolute_deadline(deadline_monotonic)
     elif json_skeleton:
         descriptor["data"] = ""
     return descriptor
@@ -222,6 +248,7 @@ def _prepare(
     outcome: SingleImageOutcome, context: ResponseContext, sink: Optional[ArtifactSink]
 ) -> _PreparedResponse:
     result = outcome.result
+    _check_deadline(context)
     if len(result.objects) > context.max_objects:
         raise ServiceError("object count exceeds the configured limit", code="response_too_large")
     try:
@@ -232,12 +259,21 @@ def _prepare(
         if context.verbosity >= 3:
             total_runs = 0
             for index, obj in enumerate(result.objects):
-                rle = encode_mask_rle(obj.mask, max_runs=context.max_mask_rle_runs_per_object)
+                _check_deadline(context)
+                rle = encode_mask_rle(
+                    obj.mask,
+                    max_runs=context.max_mask_rle_runs_per_object,
+                    deadline_monotonic=context.deadline_monotonic,
+                )
                 total_runs += len(rle["counts"])
                 if total_runs > context.max_mask_rle_runs_total:
                     raise ServiceError("mask RLE run limit exceeded", code="response_too_large")
                 rle_records[index] = rle
+            _check_deadline(context)
         artifacts = _collect_raw_artifacts(outcome, context, sink)
+        _check_deadline(context)
+    except SerializationTimeout as exc:
+        raise ServiceError("request serialization exceeded the deadline", code="timeout") from exc
     except MaskRLEError as exc:
         raise ServiceError("mask RLE run limit exceeded", code="response_too_large") from exc
     except CoreError as exc:
@@ -255,10 +291,16 @@ def _prepare(
     }
     if context.verbosity >= 1:
         service_meta["artifacts"] = [
-            _artifact_descriptor(artifact, include_data=False, json_skeleton=True)
+            _artifact_descriptor(
+                artifact,
+                include_data=False,
+                json_skeleton=True,
+                deadline_monotonic=context.deadline_monotonic,
+            )
             for artifact in artifacts
         ]
     if context.verbosity >= 2:
+        _check_deadline(context)
         service_meta["objects"] = [
             _object_record(
                 obj,
@@ -269,6 +311,7 @@ def _prepare(
             for index, obj in enumerate(result.objects)
         ]
     if context.verbosity >= 3:
+        _check_deadline(context)
         service_meta["stage_statuses"] = [status.as_dict() for status in result.stage_statuses]
         service_meta["candidate_counts"] = dict(result.candidate_counts)
         service_meta["timings_ms"] = {
@@ -279,6 +322,7 @@ def _prepare(
             provenance["runtime"] = dict(context.runtime_metadata)
         service_meta["provenance"] = provenance
         service_meta["warnings"] = list(result.warnings) + list(context.config_warnings)
+    _check_deadline(context)
     return _PreparedResponse(
         {
             "id": f"cmpl-{context.request_id}",
@@ -295,11 +339,19 @@ def _prepare(
     )
 
 
-def _json_size_upper_bound(prepared: _PreparedResponse) -> int:
+def _json_size_upper_bound(
+    prepared: _PreparedResponse, *, deadline_monotonic: Optional[float] = None
+) -> int:
     # Use the same JSON encoder options as the final document so the base64
     # expansion delta is exact before any payload is encoded.
+    _check_absolute_deadline(deadline_monotonic)
     skeleton = json.dumps(prepared.document, ensure_ascii=False).encode("utf-8")
-    return len(skeleton) + sum(4 * ((len(item.payload) + 2) // 3) for item in prepared.artifacts)
+    total = len(skeleton)
+    for item in prepared.artifacts:
+        _check_absolute_deadline(deadline_monotonic)
+        total += 4 * ((len(item.payload) + 2) // 3)
+    _check_absolute_deadline(deadline_monotonic)
+    return total
 
 
 def build_completion_json(
@@ -310,17 +362,33 @@ def build_completion_json(
 ) -> Dict[str, Any]:
     """Prepare one bounded JSON response, rejecting before base64 expansion."""
     prepared = _prepare(outcome, context, sink)
-    if _json_size_upper_bound(prepared) > context.max_response_bytes:
+    if (
+        _json_size_upper_bound(prepared, deadline_monotonic=context.deadline_monotonic)
+        > context.max_response_bytes
+    ):
         raise ServiceError(
             "assembled JSON response exceeds the maximum response size",
             code="response_too_large",
         )
+    _check_deadline(context)
     document = json.loads(json.dumps(prepared.document))
+    _check_deadline(context)
     if context.verbosity >= 1:
-        document["service"]["artifacts"] = [
-            _artifact_descriptor(artifact, include_data=True) for artifact in prepared.artifacts
-        ]
-    if len(json.dumps(document, ensure_ascii=False).encode("utf-8")) > context.max_response_bytes:
+        descriptors = []
+        for artifact in prepared.artifacts:
+            _check_deadline(context)
+            descriptors.append(
+                _artifact_descriptor(
+                    artifact,
+                    include_data=True,
+                    deadline_monotonic=context.deadline_monotonic,
+                )
+            )
+        document["service"]["artifacts"] = descriptors
+    _check_deadline(context)
+    encoded_size = len(json.dumps(document, ensure_ascii=False).encode("utf-8"))
+    _check_deadline(context)
+    if encoded_size > context.max_response_bytes:
         raise ServiceError(
             "assembled JSON response exceeds the maximum response size",
             code="response_too_large",
@@ -348,12 +416,24 @@ def build_completion_zip(
 ) -> bytes:
     """Build ZIP directly from prepared raw bytes, without a base64 duplicate."""
     prepared = _prepare(outcome, context, sink)
+    _check_deadline(context)
     manifest = json.loads(json.dumps(prepared.document))
+    _check_deadline(context)
     if context.verbosity >= 1:
-        manifest["service"]["artifacts"] = [
-            _artifact_descriptor(artifact, include_data=False) for artifact in prepared.artifacts
-        ]
+        descriptors = []
+        for artifact in prepared.artifacts:
+            _check_deadline(context)
+            descriptors.append(
+                _artifact_descriptor(
+                    artifact,
+                    include_data=False,
+                    deadline_monotonic=context.deadline_monotonic,
+                )
+            )
+        manifest["service"]["artifacts"] = descriptors
+    _check_deadline(context)
     manifest_bytes = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    _check_deadline(context)
     raw_total = (
         len(manifest_bytes)
         + len(prepared.yolo_text.encode("utf-8"))
@@ -367,11 +447,17 @@ def build_completion_zip(
         )
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        _check_deadline(context)
         _zip_entry(archive, "manifest.json", manifest_bytes)
+        _check_deadline(context)
         _zip_entry(archive, "detections.yolo.txt", prepared.yolo_text.encode("utf-8"))
+        _check_deadline(context)
         for artifact in prepared.artifacts:
+            _check_deadline(context)
             _zip_entry(archive, artifact.name, artifact.payload)
+            _check_deadline(context)
     payload = buffer.getvalue()
+    _check_deadline(context)
     if len(payload) > max_bytes:
         raise ServiceError(
             "assembled ZIP response exceeds the maximum response size",
@@ -380,9 +466,17 @@ def build_completion_zip(
     return payload
 
 
-def bound_json_size(document: Mapping[str, Any], max_response_bytes: int) -> None:
+def bound_json_size(
+    document: Mapping[str, Any],
+    max_response_bytes: int,
+    *,
+    deadline_monotonic: Optional[float] = None,
+) -> None:
     """Reject an already-built JSON document over the configured cap."""
-    if len(json.dumps(document).encode("utf-8")) > max_response_bytes:
+    _check_absolute_deadline(deadline_monotonic)
+    encoded_size = len(json.dumps(document).encode("utf-8"))
+    _check_absolute_deadline(deadline_monotonic)
+    if encoded_size > max_response_bytes:
         raise ServiceError(
             "assembled JSON response exceeds the maximum response size",
             code="response_too_large",

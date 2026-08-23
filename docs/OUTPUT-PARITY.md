@@ -1,5 +1,12 @@
 # ZAP-IT output parity matrix
 
+> **NONREDISTRIBUTABLE — local academic E2E only; excluded from packages/release
+> fixtures.** The repository's goat image/config assets are permitted only for
+> operator-run local regression on the documented central crop. They are not
+> accuracy goldens, CI fixtures, package data or release evidence. Objective
+> 006 must review and exclude these existing assets from distributable artifacts
+> unless human rights clearance changes.
+
 This matrix is the authoritative inventory for the current YAML pipeline. A
 module or helper is not evidence that the live service produces its output.
 
@@ -29,6 +36,7 @@ module or helper is not evidence that the live service produces its output.
 | `images` and `video` batch output mappings | API parser ignores them with a warning | Legacy CLI-only; unsafe/inappropriate for service |
 | `export_yolo_det` dataset export | Trusted batch adapter writes dataset annotations | Legacy CLI-only |
 | Raw request/config/result persistence | Not used by the service | Unsafe/inappropriate for service |
+| Goat academic fixture E2E | Local central-50% crop only; sanitized aliases/digests and bounded resource evidence | **NONREDISTRIBUTABLE — local academic E2E only; excluded from packages/release fixtures** |
 
 ## Renderer policy
 
@@ -36,8 +44,15 @@ The service accepts only bounded in-memory annotated streams under
 `visualization.sam2`, `visualization.clip`, or `visualization.blip3`, with safe
 logical IDs and a maximum of eight streams. `panoptic`, unknown renderers,
 composite/file/video rules, unsafe IDs and malformed entries are rejected before
-inference. The CLI retains its existing trusted configuration and writer
-behavior.
+inference. Before L3 inference, the service reserves exactly
+`stream_count * height * width * 3` raw RGB bytes for annotated streams, rejects
+single-stream or combined-budget overflow, and subtracts that reservation from
+the debug sink budget. The CLI retains its existing trusted configuration and
+writer behavior.
+
+RLE, artifact preparation, base64 expansion and ZIP entry assembly share the
+absolute request deadline. RLE transition detection is vectorized in fixed-size
+column-major chunks and never retains a second full-size flattened mask.
 
 ## Geometry status
 
