@@ -53,3 +53,37 @@ ZAP-IT is a high level computer‑vision pipeline built from foundational models
 - `assets/` – logos and banner image used in this README.
 
 The original README contained raw console logs from early experiments; it has been replaced with this concise guide. Use the documentation files for further details.
+
+## Development and testing
+
+A CPU-only development environment (no torch/GPU/model downloads) supports
+linting, packaging and the unit-test suite:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e '.[dev]'
+.venv/bin/pytest -q --cov=src --cov=modules --cov-report=term-missing
+.venv/bin/ruff format --check .
+.venv/bin/ruff check .
+```
+
+Note that the CPU suite exercises pipeline logic through a documented stub
+harness; see [docs/BASELINE.md](docs/BASELINE.md) for the precise inventory of
+what is tested against real libraries versus stubs. The conda GPU environment
+from [INSTALL.md](INSTALL.md) remains required for actual inference.
+
+CI runs formatting/lint/wheel-build checks plus the CPU test suite on Python
+3.10–3.12 and CodeQL security analysis on every PR and push to `main`.
+
+## Additional documentation
+
+- [INSTALL.md](INSTALL.md) – environment setup (conda GPU stack and CPU dev env).
+- [docs/CONFIG.md](docs/CONFIG.md) – YAML configuration reference.
+- [ALGORITHMS-DETAILED.md](ALGORITHMS-DETAILED.md) – stage-by-stage walkthrough.
+- [docs/ALGORITHMS.md](docs/ALGORITHMS.md) – short algorithm overview.
+- [CONTRIBUTING.md](CONTRIBUTING.md) – development workflow and rules.
+- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) – license/provenance pointers.
+- [SECURITY.md](SECURITY.md) – input/data/host security law.
+
+ZAP-IT currently provides the batch CLI described above only; there is no HTTP
+service yet, so no service-readiness claims are made here.

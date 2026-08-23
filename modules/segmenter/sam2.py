@@ -1,4 +1,5 @@
 """SAM2-based segmentation module with unified interface."""
+
 from __future__ import annotations
 
 from typing import Any, Dict, Tuple
@@ -26,24 +27,28 @@ class _DryRunMaskGenerator:
                 x0, x1 = col_edges[c], col_edges[c + 1]
                 seg = np.zeros((height, width), dtype=bool)
                 seg[y0:y1, x0:x1] = True
-                masks.append({
-                    "segmentation": seg,
-                    "area": int(seg.sum()),
-                    "predicted_iou": 1.0,
-                    "stability_score": 1.0,
-                    "bbox": [int(x0), int(y0), int(x1), int(y1)],
-                    "dryrun_id": counter,
-                })
+                masks.append(
+                    {
+                        "segmentation": seg,
+                        "area": int(seg.sum()),
+                        "predicted_iou": 1.0,
+                        "stability_score": 1.0,
+                        "bbox": [int(x0), int(y0), int(x1), int(y1)],
+                        "dryrun_id": counter,
+                    }
+                )
 
         return masks
 
 
-def initialize(config: Dict[str, Any],
-               *,
-               dryrun: bool = False,
-               device=None,
-               verbosity: int = 1,
-               log_print_func=None) -> Dict[str, Any]:
+def initialize(
+    config: Dict[str, Any],
+    *,
+    dryrun: bool = False,
+    device=None,
+    verbosity: int = 1,
+    log_print_func=None,
+) -> Dict[str, Any]:
     """Prepare the SAM2 runtime objects and return the initial state."""
 
     log = log_print_func or (lambda *a, **k: None)
@@ -83,12 +88,14 @@ def initialize(config: Dict[str, Any],
     return {"mask_generator": mask_generator}
 
 
-def run(state: Dict[str, Any] | None,
-        params: Dict[str, Any],
-        images,
-        *,
-        verbosity: int = 1,
-        log_print_func=None) -> Tuple[Dict[str, Any], Any, Dict[str, Any]]:
+def run(
+    state: Dict[str, Any] | None,
+    params: Dict[str, Any],
+    images,
+    *,
+    verbosity: int = 1,
+    log_print_func=None,
+) -> Tuple[Dict[str, Any], Any, Dict[str, Any]]:
     """Run SAM2 segmentation using the unified module interface."""
 
     log = log_print_func or (lambda *a, **k: None)

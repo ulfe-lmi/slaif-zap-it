@@ -22,7 +22,7 @@ def test_run_auto_initializes(monkeypatch):
     masks = [{"segmentation": np.zeros((1, 1), dtype=bool)}]
     state, processed, meta = clip_mod.run(
         None,
-        {"dryrun": True, "config": {} , "masks": masks, "out_dir": ".", "fname_stem": "img"},
+        {"dryrun": True, "config": {}, "masks": masks, "out_dir": ".", "fname_stem": "img"},
         np.zeros((1, 1, 3), dtype=np.uint8),
     )
     assert "clip_filter" in state

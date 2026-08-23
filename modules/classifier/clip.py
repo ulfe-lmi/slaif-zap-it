@@ -1,4 +1,5 @@
 """CLIP-based classifier module with unified interface."""
+
 from __future__ import annotations
 
 import os
@@ -20,14 +21,18 @@ class _DryRunClipFilter:
             label = f"dryrun region {idx}"
             mask["clip_label"] = label
             mask["clip_score"] = 1.0
-        self.log_print(f"[_DryRunClipFilter] assigned {len(masks)} dry-run labels", 2, self.verbosity)
+        self.log_print(
+            f"[_DryRunClipFilter] assigned {len(masks)} dry-run labels", 2, self.verbosity
+        )
         return masks
 
 
 class _ClipFilter:
     """Lightweight wrapper around a CLIP model for zero-shot classification."""
 
-    def __init__(self, clip_config: Dict[str, Any], device="cuda", verbosity=1, log_print_func=None):
+    def __init__(
+        self, clip_config: Dict[str, Any], device="cuda", verbosity=1, log_print_func=None
+    ):
         self.verbosity = verbosity
         self.device = device
         self.debug = bool(clip_config.get("debug", False))
@@ -72,7 +77,9 @@ class _ClipFilter:
 
         if self.all_prompts:
             with torch.no_grad():
-                text_inputs = self.processor(text=self.all_prompts, return_tensors="pt", padding=True).to(self.device)
+                text_inputs = self.processor(
+                    text=self.all_prompts, return_tensors="pt", padding=True
+                ).to(self.device)
                 text_emb = self.model.get_text_features(**text_inputs)
                 self.text_embeds = text_emb / text_emb.norm(dim=-1, keepdim=True)
         else:
@@ -100,13 +107,13 @@ class _ClipFilter:
 
         t1 = time.time()
         self.log_print(
-            f"[_ClipFilter] mask={mask_idx}, best_label='{best_label}', score={best_score:.4f}, time={t1-t0:.2f}s",
-            2, self.verbosity
+            f"[_ClipFilter] mask={mask_idx}, best_label='{best_label}', score={best_score:.4f}, time={t1 - t0:.2f}s",
+            2,
+            self.verbosity,
         )
         return (best_label, best_score, best_prompt)
 
     def filter_masks(self, masks, image_np, out_dir, fname_stem):
-        torch = self._torch
         if self.text_embeds is None or self.text_embeds.numel() == 0 or not masks:
             return masks
 
@@ -125,27 +132,31 @@ class _ClipFilter:
             y_min = max(0, y_min - pad)
             y_max = min(H - 1, y_max + pad)
 
-            patch = image_np[y_min:y_max + 1, x_min:x_max + 1, :]
+            patch = image_np[y_min : y_max + 1, x_min : x_max + 1, :]
             best_lbl, best_sc, best_prompt = self.classify_single(patch, i)
             m["clip_label"] = best_lbl
             m["clip_score"] = best_sc
 
             if self.debug and best_prompt is not None:
-                safe_prompt = best_prompt.replace(' ', '_').replace(',', '_')
+                safe_prompt = best_prompt.replace(" ", "_").replace(",", "_")
                 patch_file = f"{fname_stem}_patch{i}_{safe_prompt}.jpg"
                 patch_path = os.path.join(out_dir, patch_file)
                 Image.fromarray(patch).save(patch_path, "JPEG")
-                self.log_print(f"[_ClipFilter debug] => wrote debug patch: {patch_file}", 2, self.verbosity)
+                self.log_print(
+                    f"[_ClipFilter debug] => wrote debug patch: {patch_file}", 2, self.verbosity
+                )
 
         return masks
 
 
-def initialize(config: Dict[str, Any],
-               *,
-               dryrun: bool = False,
-               device="cuda",
-               verbosity: int = 1,
-               log_print_func=None) -> Dict[str, Any]:
+def initialize(
+    config: Dict[str, Any],
+    *,
+    dryrun: bool = False,
+    device="cuda",
+    verbosity: int = 1,
+    log_print_func=None,
+) -> Dict[str, Any]:
     """Create a CLIP filter or a dry-run stub."""
 
     log = log_print_func or (lambda *a, **k: None)
@@ -159,12 +170,14 @@ def initialize(config: Dict[str, Any],
     return {"clip_filter": clip_filter}
 
 
-def run(state: Dict[str, Any] | None,
-        params: Dict[str, Any],
-        images,
-        *,
-        verbosity: int = 1,
-        log_print_func=None) -> Tuple[Dict[str, Any], Any, Dict[str, Any]]:
+def run(
+    state: Dict[str, Any] | None,
+    params: Dict[str, Any],
+    images,
+    *,
+    verbosity: int = 1,
+    log_print_func=None,
+) -> Tuple[Dict[str, Any], Any, Dict[str, Any]]:
     """Run CLIP classification using the unified module interface."""
     log = log_print_func or (lambda *a, **k: None)
     if state is None:
@@ -176,7 +189,9 @@ def run(state: Dict[str, Any] | None,
     if clip_filter is None:
         clip_cfg = params.get("config", {})
         device = params.get("device", "cuda")
-        init_state = initialize(clip_cfg, dryrun=dryrun_mode, device=device, verbosity=verbosity, log_print_func=log)
+        init_state = initialize(
+            clip_cfg, dryrun=dryrun_mode, device=device, verbosity=verbosity, log_print_func=log
+        )
         state.update(init_state)
         clip_filter = state.get("clip_filter")
 

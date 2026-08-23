@@ -3,7 +3,6 @@ from types import SimpleNamespace
 
 
 def test_cli_accepts_video_input(monkeypatch, tmp_path):
-    import src
 
     video = tmp_path / "movie.mp4"
     video.write_bytes(b"fake")

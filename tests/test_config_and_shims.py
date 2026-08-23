@@ -1,6 +1,3 @@
-import io
-from pathlib import Path
-
 import pytest
 
 from src.config import _print_enabled_modules, load_config

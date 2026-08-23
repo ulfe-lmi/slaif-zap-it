@@ -29,12 +29,8 @@ if __name__ == "__main__":
         description="ZAP-IT Zero-shot Anything Pipeline for Image Tasks."
     )
     input_group = parser.add_mutually_exclusive_group(required=True)
-    input_group.add_argument(
-        "--input-image-dir", help="Directory with .jpg images to segment"
-    )
-    input_group.add_argument(
-        "--input-video", help="Video file to segment frame-by-frame"
-    )
+    input_group.add_argument("--input-image-dir", help="Directory with .jpg images to segment")
+    input_group.add_argument("--input-video", help="Video file to segment frame-by-frame")
     parser.add_argument("--config", required=True, help="Path to config.yaml")
     parser.add_argument("--recursive", action="store_true", help="Process subdirectories.")
     parser.add_argument(
@@ -51,9 +47,7 @@ if __name__ == "__main__":
         "--output-video-dir",
         help="Root directory where video outputs should be written.",
     )
-    parser.add_argument(
-        "--randomize", action="store_true", help="Process images in random order"
-    )
+    parser.add_argument("--randomize", action="store_true", help="Process images in random order")
     parser.add_argument("--ngpu", type=int, default=1, help="Number of GPUs to use in parallel")
     parser.add_argument(
         "--dryrun", action="store_true", help="Enable dry-run mode for SAM2/CLIP/BLIP3"
