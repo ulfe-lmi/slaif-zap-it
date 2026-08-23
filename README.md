@@ -86,8 +86,10 @@ CI runs formatting/lint/wheel-build checks plus the CPU test suite on Python
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) – license/provenance pointers.
 - [SECURITY.md](SECURITY.md) – input/data/host security law.
 - [docs/runtime.md](docs/runtime.md) – Objective 003-a hardware, provenance and measured resource strategy.
+- [docs/RUNBOOK.md](docs/RUNBOOK.md) – operator start/stop, live smoke, evidence and rollback.
 
-ZAP-IT currently ships the batch CLI, the objective-002 CPU-only HTTP contract
-(`POST /v1/completions`) exercised with a deterministic fake engine, and a
-qualified-but-not-activated GPU1 runtime. Objective 004 is still required
-before any live service listener or readiness claim is enabled.
+ZAP-IT ships the batch CLI, the CPU-tested HTTP contract (`POST
+/v1/completions`) and the operator-controlled Objective 004 loopback launcher.
+The live service is deliberately limited to the measured resident SAM2+CLIP
+profile on freshly verified physical GPU1; BLIP3, LAN/public exposure and
+release readiness remain outside this objective.

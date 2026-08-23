@@ -16,7 +16,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Mapping, Optional
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -119,7 +119,20 @@ async def _run_engine_bounded(
         )
 
     future = loop.run_in_executor(executor, _call)
-    return await asyncio.wait_for(future, timeout=max(timeout_seconds, 0.0))
+    try:
+        # Cancellation of an asyncio Future cannot stop a synchronous model
+        # call already running in a worker thread. Shield it, drain it before
+        # releasing the inference gate, and keep the one-model/one-request
+        # invariant true even on timeout or client disconnect.
+        return await asyncio.wait_for(asyncio.shield(future), timeout=max(timeout_seconds, 0.0))
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        try:
+            await asyncio.shield(future)
+        except BaseException:
+            # The outer request returns a sanitized timeout/cancel result; the
+            # worker's exception must not escape as a second response failure.
+            pass
+        raise
 
 
 def create_app(
@@ -128,6 +141,8 @@ def create_app(
     settings: Optional[ServiceSettings] = None,
     readiness_provider: Optional[ReadinessProvider] = None,
     runtime_policy: Optional[RuntimePolicy] = None,
+    runtime_metadata: Optional[Mapping[str, Any]] = None,
+    shutdown_callback: Optional[Callable[[], None]] = None,
 ) -> FastAPI:
     """Build the service app around an explicitly injected engine.
 
@@ -148,7 +163,9 @@ def create_app(
         try:
             yield
         finally:
-            executor.shutdown(wait=False, cancel_futures=True)
+            if shutdown_callback is not None:
+                shutdown_callback()
+            executor.shutdown(wait=True, cancel_futures=True)
 
     def require_api_key(request: Request) -> None:
         expected = resolved_settings.api_key
@@ -379,6 +396,7 @@ def create_app(
             config_digest=config_digest(core_config),
             class_mapping=class_mapping,
             config_warnings=validated.warnings,
+            runtime_metadata=runtime_metadata or {},
         )
 
         if parsed.response_format == "zip":

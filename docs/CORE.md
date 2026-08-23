@@ -121,6 +121,15 @@ raise `IdentityMaskOverflowError` before any pixel allocation. The
 single-valued projection deliberately loses overlap facts; overlap truth
 remains available through each object's retained source mask.
 
+The service calls the renderer with `ensure_all_ids=True`. If the baseline
+winner would fully occlude an object, this mode seeds each already-visible ID
+with a row-major baseline representative and completes the missing IDs with a
+deterministic augmenting-path assignment. Candidate masks are traversed in
+baseline-visible then row-major order through fixed-size chunks, so matching
+auxiliary memory is bounded by object count plus one documented scan chunk;
+the algorithm does not claim a globally minimum number of raster overrides.
+If distinct pixels cannot be reserved, rendering fails closed.
+
 Both renderers consume the ordered object tuple, so bijective agreement
 between object list, YOLO lines and PNG IDs holds by construction.
 
