@@ -64,6 +64,7 @@ def initialize(
     device=None,
     verbosity: int = 1,
     log_print_func=None,
+    local_files_only: bool = False,
 ) -> Dict[str, Any]:
     """Prepare the SAM2 runtime objects and return the initial state."""
 
@@ -99,6 +100,7 @@ def initialize(
             repo_id=model_name,
             filename=checkpoint_name,
             revision=str(revision),
+            local_files_only=local_files_only,
         )
         model = build_sam2(config_file=config_file, ckpt_path=checkpoint, device=target_device)
     else:

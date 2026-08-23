@@ -121,6 +121,11 @@ raise `IdentityMaskOverflowError` before any pixel allocation. The
 single-valued projection deliberately loses overlap facts; overlap truth
 remains available through each object's retained source mask.
 
+The service calls the renderer with `ensure_all_ids=True`. If the baseline
+winner would fully occlude an object, this mode reserves the first available
+row-major source pixel for that object so IDs remain bijective with YOLO and
+object records. If distinct pixels cannot be reserved, rendering fails closed.
+
 Both renderers consume the ordered object tuple, so bijective agreement
 between object list, YOLO lines and PNG IDs holds by construction.
 

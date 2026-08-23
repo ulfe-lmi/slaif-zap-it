@@ -20,6 +20,8 @@ from .strategy import (
     PROFILE_NAMES,
     RuntimePolicy,
     RuntimeReadiness,
+    SUPPORTED_RESIDENT_PROFILES,
+    SUPPORTED_RESIDENT_STRATEGY,
     UnsupportedProfileError,
 )
 
@@ -32,6 +34,8 @@ __all__ = [
     "PortCheck",
     "RuntimePolicy",
     "RuntimeReadiness",
+    "SUPPORTED_RESIDENT_PROFILES",
+    "SUPPORTED_RESIDENT_STRATEGY",
     "ShmError",
     "ShmWorkspace",
     "UnsupportedProfileError",

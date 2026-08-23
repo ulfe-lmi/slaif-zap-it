@@ -103,6 +103,16 @@ def test_larger_area_object_wins_contested_pixels():
     assert decoded[0, 1] == 2
 
 
+def test_service_identity_projection_preserves_fully_occluded_ids():
+    small = obj(1, [(0, 0)], shape=(2, 2))
+    large = obj(2, [(0, 0), (0, 1), (1, 0)], shape=(2, 2))
+    png_bytes = render_identity_png([small, large], width=2, height=2, ensure_all_ids=True)
+    decoded = np.array(Image.open(io.BytesIO(png_bytes)))
+    assert set(np.unique(decoded)) == {0, 1, 2}
+    assert decoded[0, 0] == 1
+    assert decoded[0, 1] == 2
+
+
 def test_area_tie_wins_by_smaller_instance_id():
     one = obj(1, [(0, 0)], shape=(1, 1))
     two = obj(2, [(0, 0)], shape=(1, 1))
