@@ -24,6 +24,7 @@ from src.service import (
     create_app,
 )
 from src.service.fake_engine import FakeEngine
+from src.runtime.strategy import RuntimePolicy
 
 IO = __import__("io") if False else io
 
@@ -86,6 +87,29 @@ def test_readyz_with_ready_provider():
     response = client.get("/readyz")
     assert response.status_code == 200
     assert response.json() == {"status": "ready", "detail": "fake engine ready"}
+
+
+def test_operator_runtime_policy_rejects_unqualified_blip3_profile():
+    policy = RuntimePolicy(expected_gpu_uuid="GPU-target", model_registry_ready=True)
+    app = create_app(
+        engine=FakeEngine(),
+        readiness_provider=_ready_provider,
+        runtime_policy=policy,
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post(
+        "/v1/completions",
+        files={
+            "image": ("frame.png", png_bytes(), "image/png"),
+            "config": (
+                "config.yaml",
+                b"blip3:\n  thing:\n    question: 'is this a thing?'\n",
+                "application/yaml",
+            ),
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "unsupported_profile"
 
 
 def test_not_ready_blocks_inference_but_parsing_errors_come_first():

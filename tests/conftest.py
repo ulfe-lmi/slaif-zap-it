@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+LIVE_GPU_TESTS = os.environ.get("ZAP_IT_RUN_GPU") == "1"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -68,7 +69,7 @@ class _NoGrad:
         return False
 
 
-if "torch" not in sys.modules:
+if not LIVE_GPU_TESTS and "torch" not in sys.modules:
     torch_mod = types.ModuleType("torch")
 
     def _device(name="cpu"):
@@ -89,7 +90,7 @@ if "torch" not in sys.modules:
     torch_mod.int64 = np.int64
     sys.modules["torch"] = torch_mod
 
-if "PIL" not in sys.modules:
+if not LIVE_GPU_TESTS and "PIL" not in sys.modules:
     try:
         # Prefer the REAL Pillow when installed so image encoding/decoding is
         # genuinely exercised (mirrors the PyYAML policy below and lets the
@@ -160,7 +161,7 @@ if "PIL" not in sys.modules:
         sys.modules["PIL.Image"] = image_mod
         sys.modules["PIL.ImageOps"] = image_ops_mod
 
-if "detectron2" not in sys.modules:
+if not LIVE_GPU_TESTS and "detectron2" not in sys.modules:
     detectron2_mod = types.ModuleType("detectron2")
     data_mod = types.ModuleType("detectron2.data")
 
@@ -220,7 +221,7 @@ if "detectron2" not in sys.modules:
     sys.modules["detectron2.utils"] = utils_mod
     sys.modules["detectron2.utils.visualizer"] = visualizer_mod
 
-if "huggingface_hub" not in sys.modules:
+if not LIVE_GPU_TESTS and "huggingface_hub" not in sys.modules:
     hf_mod = types.ModuleType("huggingface_hub")
     hf_state = {}
 
@@ -236,7 +237,7 @@ if "huggingface_hub" not in sys.modules:
     hf_mod._state = hf_state
     sys.modules["huggingface_hub"] = hf_mod
 
-if "cv2" not in sys.modules:
+if not LIVE_GPU_TESTS and "cv2" not in sys.modules:
     cv2_mod = types.ModuleType("cv2")
     cv2_mod.Canny = lambda image, threshold1, threshold2, apertureSize=3: np.zeros_like(
         image, dtype=np.uint8
@@ -248,7 +249,7 @@ if "cv2" not in sys.modules:
     cv2_mod.LINE_AA = 0
     sys.modules["cv2"] = cv2_mod
 
-if "yaml" not in sys.modules:
+if not LIVE_GPU_TESTS and "yaml" not in sys.modules:
     try:
         # Prefer the REAL PyYAML when installed so YAML behavior is genuinely
         # exercised (see tests/test_real_yaml_config.py); only stub when absent.
