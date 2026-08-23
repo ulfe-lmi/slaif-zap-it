@@ -64,6 +64,7 @@ from .core import (
     run_single_image,
 )
 from .postprocessing import filter_by_area_bbox
+from .version import __version__
 
 __all__ = [
     "log_print",
@@ -98,4 +99,5 @@ __all__ = [
     "render_identity_png",
     "render_yolo",
     "run_single_image",
+    "__version__",
 ]

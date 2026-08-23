@@ -22,6 +22,7 @@ from src.core.errors import CoreError, IdentityMaskProjectionError
 from src.core.renderers import render_identity_png, render_yolo
 from src.core.results import ObjectResult, SingleImageOutcome
 from src.core.sinks import ArtifactSink, ArtifactSinkError, StoredArtifact
+from src.version import __version__
 
 from .errors import ServiceError
 from .rle import MaskRLEError, SerializationTimeout, encode_mask_rle
@@ -288,6 +289,7 @@ def _prepare(
         "image": {"width": result.image_width, "height": result.image_height},
         "class_mapping": dict(context.class_mapping),
         "config_digest": context.config_digest,
+        "package_version": __version__,
     }
     if context.verbosity >= 1:
         service_meta["artifacts"] = [

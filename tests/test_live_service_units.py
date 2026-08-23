@@ -445,10 +445,14 @@ def test_systemd_template_is_uninstalled_optional_asset():
     unit = REPO_ROOT / "deploy" / "zap-it-local.service"
     text = unit.read_text()
     assert "[Unit]" in text and "[Install]" in text
-    assert "ExecStart=" in text and "serve_local.sh start" in text
-    assert "CUDA_VISIBLE_DEVICES=1" in text
-    assert "SLAIF_ZAP_IT_EXPECTED_GPU_UUID" in text
-    assert "127.0.0.1" in text
+    assert "Type=simple" in text
+    assert "EnvironmentFile=%h/.config/slaif-zap-it/service.env" in text
+    assert "zap-it-0.1.0/bin/zap-it-service" in text
+    assert (
+        "SLAIF_ZAP_IT_EXPECTED_GPU_UUID"
+        in (REPO_ROOT / "deploy" / "service.env.example").read_text()
+    )
+    assert "127.0.0.1" in (REPO_ROOT / "deploy" / "service.env.example").read_text()
     assert "SHIPPED UNINSTALLED" in text
 
 

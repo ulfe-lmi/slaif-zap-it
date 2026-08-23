@@ -126,6 +126,7 @@ def post_completion(
     verbosity: int,
     response_format: str,
     timeout_s: float = 150.0,
+    api_key: str | None = None,
 ) -> tuple[int, dict[str, Any] | bytes, dict[str, str]]:
     boundary = uuid_module.uuid4().hex
     body, content_type = build_multipart(
@@ -135,10 +136,13 @@ def post_completion(
         response_format=response_format,
         boundary=boundary,
     )
+    headers = {"Content-Type": content_type}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     request = urllib.request.Request(
         f"http://{host}:{port}/v1/completions",
         data=body,
-        headers={"Content-Type": content_type},
+        headers=headers,
         method="POST",
     )
     started = time.perf_counter()
@@ -279,15 +283,18 @@ def run_level_case(
     verbosity: int,
     response_format: str,
     fixture_png: bytes,
+    config_bytes: bytes = SAFE_CONFIG_YAML,
+    api_key: str | None = None,
 ) -> dict[str, Any]:
     case = f"L{verbosity}_{response_format}"
     status, payload, meta = post_completion(
         host,
         port,
         image_bytes=fixture_png,
-        config_bytes=SAFE_CONFIG_YAML,
+        config_bytes=config_bytes,
         verbosity=verbosity,
         response_format=response_format,
+        api_key=api_key,
     )
     if status != 200:
         code = payload.get("error", {}).get("code") if isinstance(payload, dict) else "?"
@@ -373,7 +380,9 @@ def run_level_case(
     return case_summary(case, status, meta, extra, passed=True)
 
 
-def run_blip3_rejection_case(host: str, port: int, fixture_png: bytes) -> dict[str, Any]:
+def run_blip3_rejection_case(
+    host: str, port: int, fixture_png: bytes, api_key: str | None = None
+) -> dict[str, Any]:
     status, payload, meta = post_completion(
         host,
         port,
@@ -381,6 +390,7 @@ def run_blip3_rejection_case(host: str, port: int, fixture_png: bytes) -> dict[s
         config_bytes=BLIP3_CONFIG_YAML,
         verbosity=0,
         response_format="json",
+        api_key=api_key,
     )
     code = error_code(payload)
     passed = status == 400 and code == "unsupported_profile"

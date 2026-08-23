@@ -1,0 +1,26 @@
+# Explicit source-distribution allowlist. Release artifacts contain source,
+# generated-fixture tests and operator documentation, never demos/media/OAP.
+include README.md LICENSE THIRD_PARTY_NOTICES.md SECURITY.md TESTING.md
+include CHANGELOG.md RELEASE_NOTES.md
+recursive-include src *.py
+recursive-include modules *.py
+recursive-include tests *.py
+recursive-include docs *.md
+include deploy/zap-it-local.service deploy/service.env.example
+include scripts/serve_local.py scripts/serve_local.sh scripts/serve_local_stop.sh
+include scripts/smoke_local_service.py scripts/smoke_local_goats.py
+include scripts/verify_release_artifacts.py
+include scripts/scan_release_artifacts.py
+include configs/glasswool.yaml configs/icecream.yaml configs/soccer.yaml configs/tomato.yaml
+
+prune assets
+prune demos
+prune last_results
+prune output
+prune oap
+exclude configs/goats.yaml configs/goats2.yaml
+global-exclude *.jpg *.jpeg *.png *.gif *.webp *.bmp *.tif *.tiff
+global-exclude *.mp4 *.avi *.mov *.mkv *.webm *.pt *.pth *.safetensors *.bin
+global-exclude *.py[cod]
+global-exclude __pycache__
+global-exclude .env *.env
