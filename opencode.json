@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "ARCHITECTURE-for-agents.md",
+    "OAP-COMMUNICATION-coding-agent.md",
+    "SECURITY.md",
+    "TESTING.md"
+  ],
+  "permission": "allow",
+  "share": "disabled"
+}
