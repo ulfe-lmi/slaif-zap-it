@@ -1,6 +1,7 @@
 # ZAP-IT local service datasheet
 
-Status: bounded local release-candidate evidence for Objective 005-b. This is
+Status: bounded unpublished 0.1.0 release-candidate evidence for Objective
+006-a. This is
 not a production SLA, public deployment approval, or claim of leak-proof
 operation.
 
@@ -89,16 +90,17 @@ Objective-005 bounded 32-request table, live RLE/metrics/recovery evidence and
 final GPU/process snapshots are published in `oap/reports/005-a-report.md`.
 These measurements are bounded fixture evidence, not an SLA or soak test.
 
-## Objective 005-b fixture and release constraint
+## Objective 006-a fixture and release constraint
 
 **NONREDISTRIBUTABLE — local academic E2E only; excluded from packages/release
 fixtures.** The existing goat academic image/config assets are exercised only as
 in-memory central-50% crops under sanitized aliases. Their source bytes, crop
 bytes, prompts, labels and raw responses are not copied into CI, packages,
 reports or generated evidence. This is semantic/state-isolation regression
-evidence, not an accuracy benchmark. Objective 006 must explicitly inspect the
-existing repository assets and keep them out of distributable artifacts unless
-human rights clearance changes.
+evidence, not an accuracy benchmark. The opt-in
+scripts/smoke_local_goats.py harness accepts only ignored local files and
+performs A/B/A L2 JSON, L3 JSON and L3 ZIP calls. Public history remains a
+human-gated CRIT-0001 release blocker.
 
 ## Metrics and privacy
 

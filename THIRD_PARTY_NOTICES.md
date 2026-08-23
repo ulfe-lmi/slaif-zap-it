@@ -1,6 +1,7 @@
 # Third-party notices and provenance
 
-ZAP-IT is licensed under the MIT License (see [LICENSE](LICENSE)). It builds on
+ZAP-IT 0.1.0 is an unpublished release candidate and is licensed under the MIT
+License (see [LICENSE](LICENSE)). It builds on
 the following third-party software and models. This file records pointers for
 license review; it is not legal advice. Objective 003-a uses the pinned
 repo-owned pip lock in `requirements-gpu-cu124.lock`; model weights remain
@@ -12,12 +13,12 @@ operator cache assets and are never committed or redistributed.
 
 | Package | Role | License |
 | --- | --- | --- |
-| numpy | array math | BSD-3-Clause |
-| pillow | image I/O | HPND (MIT-CMU) |
-| pyyaml | YAML config parsing | MIT |
-| pytest, pytest-cov, coverage | test/coverage tooling | MIT / Apache-2.0 (coverage) |
-| ruff | formatter/linter | MIT |
-| build | packaging frontend | MIT |
+| numpy 1.26.4 | array math | BSD-3-Clause |
+| pillow 10.4.0 | image I/O | HPND (MIT-CMU) |
+| pyyaml 6.0.2 | YAML config parsing | MIT |
+| fastapi, python-multipart, uvicorn | service transport | MIT / Apache-2.0 / BSD-3-Clause |
+| prometheus-client 0.21.1 | metrics | Apache-2.0 |
+| pytest, pytest-cov, coverage, ruff, build, detect-secrets | CPU/release tooling | MIT / MIT / Apache-2.0 / MIT / MIT / Apache-2.0 |
 
 ### GPU/runtime stack (Objective 003-a pip lock, operator-managed)
 
@@ -47,7 +48,18 @@ Model revisions and the remote-code file hashes are pinned for Objective 003-a.
 The BLIP3 profile remains rejected on the verified 11 GiB GPU; pinning does not
 authorize client-selected model loading or commercial redistribution.
 
-## Assets
+## Distribution and unresolved rights
 
-`demos/LICENSE.txt` records licensing for bundled demo imagery. Repository
-banner/logo assets are project-owned.
+demos/LICENSE.txt records a license pointer for demo imagery, but the release
+allowlist excludes every demo and repository media payload and does not infer
+rights for an unlisted path. Repository banner/logo assets are described as
+project-owned, yet they are also excluded from release artifacts pending
+independent inventory. The full path inventory and human gates are in
+docs/RELEASE-GATE-INVENTORY.md.
+
+The four goat YAML/image paths are nonredistributable local academic inputs.
+They are ignored and removed from the current tracked tip by Objective 006-a,
+but their public history is not remediated; CRIT-0001 is OPEN/BLOCKING. No model
+license or this notice authorizes commercial/deployed model use or weight
+redistribution. Human/legal clearance is required before a final package or
+source release.

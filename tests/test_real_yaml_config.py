@@ -17,7 +17,12 @@ from src.config import _print_enabled_modules, load_config
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = REPO_ROOT / "configs"
-EXAMPLE_CONFIGS = sorted(CONFIG_DIR.glob("*.yaml"))
+# Goat YAML is a local-only academic input and is intentionally absent from
+# tracked source distributions. CI tests use the remaining redistributable
+# examples; the opt-in goat harness owns its local regression path.
+EXAMPLE_CONFIGS = sorted(
+    path for path in CONFIG_DIR.glob("*.yaml") if path.name not in {"goats.yaml", "goats2.yaml"}
+)
 
 
 def _real_yaml_available() -> bool:
