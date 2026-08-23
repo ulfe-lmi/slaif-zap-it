@@ -1,5 +1,10 @@
 # API target
 
+> Status (objective 002-a): the v1 request/response/error contract below is
+> now **implemented and CPU-tested** with a fake engine; see
+> [docs/API.md](API.md) for the binding wire documentation. This file remains
+> as the original target statement.
+
 ```text
 POST /v1/completions
 Content-Type: multipart/form-data

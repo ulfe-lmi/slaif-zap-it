@@ -15,9 +15,12 @@ if str(ROOT) not in sys.path:
 
 @pytest.fixture(autouse=True, scope="session")
 def _block_network():
-    """Suite-level guard: fail fast if any test opens a network socket.
+    """Suite-level guard: fail fast if any test reaches the real network.
 
-    The CPU suite must stay offline (no model downloads, no remote calls).
+    Outbound ``connect`` calls to non-loopback destinations are blocked, so
+    model downloads and remote calls fail loudly while in-process asyncio
+    event loops (which create internal AF_UNIX/self-pipe sockets) and
+    loopback-only transports keep working. The CPU suite must stay offline.
     Set ``ZAP_IT_TESTS_ALLOW_SOCKETS=1`` to opt out while debugging.
     """
     if os.environ.get("ZAP_IT_TESTS_ALLOW_SOCKETS") == "1":
@@ -26,11 +29,31 @@ def _block_network():
 
     real_socket = socket.socket
 
-    class _BlockedSocket(real_socket):
-        def __init__(self, *args, **kwargs):
-            raise AssertionError("network sockets are disabled during the ZAP-IT CPU test suite")
+    def _loopback(address):
+        if isinstance(address, tuple) and address:
+            host = address[0]
+            if isinstance(host, str):
+                return host in ("127.0.0.1", "localhost", "::1", "0.0.0.0")
+        return False
 
-    socket.socket = _BlockedSocket  # type: ignore[misc]
+    class _GuardedSocket(real_socket):
+        def connect(self, address):  # type: ignore[override]
+            if _loopback(address):
+                return super().connect(address)
+            raise AssertionError(
+                f"network connections outside loopback are disabled during the "
+                f"ZAP-IT CPU test suite (attempted: {address!r})"
+            )
+
+        def connect_ex(self, address):  # type: ignore[override]
+            if _loopback(address):
+                return super().connect_ex(address)
+            raise AssertionError(
+                f"network connections outside loopback are disabled during the "
+                f"ZAP-IT CPU test suite (attempted: {address!r})"
+            )
+
+    socket.socket = _GuardedSocket  # type: ignore[misc]
     try:
         yield
     finally:
