@@ -2,6 +2,7 @@
 
 import io
 import json
+import tracemalloc
 
 import numpy as np
 import pytest
@@ -16,6 +17,7 @@ from src.core import (
     render_identity_png,
     render_yolo,
 )
+from src.core import renderers as renderer_module
 
 
 def obj(instance_id, rows_cols, shape=(10, 10), label="cat", class_id=0, **kwargs):
@@ -159,6 +161,26 @@ def test_service_identity_projection_performs_three_way_reassignment():
     assert decoded.tolist() == [[3, 1, 2, 4]]
 
 
+def test_service_identity_projection_follows_an_augmenting_chain_through_multiple_ids():
+    # The baseline already assigns 1->p0, 2->p1 and 3->p2.  ID 4 can only use
+    # p0, so a complete path must move all three existing representatives to
+    # p1, p2 and p3 respectively.
+    first = obj(1, [(0, 0), (0, 1)], shape=(1, 4))
+    second = obj(2, [(0, 1), (0, 2)], shape=(1, 4))
+    third = obj(3, [(0, 2), (0, 3)], shape=(1, 4))
+    missing = obj(4, [(0, 0)], shape=(1, 4))
+    canvas = np.array([[1, 2, 3, 0]], dtype=np.uint16)
+
+    assignment = renderer_module._representative_assignment([first, second, third, missing], canvas)
+
+    assert assignment == {
+        1: (0, 1),
+        2: (0, 2),
+        3: (0, 3),
+        4: (0, 0),
+    }
+
+
 def test_service_identity_projection_rejects_impossible_distinct_pixels():
     one = obj(1, [(0, 0)], shape=(1, 1))
     two = obj(2, [(0, 0)], shape=(1, 1))
@@ -197,6 +219,79 @@ def test_service_identity_png_bytes_are_deterministic_after_matching():
     assert render_identity_png(
         build(), width=3, height=1, ensure_all_ids=True
     ) == render_identity_png(build(), width=3, height=1, ensure_all_ids=True)
+
+
+def test_identity_matching_fast_path_does_not_scan_source_candidates(monkeypatch):
+    first = obj(1, [(0, 0), (0, 1)], shape=(2, 3))
+    second = obj(2, [(1, 1), (1, 2)], shape=(2, 3))
+
+    def fail_if_matching_is_entered(*args, **kwargs):
+        raise AssertionError("visible IDs must use the baseline fast path")
+
+    monkeypatch.setattr(renderer_module, "_candidate_chunk", fail_if_matching_is_entered)
+    render_identity_png([first, second], width=3, height=2, ensure_all_ids=True)
+
+
+def test_identity_matching_large_masks_keep_candidate_arrays_bounded(monkeypatch):
+    shape = (700, 700)
+    broad = np.ones(shape, dtype=bool)
+    first = ObjectResult(1, 0, broad, metadata={})
+    second = ObjectResult(2, 1, broad.copy(), metadata={})
+    observed_sizes = []
+    original = renderer_module._candidate_chunk
+
+    def observe(*args, **kwargs):
+        candidates, end = original(*args, **kwargs)
+        observed_sizes.append(int(candidates.size))
+        return candidates, end
+
+    monkeypatch.setattr(renderer_module, "_candidate_chunk", observe)
+    tracemalloc.start()
+    try:
+        png_bytes = render_identity_png(
+            [first, second], width=shape[1], height=shape[0], ensure_all_ids=True
+        )
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert png_bytes
+    assert observed_sizes
+    assert max(observed_sizes) <= renderer_module.IDENTITY_CANDIDATE_CHUNK_SIZE
+    assert peak < 16 * 1024 * 1024
+
+
+def test_identity_matching_agrees_with_bruteforce_existence_for_500_cases():
+    rng = np.random.default_rng(4)
+
+    def has_injective_assignment(masks, index=0, used=frozenset()):
+        if index == len(masks):
+            return True
+        for pixel in np.flatnonzero(masks[index].reshape(-1)):
+            pixel = int(pixel)
+            if pixel not in used and has_injective_assignment(masks, index + 1, used | {pixel}):
+                return True
+        return False
+
+    for case in range(500):
+        masks = [rng.random((2, 3)) < 0.55 for _ in range(int(rng.integers(1, 5)))]
+        objects = [ObjectResult(i + 1, i, mask, metadata={}) for i, mask in enumerate(masks)]
+        canvas = np.zeros((2, 3), dtype=np.uint16)
+        for item in sorted(
+            objects, key=lambda candidate: (candidate.area_px, -candidate.instance_id)
+        ):
+            canvas[item.mask] = item.instance_id
+        possible = has_injective_assignment(masks)
+
+        try:
+            assignment = renderer_module._representative_assignment(objects, canvas)
+        except IdentityMaskProjectionError:
+            assert not possible, f"case {case} rejected an existing matching"
+        else:
+            assert possible, f"case {case} accepted an impossible matching"
+            assert len(set(assignment.values())) == len(objects)
+            for item in objects:
+                assert item.mask[assignment[item.instance_id]]
 
 
 def test_identity_overflow_guard_raises_before_allocation():
