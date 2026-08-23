@@ -22,13 +22,12 @@ import yaml
 from PIL import Image
 
 from smoke_local_service import (
-    SAFE_CONFIG_YAML,
-    make_fixture_png,
     run_level_case,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_IMAGE = REPO_ROOT / "demos/goats/goats2.jpg"
+DEFAULT_IMAGE_A = REPO_ROOT / "demos/goats/goats1.jpg"
+DEFAULT_IMAGE_B = REPO_ROOT / "demos/goats/goats2.jpg"
 DEFAULT_CONFIG = REPO_ROOT / "configs/goats2.yaml"
 ALLOWED_TOP_LEVEL = frozenset(
     {"alpha", "preprocessing", "mask_generator", "postsam2processing", "clip", "visualization"}
@@ -202,7 +201,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--image", type=Path, default=DEFAULT_IMAGE)
+    parser.add_argument("--image-a", type=Path, default=DEFAULT_IMAGE_A)
+    parser.add_argument("--image-b", type=Path, default=DEFAULT_IMAGE_B)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--fixture-root", type=Path, default=REPO_ROOT)
     parser.add_argument("--api-key", default=os.environ.get("SLAIF_ZAP_IT_API_KEY"))
@@ -211,25 +211,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.host != "127.0.0.1":
         parser.error("the local academic harness only permits loopback")
     try:
-        image_path = _safe_path(args.image, args.fixture_root, "image")
+        image_a_path = _safe_path(args.image_a, args.fixture_root, "image_a")
+        image_b_path = _safe_path(args.image_b, args.fixture_root, "image_b")
         config_path = _safe_path(args.config, args.fixture_root, "config")
-        image_bytes = image_path.read_bytes()
+        image_a_bytes = image_a_path.read_bytes()
+        image_b_bytes = image_b_path.read_bytes()
         raw_config = config_path.read_bytes()
-        crop_bytes, original_size, crop_size = central_crop(image_bytes)
+        crop_a_bytes, original_a_size, crop_a_size = central_crop(image_a_bytes)
+        crop_b_bytes, original_b_size, crop_b_size = central_crop(image_b_bytes)
         safe_config, stripped_count = derive_api_safe_config(raw_config)
         before = _workspace_snapshot(args.tmp_root)
-        synthetic = make_fixture_png(size=128)
         results = []
-        # A/B/A: local academic crop, generated redistributable fixture, local
-        # academic crop again. Each state is exercised at L2 JSON, L3 JSON and
-        # L3 ZIP so request state cannot be hidden by one response format.
-        for alias, payload, config in (
-            ("a1", crop_bytes, safe_config),
-            ("b", synthetic, SAFE_CONFIG_YAML),
-            ("a2", crop_bytes, safe_config),
+        # A/B/A: the two independently decoded academic crops, then crop A
+        # again. Each state is exercised at L2 JSON, L3 JSON and L3 ZIP so
+        # request state cannot be hidden by one response format.
+        for alias, payload in (
+            ("a1", crop_a_bytes),
+            ("b", crop_b_bytes),
+            ("a2", crop_a_bytes),
         ):
             results.extend(
-                _run_sequence(args.host, args.port, payload, config, args.api_key, alias)
+                _run_sequence(args.host, args.port, payload, safe_config, args.api_key, alias)
             )
         after = _workspace_snapshot(args.tmp_root)
     except (OSError, ValueError, yaml.YAMLError, AssertionError) as exc:
@@ -239,10 +241,18 @@ def main(argv: list[str] | None = None) -> int:
     output = {
         "status": "PASSED" if passed else "FAILED",
         "fixture_aliases": ["a1", "b", "a2"],
-        "original_dimensions": list(original_size),
-        "crop_dimensions": list(crop_size),
-        "image_sha256": _digest(image_bytes),
-        "crop_sha256": _digest(crop_bytes),
+        "image_a": {
+            "original_dimensions": list(original_a_size),
+            "crop_dimensions": list(crop_a_size),
+            "image_sha256": _digest(image_a_bytes),
+            "crop_sha256": _digest(crop_a_bytes),
+        },
+        "image_b": {
+            "original_dimensions": list(original_b_size),
+            "crop_dimensions": list(crop_b_size),
+            "image_sha256": _digest(image_b_bytes),
+            "crop_sha256": _digest(crop_b_bytes),
+        },
         "config_sha256": _digest(safe_config),
         "stripped_field_count": stripped_count,
         "zero_persistence": before == after,

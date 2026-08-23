@@ -58,6 +58,61 @@ FORBIDDEN_PARTS = frozenset(
     }
 )
 REQUIRED_TEXT_NAMES = frozenset({"LICENSE", "THIRD_PARTY_NOTICES.md", "README.md", "CHANGELOG.md"})
+REQUIRED_SDIST_NAMES = frozenset(
+    {
+        "INSTALL.md",
+        "requirements-gpu-cu124.lock",
+        ".secrets.baseline",
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        "README.md",
+        "CHANGELOG.md",
+        "RELEASE_NOTES.md",
+        "SECURITY.md",
+        "TESTING.md",
+        "deploy/service.env.example",
+        "deploy/zap-it-local.service",
+        "scripts/verify_release_artifacts.py",
+        "scripts/scan_release_artifacts.py",
+        "scripts/smoke_installed_package.py",
+        "src/runtime/live_service.py",
+        "src/service/app.py",
+        "src/service/envelope.py",
+        "src/service/fake_engine.py",
+        "src/service/settings.py",
+        "src/service/multipart.py",
+        "src/service/yaml_input.py",
+        "src/service/schemas.py",
+        "configs/glasswool.yaml",
+        "configs/icecream.yaml",
+        "configs/soccer.yaml",
+        "configs/tomato.yaml",
+    }
+)
+REQUIRED_WHEEL_MODULES = frozenset(
+    {"src/__init__.py", "src/runtime/live_service.py", "src/service/app.py"}
+)
+PUBLIC_ENV_MEMBER = "deploy/service.env.example"
+PRIVATE_ENV_BASENAMES = frozenset(
+    {
+        "env",
+        ".env",
+        "environment",
+        "credentials",
+        "secrets",
+        "private",
+        "service.env",
+        "credentials.yaml",
+        "credentials.yml",
+        "credentials.json",
+        "secrets.yaml",
+        "secrets.yml",
+        "secrets.json",
+        "private.yaml",
+        "private.yml",
+        "private.json",
+    }
+)
 
 
 class ArtifactError(ValueError):
@@ -74,9 +129,35 @@ def _validate_name(name: str, size: int) -> None:
     lower_parts = {part.lower() for part in path.parts}
     if lower_parts & FORBIDDEN_PARTS:
         raise ArtifactError(f"forbidden archive member directory: {name!r}")
+    if "output" in lower_parts:
+        relative_parts = path.parts
+        if relative_parts and relative_parts[0].lower().startswith(("zap-it-", "zap_it-")):
+            relative_parts = relative_parts[1:]
+        is_package_output = (
+            len(relative_parts) >= 2
+            and tuple(part.lower() for part in relative_parts[:2]) == ("modules", "output")
+            and (len(relative_parts) == 2 or path.suffix.lower() == ".py")
+        )
+        if not is_package_output:
+            raise ArtifactError(f"forbidden archive output member: {name!r}")
     basename = path.name.lower()
     if basename in FORBIDDEN_BASENAMES:
         raise ArtifactError(f"forbidden local fixture member: {name!r}")
+    relative_normalized = normalized
+    if path.parts and path.parts[0].lower().startswith(("zap-it-", "zap_it-")):
+        relative_normalized = str(PurePosixPath(*path.parts[1:]))
+    if basename.endswith(".env.example") and relative_normalized != PUBLIC_ENV_MEMBER:
+        raise ArtifactError(f"unexpected environment template member: {name!r}")
+    is_public_env = normalized == PUBLIC_ENV_MEMBER
+    is_private_env = (
+        basename in PRIVATE_ENV_BASENAMES
+        or basename.startswith(".env.")
+        or basename.endswith(".env")
+        or basename.startswith("private.")
+        or basename.startswith("secret.")
+    )
+    if is_private_env and not is_public_env:
+        raise ArtifactError(f"forbidden private environment/config member: {name!r}")
     if path.suffix.lower() in FORBIDDEN_SUFFIXES:
         raise ArtifactError(f"forbidden payload member: {name!r}")
     if size > MAX_MEMBER_BYTES:
@@ -91,6 +172,13 @@ def _member_digest(name: str, payload: bytes) -> dict[str, object]:
 def _manifest_digest(members: Iterable[Mapping[str, object]]) -> str:
     canonical = json.dumps(list(members), sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(canonical).hexdigest()
+
+
+def _sdist_relative_name(name: str) -> str:
+    parts = PurePosixPath(name).parts
+    if len(parts) > 1 and parts[0].startswith(("zap-it-", "zap_it-")):
+        return str(PurePosixPath(*parts[1:]))
+    return name
 
 
 def inspect_zip(path: str) -> tuple[list[dict[str, object]], set[str]]:
@@ -131,11 +219,6 @@ def inspect_archive(path: str) -> dict[str, object]:
         members, names = inspect_tar(path)
     else:
         raise ArtifactError(f"unsupported distribution extension: {path!r}")
-    required = {
-        name
-        for name in REQUIRED_TEXT_NAMES
-        if any(PurePosixPath(member).name == name for member in names)
-    }
     if path.endswith(".whl"):
         metadata = [name for name in names if name.endswith(".dist-info/METADATA")]
         wheel = [name for name in names if name.endswith(".dist-info/WHEEL")]
@@ -150,11 +233,16 @@ def inspect_archive(path: str) -> dict[str, object]:
         }
         if not metadata or not wheel or not entrypoints or not wheel_license:
             raise ArtifactError("wheel metadata or console entrypoint is missing")
+        missing_modules = sorted(REQUIRED_WHEEL_MODULES - names)
+        if missing_modules:
+            raise ArtifactError(f"wheel installed modules missing: {missing_modules}")
         if not {"README.md", "THIRD_PARTY_NOTICES.md", "CHANGELOG.md"} <= wheel_docs:
             raise ArtifactError("wheel public notices/data files are missing")
-    if required != REQUIRED_TEXT_NAMES and path.endswith(".tar.gz"):
-        missing = sorted(REQUIRED_TEXT_NAMES - required)
-        raise ArtifactError(f"sdist required notices missing: {missing}")
+    if path.endswith(".tar.gz"):
+        relative_names = {_sdist_relative_name(name) for name in names}
+        missing = sorted(REQUIRED_SDIST_NAMES - relative_names)
+        if missing:
+            raise ArtifactError(f"sdist required release members missing: {missing}")
     with open(path, "rb") as handle:
         raw = handle.read()
     return {
@@ -167,12 +255,33 @@ def inspect_archive(path: str) -> dict[str, object]:
     }
 
 
+def compare_wheel_members(left: str, right: str) -> None:
+    """Require two wheels to contain identical member bytes and names."""
+    left_evidence = inspect_archive(left)
+    right_evidence = inspect_archive(right)
+    left_members = sorted(
+        (str(item["name"]), int(item["size"]), str(item["sha256"]))
+        for item in left_evidence["members"]
+    )
+    right_members = sorted(
+        (str(item["name"]), int(item["size"]), str(item["sha256"]))
+        for item in right_evidence["members"]
+    )
+    if left_members != right_members:
+        raise ArtifactError("direct and sdist-built wheel members differ")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("archives", nargs="+", help="wheel and/or sdist paths")
+    parser.add_argument("archives", nargs="*", help="wheel and/or sdist paths")
+    parser.add_argument("--compare-wheels", nargs=2, metavar=("DIRECT", "FROM_SDIST"))
     parser.add_argument("--json", dest="json_path", help="write full digest evidence to a file")
     args = parser.parse_args(argv)
+    if not args.archives and not args.compare_wheels:
+        parser.error("provide archives or --compare-wheels")
     try:
+        if args.compare_wheels:
+            compare_wheel_members(*args.compare_wheels)
         evidence = [inspect_archive(path) for path in args.archives]
     except (ArtifactError, OSError, tarfile.TarError, zipfile.BadZipFile) as exc:
         parser.error(str(exc))

@@ -209,14 +209,16 @@ explicit and GPU1-only:
 ~~~bash
 .venv-gpu/bin/python scripts/smoke_local_goats.py \
   --port "$SLAIF_ZAP_IT_PORT" \
-  --image demos/goats/goats2.jpg \
+  --image-a demos/goats/goats1.jpg \
+  --image-b demos/goats/goats2.jpg \
   --config configs/goats2.yaml \
   --api-key "$SLAIF_ZAP_IT_API_KEY"
 ~~~
 
-The harness refuses missing, symlinked or out-of-root files, safe-loads and
-allowlists the legacy YAML, crops exactly the middle 50 percent in memory, and
-emits only sanitized aliases/digests/dimensions/statuses/timings/counts. It
-performs A/B/A L2 JSON, L3 JSON and L3 ZIP calls and checks that the configured
-shared-memory workspace has no new files. It never prints or persists the
-source YAML, crop, prompts, labels, response bodies or bearer key.
+The harness is local-only and refuses missing, symlinked or out-of-root files,
+safe-loads and allowlists the legacy YAML, independently crops both goat images
+to exactly the middle 50 percent in memory, and emits only sanitized
+aliases/digests/dimensions/statuses/timings/counts. It performs A/B/A as crop A,
+crop B, crop A with L2 JSON, L3 JSON and L3 ZIP calls and checks that the
+configured shared-memory workspace has no new files. It never prints or
+persists the source YAML, crop, prompts, labels, response bodies or bearer key.

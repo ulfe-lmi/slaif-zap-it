@@ -43,6 +43,16 @@ jobs:
         run: python -m pip install -e '.[dev,service]'
       - name: Run CPU test suite with coverage gate
         run: pytest -q --cov=src --cov=modules --cov-report=term-missing
+      - name: Build wheel for installed-artifact smoke
+        run: python -m build --wheel
+      - name: Install built wheel outside checkout and smoke service
+        run: |
+          wheel=$(find dist -maxdepth 1 -name '*.whl' -print -quit)
+          venv="$RUNNER_TEMP/zap-it-wheel-${{ matrix.python-version }}"
+          python -m venv "$venv"
+          "$venv/bin/pip" install "${wheel}[service,dev]"
+          cd "$RUNNER_TEMP"
+          PATH="$venv/bin:$PATH" "$venv/bin/python" "$GITHUB_WORKSPACE/scripts/smoke_installed_package.py"
 
   release:
     name: release (artifact audit)
@@ -55,13 +65,25 @@ jobs:
       - name: Build and inspect candidate artifacts
         run: |
           python -m pip install -e '.[dev,service]'
-          rm -rf dist
+          rm -rf dist dist-from-sdist
           python -m build --wheel --sdist
           python scripts/verify_release_artifacts.py dist/*.whl dist/*.tar.gz
-          python scripts/scan_release_artifacts.py dist/*.whl dist/*.tar.gz --baseline .secrets.baseline
+          mkdir -p "$RUNNER_TEMP/sdist-source"
+          tar -xzf dist/*.tar.gz -C "$RUNNER_TEMP/sdist-source"
+          python -m build --wheel --outdir dist-from-sdist "$RUNNER_TEMP/sdist-source/zap_it-0.1.0"
+          python scripts/verify_release_artifacts.py dist-from-sdist/*.whl
+          python scripts/verify_release_artifacts.py --compare-wheels dist/*.whl dist-from-sdist/*.whl
+          python scripts/scan_release_artifacts.py dist/*.whl dist/*.tar.gz dist-from-sdist/*.whl --baseline .secrets.baseline
           python -m twine check dist/*
-      - name: Scan tracked tree and artifacts for secrets
+          python -m twine check dist-from-sdist/*
+          systemd-analyze verify deploy/zap-it-local.service
+      - name: Install sdist-built wheel outside checkout and smoke service
         run: |
-          detect-secrets scan --baseline .secrets.baseline
-          detect-secrets scan --all-files --exclude-files '(^|/)(dist|build|\.git)/' --exclude-files '(^|/)\.secrets\.baseline$' > /tmp/detect-secrets-current.json
-          python -m json.tool /tmp/detect-secrets-current.json >/dev/null
+          wheel=$(find dist-from-sdist -maxdepth 1 -name '*.whl' -print -quit)
+          venv="$RUNNER_TEMP/zap-it-sdist-wheel"
+          python -m venv "$venv"
+          "$venv/bin/pip" install "${wheel}[service,dev]"
+          cd "$RUNNER_TEMP"
+          PATH="$venv/bin:$PATH" "$venv/bin/python" "$GITHUB_WORKSPACE/scripts/smoke_installed_package.py"
+      - name: Enforce tracked-tree secret baseline
+        run: python scripts/scan_release_artifacts.py --tracked-tree --baseline .secrets.baseline

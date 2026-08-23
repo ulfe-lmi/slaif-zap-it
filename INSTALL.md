@@ -30,8 +30,9 @@ environment, install the built wheel rather than importing from the checkout:
 ~~~bash
 python3 -m venv /path/to/candidate-venv
 /path/to/candidate-venv/bin/pip install dist/zap_it-0.1.0-py3-none-any.whl
-/path/to/candidate-venv/bin/zap-it-service --help
 /path/to/candidate-venv/bin/python -c 'import src; print(src.__version__)'
+/path/to/candidate-venv/bin/python -c 'import src.runtime.live_service; print(src.runtime.live_service.__file__)'
+test -x /path/to/candidate-venv/bin/zap-it-service
 ~~~
 
 The console entrypoint is a foreground, one-worker service and still requires
@@ -133,7 +134,7 @@ installed:
 
 ```bash
 .venv-gpu/bin/python zap-it-batch.py \
-  --config configs/goats.yaml \
+  --config configs/tomato.yaml \
   --input-image-dir path/to/images
 ```
 
