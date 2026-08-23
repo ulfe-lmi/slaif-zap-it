@@ -16,13 +16,40 @@ changed after this bootstrap.
 - `/dev/shm` type/capacity/permissions;
 - loopback listeners and an unused candidate port; do not reserve/change yet.
 
-Do not treat seed order as final. Work in strategic `drafts/`; replace every
-`VERIFY:` and `DRAFT UNTIL` statement with exact evidence and bounded decisions.
-Publish only after coherent PR-sized scope. Human work has been preloaded into
-these artifacts: do not stop merely because a consequential choice lacks an
-explicit human answer. Decide provisionally. Use repository `CRITICAL.md` only
-when every strict threshold condition holds; otherwise keep ordinary decisions
-in the order/architecture/evidence.
+Human/operator preflight on 2026-08-23 observed physical GPU1 as RTX 2080 Ti,
+11264 MiB, UUID `GPU-c457dbaf-991c-dc23-c781-0dc030776dd8`, with GPU0 carrying an
+unrelated workload. Re-verify this live; do not assume the process/free-memory
+state remains unchanged and never use GPU0 even if it later appears idle.
+
+## Human-work-preloaded objective sequence
+
+The intended program is already decomposed into detailed draft `NNN-a` work
+orders under `initial-orders/`:
+
+```text
+000-a-professional-baseline-and-ci.md
+001-a-in-memory-core-and-renderers.md
+002-a-v1-completions-api-contract.md
+003-a-gpu1-runtime-qualification.md
+004-a-loopback-service-activation.md
+005-a-full-output-parity-hardening-and-evidence.md
+006-a-release-and-integration.md
+```
+
+These drafts are human-preloaded intent, **not activated orders**. Do not invent
+the roadmap from scratch and do not publish a draft verbatim. Before each numeric
+objective, read its draft completely, reconcile it against the newly merged
+remote main, predecessor report/PR/checks, architecture, current `CRITICAL.md` and
+relevant host facts, then replace every `VERIFY:` and `DRAFT UNTIL` statement with
+exact evidence and bounded decisions. Preserve intended outcome, non-goals,
+acceptance and dependency gates unless verified reality requires a documented
+material deviation.
+
+Work in strategic `drafts/`; publish only after coherent PR-sized scope. Human
+work has been preloaded into these artifacts: do not stop merely because a
+consequential choice lacks an explicit human answer. Decide provisionally. Use
+repository `CRITICAL.md` only when every strict threshold condition holds;
+otherwise keep ordinary decisions in the order/architecture/evidence.
 
 ## Product sequence
 
@@ -32,7 +59,8 @@ in the order/architecture/evidence.
 4. Physical GPU1 qualification and dependency/model revision/license audit.
 5. Loopback service activation on verified unused port with rollback/E2E.
 6. Full artifact parity/resource hardening/metrics/datasheet.
-7. Packaging/gateway/release only after local evidence.
+7. Packaging/gateway/release readiness only after local evidence and applicable
+   human adjudication gates.
 
 Preserve dependencies: do not deploy API before pure core; do not activate live
 service before fake/API and GPU qualification; do not expose LAN before auth/
