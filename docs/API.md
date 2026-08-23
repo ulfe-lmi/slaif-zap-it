@@ -141,7 +141,7 @@ document order.
 | max objects | 256 | `SLAIF_ZAP_IT_MAX_OBJECTS` |
 | max visualization streams | 8 | `SLAIF_ZAP_IT_MAX_VISUALIZATION_STREAMS` |
 | max response/debug artifacts | 64 / 48 | `SLAIF_ZAP_IT_MAX_RESPONSE_ARTIFACTS`, `SLAIF_ZAP_IT_MAX_DEBUG_ARTIFACTS` |
-| max single/total raw artifacts | 32 / 128 MiB | `SLAIF_ZAP_IT_MAX_SINGLE_ARTIFACT_BYTES`, `SLAIF_ZAP_IT_MAX_TOTAL_RAW_ARTIFACT_BYTES` |
+| max single/total raw artifacts | 32 / 128 MiB; L3 annotated RGB reservations are deducted from the debug total | `SLAIF_ZAP_IT_MAX_SINGLE_ARTIFACT_BYTES`, `SLAIF_ZAP_IT_MAX_TOTAL_RAW_ARTIFACT_BYTES` |
 | max RLE runs/object/response | 250 000 / 1 000 000 | `SLAIF_ZAP_IT_MAX_MASK_RLE_RUNS_PER_OBJECT`, `SLAIF_ZAP_IT_MAX_MASK_RLE_RUNS_TOTAL` |
 | max total response | 256 MiB | `SLAIF_ZAP_IT_MAX_RESPONSE_BYTES` |
 | min available RAM / shm | 2 GiB / 64 MiB | `SLAIF_ZAP_IT_MIN_HOST_AVAILABLE_BYTES`, `SLAIF_ZAP_IT_MIN_SHM_FREE_BYTES` |
@@ -150,15 +150,19 @@ document order.
 | Retry-After value | 5 s | `SLAIF_ZAP_IT_RETRY_AFTER_SECONDS` |
 
 Encoded sizes are enforced while streaming (limit+1 pattern) before decode;
-decoded width/height are checked from headers before pixel allocation; host RAM
-and `/dev/shm` floors are checked at readiness and request admission.
+decoded width/height are checked from headers before pixel allocation; L3
+annotated streams are preflighted as `height * width * 3` raw RGB bytes before
+engine execution; host RAM and `/dev/shm` floors are checked at readiness and
+request admission.
 
 ## Concurrency semantics
 
 Exactly one inference executes at a time (single worker thread plus an async
 gate). With the slot busy and the queue exhausted (default depth 0), arrivals
 fail fast with `503 service_busy` and a `Retry-After` header. Deadlines wrap
-the whole request; cancellation releases state immediately. The production
+the whole request, including RLE, artifact preparation, base64 expansion and
+ZIP assembly; expiry returns `504 timeout` without a partial response.
+Cancellation releases state immediately. The production
 process model is one Uvicorn process, workers=1, no fork after CUDA init.
 
 ## Authentication

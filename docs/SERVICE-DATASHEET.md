@@ -1,6 +1,6 @@
 # ZAP-IT local service datasheet
 
-Status: bounded local release-candidate evidence for Objective 005-a. This is
+Status: bounded local release-candidate evidence for Objective 005-b. This is
 not a production SLA, public deployment approval, or claim of leak-proof
 operation.
 
@@ -50,7 +50,7 @@ rejected before inference or remain legacy-only as documented in
 | Response artifacts | 64 | `SLAIF_ZAP_IT_MAX_RESPONSE_ARTIFACTS` |
 | Debug artifacts | 48 | `SLAIF_ZAP_IT_MAX_DEBUG_ARTIFACTS` |
 | Single raw artifact | 32 MiB | `SLAIF_ZAP_IT_MAX_SINGLE_ARTIFACT_BYTES` |
-| Total raw artifacts | 128 MiB | `SLAIF_ZAP_IT_MAX_TOTAL_RAW_ARTIFACT_BYTES` |
+| Total raw artifacts | 128 MiB; L3 annotated RGB reservations are deducted before debug sink admission | `SLAIF_ZAP_IT_MAX_TOTAL_RAW_ARTIFACT_BYTES` |
 | RLE runs/object | 250,000 | `SLAIF_ZAP_IT_MAX_MASK_RLE_RUNS_PER_OBJECT` |
 | RLE runs/response | 1,000,000 | `SLAIF_ZAP_IT_MAX_MASK_RLE_RUNS_TOTAL` |
 | Response | 256 MiB | `SLAIF_ZAP_IT_MAX_RESPONSE_BYTES` |
@@ -58,10 +58,14 @@ rejected before inference or remain legacy-only as documented in
 | `/dev/shm` free floor | 64 MiB | `SLAIF_ZAP_IT_MIN_SHM_FREE_BYTES` |
 | Deadline / queue | 120 s / 0 | `SLAIF_ZAP_IT_REQUEST_DEADLINE_SECONDS`, `SLAIF_ZAP_IT_QUEUE_DEPTH` |
 
-Budgets are validated at startup and cannot be changed by request YAML. Raw
-artifacts are checked before retention/encoding; JSON checks base64 expansion
-before encoding, and ZIP writes prepared raw bytes directly. There is no
-post-hoc artifact truncation.
+Budgets are validated at startup and cannot be changed by request YAML. For L3,
+each supported annotated stream reserves exactly `height * width * 3` raw bytes
+before inference; a per-stream overflow or combined overflow is rejected before
+model execution, and the remaining bytes are the debug sink budget. L0-L2 do not
+render or reserve visualization arrays. Raw artifacts are checked before
+retention/encoding; JSON checks base64 expansion before encoding, and ZIP writes
+prepared raw bytes directly. RLE and every serialization loop check the absolute
+120-second request deadline. There is no post-hoc artifact truncation.
 
 ## Hardware and software matrix
 
@@ -84,6 +88,17 @@ approximately 1,984,604 KiB process RSS, approximately 1,849 MiB GPU1 ready and
 Objective-005 bounded 32-request table, live RLE/metrics/recovery evidence and
 final GPU/process snapshots are published in `oap/reports/005-a-report.md`.
 These measurements are bounded fixture evidence, not an SLA or soak test.
+
+## Objective 005-b fixture and release constraint
+
+**NONREDISTRIBUTABLE — local academic E2E only; excluded from packages/release
+fixtures.** The existing goat academic image/config assets are exercised only as
+in-memory central-50% crops under sanitized aliases. Their source bytes, crop
+bytes, prompts, labels and raw responses are not copied into CI, packages,
+reports or generated evidence. This is semantic/state-isolation regression
+evidence, not an accuracy benchmark. Objective 006 must explicitly inspect the
+existing repository assets and keep them out of distributable artifacts unless
+human rights clearance changes.
 
 ## Metrics and privacy
 

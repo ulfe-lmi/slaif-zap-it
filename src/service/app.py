@@ -43,7 +43,7 @@ from .gate import InferenceGate
 from .image_input import decode_image_safely
 from .metrics import CONTENT_TYPE_LATEST, ServiceMetrics
 from .multipart import parse_strict_multipart
-from .resources import check_request_resources
+from .resources import check_request_resources, check_visualization_raw_budget
 from .schemas import (
     CompletionResponse,
     ErrorEnvelope,
@@ -335,9 +335,14 @@ def create_app(
         request.state.metrics_started = started
         request_id = _request_id_for(request)
         settings_local = resolved_settings
+        deadline_monotonic = started + settings_local.request_deadline_seconds
 
         def remaining_budget() -> float:
-            return settings_local.request_deadline_seconds - (time.monotonic() - started)
+            return deadline_monotonic - time.monotonic()
+
+        def check_deadline() -> None:
+            if time.monotonic() >= deadline_monotonic:
+                raise ServiceError("request deadline exceeded", code="timeout")
 
         content_length = request.headers.get("content-length")
         check_request_resources(settings_local)
@@ -353,6 +358,7 @@ def create_app(
         streamed_total = 0
         try:
             async for chunk in request.stream():
+                check_deadline()
                 if not chunk:
                     continue
                 streamed_total += len(chunk)
@@ -364,7 +370,9 @@ def create_app(
                 chunks.append(chunk)
         except ClientDisconnect as exc:
             raise ServiceError("request was cancelled before completion", code="cancelled") from exc
+        check_deadline()
         parsed = parse_strict_multipart(content_type, chunks, settings_local)
+        check_deadline()
 
         image_rgb = decode_image_safely(
             parsed.image_bytes,
@@ -372,17 +380,29 @@ def create_app(
             max_width=settings_local.max_image_width,
             max_height=settings_local.max_image_height,
         )
+        check_deadline()
         validated = parse_hostile_config(
             parsed.config_bytes,
             verbosity=parsed.verbosity,
             max_visualization_streams=settings_local.max_visualization_streams,
         )
+        check_deadline()
         core_config = CoreConfig.from_mapping(validated.effective_mapping)
         if runtime_policy is not None:
             try:
                 runtime_policy.validate_config(core_config)
             except UnsupportedProfileError as exc:
                 raise ServiceError(str(exc), code="unsupported_profile") from exc
+        check_deadline()
+
+        reserved_visualization_bytes = 0
+        if parsed.verbosity >= 3:
+            reserved_visualization_bytes = check_visualization_raw_budget(
+                core_config,
+                settings_local,
+                height=image_rgb.shape[0],
+                width=image_rgb.shape[1],
+            )
 
         ready = readiness()
         if not ready.ready:
@@ -395,7 +415,9 @@ def create_app(
             ArtifactBudget(
                 max_artifacts=settings_local.max_debug_artifacts,
                 max_single_bytes=settings_local.max_single_artifact_bytes,
-                max_total_bytes=settings_local.max_total_raw_artifact_bytes,
+                max_total_bytes=(
+                    settings_local.max_total_raw_artifact_bytes - reserved_visualization_bytes
+                ),
             )
         )
         loop = asyncio.get_running_loop()
@@ -471,9 +493,13 @@ def create_app(
             max_mask_rle_runs_per_object=settings_local.max_mask_rle_runs_per_object,
             max_mask_rle_runs_total=settings_local.max_mask_rle_runs_total,
             max_response_bytes=settings_local.max_response_bytes,
+            deadline_monotonic=deadline_monotonic,
         )
 
         serialization_started = time.monotonic()
+        if settings_local.test_serialization_delay_seconds:
+            await asyncio.sleep(settings_local.test_serialization_delay_seconds)
+        check_deadline()
         if parsed.response_format == "zip":
             payload = build_completion_zip(
                 outcome,
@@ -481,6 +507,7 @@ def create_app(
                 sink=sink,
                 max_bytes=settings_local.max_response_bytes,
             )
+            check_deadline()
             response = Response(
                 content=payload,
                 media_type="application/zip",
@@ -498,11 +525,17 @@ def create_app(
                 + len(sink.artifacts()),
             )
             metrics.request_duration.observe(time.monotonic() - started)
+            check_deadline()
             request.state.metrics_recorded = True
             return response
 
         document = build_completion_json(outcome, context, sink=sink)
-        bound_json_size(document, settings_local.max_response_bytes)
+        bound_json_size(
+            document,
+            settings_local.max_response_bytes,
+            deadline_monotonic=deadline_monotonic,
+        )
+        check_deadline()
         response = JSONResponse(status_code=200, content=document)
         metrics.serialization_duration.observe(time.monotonic() - serialization_started)
         metrics.update_gpu()
@@ -514,6 +547,7 @@ def create_app(
             artifacts=len(document["service"].get("artifacts", [])),
         )
         metrics.request_duration.observe(time.monotonic() - started)
+        check_deadline()
         request.state.metrics_recorded = True
         return response
 

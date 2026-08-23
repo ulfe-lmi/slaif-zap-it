@@ -68,6 +68,7 @@ class ServiceSettings:
     request_deadline_seconds: float = 120.0
     queue_depth: int = 0
     retry_after_seconds: int = 5
+    test_serialization_delay_seconds: float = 0.0
     api_key: Optional[str] = None
     model_id: str = SERVICE_MODEL_ID
     tmp_root: str = DEFAULT_TMP_ROOT
@@ -103,6 +104,8 @@ class ServiceSettings:
             raise ValueError("queue_depth must be >= 0")
         if self.retry_after_seconds < 0:
             raise ValueError("retry_after_seconds must be >= 0")
+        if self.test_serialization_delay_seconds < 0:
+            raise ValueError("test_serialization_delay_seconds must be >= 0")
         if not self.model_id or not self.model_id.strip():
             raise ValueError("model_id must be a non-empty identifier")
 
@@ -152,6 +155,14 @@ class ServiceSettings:
             if deadline <= 0:
                 raise ValueError("SLAIF_ZAP_IT_REQUEST_DEADLINE_SECONDS must be positive")
             kwargs["request_deadline_seconds"] = deadline
+        raw_serialization_delay = env.get("SLAIF_ZAP_IT_TEST_SERIALIZATION_DELAY_SECONDS")
+        if raw_serialization_delay:
+            serialization_delay = float(raw_serialization_delay)
+            if serialization_delay < 0:
+                raise ValueError(
+                    "SLAIF_ZAP_IT_TEST_SERIALIZATION_DELAY_SECONDS must be non-negative"
+                )
+            kwargs["test_serialization_delay_seconds"] = serialization_delay
         api_key = env.get(API_KEY_ENV_VAR)
         if api_key == "":
             api_key = None
