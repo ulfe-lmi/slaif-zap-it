@@ -2,6 +2,7 @@
 # generated-fixture tests and operator documentation, never demos/media/OAP.
 include README.md LICENSE THIRD_PARTY_NOTICES.md SECURITY.md TESTING.md
 include CHANGELOG.md RELEASE_NOTES.md
+include INSTALL.md requirements-gpu-cu124.lock .secrets.baseline
 recursive-include src *.py
 recursive-include modules *.py
 recursive-include tests *.py
@@ -9,6 +10,7 @@ recursive-include docs *.md
 include deploy/zap-it-local.service deploy/service.env.example
 include scripts/serve_local.py scripts/serve_local.sh scripts/serve_local_stop.sh
 include scripts/smoke_local_service.py scripts/smoke_local_goats.py
+include scripts/smoke_installed_package.py
 include scripts/verify_release_artifacts.py
 include scripts/scan_release_artifacts.py
 include configs/glasswool.yaml configs/icecream.yaml configs/soccer.yaml configs/tomato.yaml

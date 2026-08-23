@@ -14,12 +14,11 @@
 
 [Unit]
 Description=SLAIF ZAP-IT loopback service (physical GPU1, sam2_clip resident)
-Documentation=file://%h/opencode-work/slaif-zap-it/docs/RUNBOOK.md
+Documentation=https://github.com/ulfe-lmi/slaif-zap-it/blob/main/docs/RUNBOOK.md
 
 [Service]
 Type=simple
 EnvironmentFile=%h/.config/slaif-zap-it/service.env
-WorkingDirectory=%h/opencode-work/slaif-zap-it
 # Installed foreground entrypoint placeholder; do not enable until reviewed.
 ExecStart=/usr/bin/env %h/.local/share/venvs/zap-it-0.1.0/bin/zap-it-service
 ExecStop=/bin/kill -TERM $MAINPID
