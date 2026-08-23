@@ -42,7 +42,7 @@ dev = [
     "pytest==8.3.3",
     "pytest-cov==5.0.0",
     "ruff==0.16.4",
-    "twine==5.1.1",
+    "twine==7.0.0",
 ]
 # HTTP service contract (objective 002): FastAPI/Pydantic/Uvicorn transport.
 # CPU-only installs stay light; heavy model/GPU stacks remain operator-managed.
