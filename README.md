@@ -79,11 +79,14 @@ CI runs formatting/lint/wheel-build checks plus the CPU test suite on Python
 
 - [INSTALL.md](INSTALL.md) – environment setup (conda GPU stack and CPU dev env).
 - [docs/CONFIG.md](docs/CONFIG.md) – YAML configuration reference.
+- [docs/API.md](docs/API.md) – HTTP `/v1/completions` contract (CPU/fake-engine).
 - [ALGORITHMS-DETAILED.md](ALGORITHMS-DETAILED.md) – stage-by-stage walkthrough.
 - [docs/ALGORITHMS.md](docs/ALGORITHMS.md) – short algorithm overview.
 - [CONTRIBUTING.md](CONTRIBUTING.md) – development workflow and rules.
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) – license/provenance pointers.
 - [SECURITY.md](SECURITY.md) – input/data/host security law.
 
-ZAP-IT currently provides the batch CLI described above only; there is no HTTP
-service yet, so no service-readiness claims are made here.
+ZAP-IT currently ships the batch CLI described above plus the objective-002
+CPU-only HTTP contract (`POST /v1/completions`) exercised with a deterministic
+fake engine. No live model/GPU service is activated yet, so no
+service-readiness claims are made here.
