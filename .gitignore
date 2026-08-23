@@ -179,3 +179,9 @@ last_results/
 
 # Operator-only service settings; keep checked-in templates visible.
 deploy/*.env
+
+# Nonredistributable local academic goat inputs. Keep operator copies in place
+# for the opt-in local harness, but never carry them in the public tip/builds.
+/configs/goats.yaml
+/configs/goats2.yaml
+/demos/goats/

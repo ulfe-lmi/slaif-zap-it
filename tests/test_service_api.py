@@ -156,6 +156,7 @@ def test_l0_minimal_metadata_and_yolo_text(level_bodies):
         assert all(0.0 <= float(value) <= 1.0 for value in fields[1:])
     service = doc["service"]
     assert service["verbosity"] == 0
+    assert service["package_version"] == "0.1.0"
     assert service["class_mapping"] == {"goat": 0}
     assert len(service["config_digest"]) == 64
     assert service["image"] == {"width": 32, "height": 24}
@@ -421,6 +422,7 @@ def test_zip_response_contains_manifest_detections_and_mask():
     assert "detections.yolo.txt" in names
     assert "identity-mask.png" in names
     manifest = json.loads(archive.read("manifest.json"))
+    assert manifest["service"]["package_version"] == "0.1.0"
     assert manifest["usage"] is None
     assert manifest["choices"][0]["text"] == archive.read("detections.yolo.txt").decode()
     listed = {entry["name"]: entry for entry in manifest["service"]["artifacts"]}

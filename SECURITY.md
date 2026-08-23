@@ -50,6 +50,22 @@ runtime dependencies/revisions; CI uses least permissions and no untrusted secre
 execution. Report suspected exposure immediately; do not “clean up” before
 preserving safe evidence.
 
+## Tracked secret-baseline exceptions
+
+The committed detect-secrets baseline contains exactly five reviewed findings;
+the enforcing tracked-tree scan compares path, detector type and hashed value
+and requires review for any addition, removal or path change:
+
+- `src/runtime/models.py`: three `Hex High Entropy String` findings for the
+  three pinned model-revision hex strings at lines 32, 40 and 48.
+- `src/service/settings.py`: one `Secret Keyword` finding for the
+  `SLAIF_ZAP_IT_API_KEY` environment-variable name at line 23.
+- `tests/test_service_units.py`: one `Secret Keyword` finding for the
+  synthetic `secret-key` test value at line 160.
+
+These are identifiers and test data, not credentials. The baseline remains
+enforced for the tracked tree and for unpacked wheel/sdist members.
+
 ## Deferred security judgment
 
 A consequential unresolved security/trust decision is not automatically a reason

@@ -1,41 +1,32 @@
 # OPTIONAL user-level systemd template for the SLAIF ZAP-IT loopback service.
 #
-# This unit file is SHIPPED UNINSTALLED. Tests never require it and the
-# objective 004 frozen decision keeps the service operator-started via
-# scripts/serve_local.sh. Installing it is a deliberate human action:
+# This unit file is SHIPPED UNINSTALLED. Tests never require it. Installing it
+# is a deliberate human action:
 #
 #   cp deploy/zap-it-local.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now zap-it-local.service
 #   journalctl --user -u zap-it-local.service -f
 #
-# Before enabling, live-verify the GPU UUID and port (docs/RUNBOOK.md) and
-# edit the Environment lines below accordingly. The placeholder UUID must be
-# replaced with the currently verified physical GPU1 UUID; the port must be
-# freshly proven unused at activation time.
+# Before enabling, live-verify the GPU UUID and port (docs/RUNBOOK.md). The
+# private EnvironmentFile must be mode 0600 and the installed-venv executable
+# below must be replaced with the operator's reviewed candidate path.
 
 [Unit]
 Description=SLAIF ZAP-IT loopback service (physical GPU1, sam2_clip resident)
-Documentation=file://%h/opencode-work/slaif-zap-it/docs/RUNBOOK.md
+Documentation=https://github.com/ulfe-lmi/slaif-zap-it/blob/main/docs/RUNBOOK.md
 
 [Service]
-Type=forking
-PIDFile=/dev/shm/slaif-zap-it/runtime/serve-local.pid
-RuntimeDirectory=slaif-zap-it
-RuntimeDirectoryMode=0700
-WorkingDirectory=%h/opencode-work/slaif-zap-it
-Environment=CUDA_DEVICE_ORDER=PCI_BUS_ID
-Environment=CUDA_VISIBLE_DEVICES=1
-Environment=SLAIF_ZAP_IT_HOST=127.0.0.1
-# Replace after fresh verification; a port is a runtime selection, not fixed.
-Environment=SLAIF_ZAP_IT_PORT=17891
-# Replace with the live-verified physical GPU1 UUID before enabling.
-Environment=SLAIF_ZAP_IT_EXPECTED_GPU_UUID=GPU-c457dbaf-991c-dc23-c781-0dc030776dd8
-Environment=SLAIF_ZAP_IT_TMP_ROOT=/dev/shm/slaif-zap-it
-# Set this to the operator cache that already contains the pinned snapshots.
-# Environment=SLAIF_ZAP_IT_MODEL_CACHE_ROOT=%h/.cache/huggingface
-ExecStart=%h/opencode-work/slaif-zap-it/scripts/serve_local.sh start
-ExecStop=%h/opencode-work/slaif-zap-it/scripts/serve_local_stop.sh
+Type=simple
+EnvironmentFile=%h/.config/slaif-zap-it/service.env
+# Installed foreground entrypoint placeholder; do not enable until reviewed.
+ExecStart=/usr/bin/env %h/.local/share/venvs/zap-it-0.1.0/bin/zap-it-service
+ExecStop=/bin/kill -TERM $MAINPID
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
+# The repo-owned launcher remains supported: scripts/serve_local.sh start.
 
 [Install]
 WantedBy=default.target

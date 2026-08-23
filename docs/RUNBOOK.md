@@ -189,3 +189,36 @@ model-cache entries, stop unrelated GPU0 work, alter NVIDIA/CUDA, firewall/VPN,
 global credentials, or delete persistent user data. The end-of-round state is a
 free loopback port, no ZAP-IT process, GPU1 near its pre-round baseline, GPU0
 unchanged, and an empty `/dev/shm/slaif-zap-it` root.
+
+## Installed candidate and local academic regression
+
+The unpublished 0.1.0 wheel exposes the foreground zap-it-service console
+entrypoint. Install it in a clean venv outside the checkout, source a private
+mode-0600 EnvironmentFile, and use the same GPU1 UUID, logical cuda:0 and
+loopback-only checks documented above. The optional user-systemd template is
+Type=simple, uses that EnvironmentFile and an explicit installed-venv
+placeholder; it is shipped uninstalled. Upgrade is a stopped venv replacement
+followed by the same readiness check. Rollback restores the prior venv. A
+deliberate uninstall stops the service and removes only the unit, private
+config and candidate venv; it never changes system CUDA, shared caches or
+unrelated services.
+
+After building/installing the candidate, the real local academic regression is
+explicit and GPU1-only:
+
+~~~bash
+.venv-gpu/bin/python scripts/smoke_local_goats.py \
+  --port "$SLAIF_ZAP_IT_PORT" \
+  --image-a demos/goats/goats1.jpg \
+  --image-b demos/goats/goats2.jpg \
+  --config configs/goats2.yaml \
+  --api-key "$SLAIF_ZAP_IT_API_KEY"
+~~~
+
+The harness is local-only and refuses missing, symlinked or out-of-root files,
+safe-loads and allowlists the legacy YAML, independently crops both goat images
+to exactly the middle 50 percent in memory, and emits only sanitized
+aliases/digests/dimensions/statuses/timings/counts. It performs A/B/A as crop A,
+crop B, crop A with L2 JSON, L3 JSON and L3 ZIP calls and checks that the
+configured shared-memory workspace has no new files. It never prints or
+persists the source YAML, crop, prompts, labels, response bodies or bearer key.

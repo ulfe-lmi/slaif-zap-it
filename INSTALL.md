@@ -11,15 +11,34 @@ network access from the test suite:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -e '.[dev]'
+.venv/bin/pip install -e '.[dev,service]'
 .venv/bin/pytest -q --cov=src --cov=modules --cov-report=term-missing
 .venv/bin/ruff format --check .
 .venv/bin/ruff check .
-.venv/bin/python -m build
+.venv/bin/python -m build --wheel --sdist
+.venv/bin/python scripts/verify_release_artifacts.py dist/*.whl dist/*.tar.gz
 ```
 
 The CPU tests use fakes for heavyweight model libraries. See
 [docs/BASELINE.md](docs/BASELINE.md) for the exact coverage boundary.
+
+## 0.1.0 candidate install and provenance
+
+The intended version is 0.1.0 and remains unpublished. In a clean temporary
+environment, install the built wheel rather than importing from the checkout:
+
+~~~bash
+python3 -m venv /path/to/candidate-venv
+/path/to/candidate-venv/bin/pip install dist/zap_it-0.1.0-py3-none-any.whl
+/path/to/candidate-venv/bin/python -c 'import src; print(src.__version__)'
+/path/to/candidate-venv/bin/python -c 'import src.runtime.live_service; print(src.runtime.live_service.__file__)'
+test -x /path/to/candidate-venv/bin/zap-it-service
+~~~
+
+The console entrypoint is a foreground, one-worker service and still requires
+the operator's private GPU environment. Do not publish the wheel or sdist,
+create a tag, or claim rights clearance while CRIT-0001 and the model/media
+gates remain open.
 
 ## 1. Qualified GPU environment
 
@@ -86,14 +105,36 @@ Without `ZAP_IT_RUN_GPU=1`, the module skips honestly. It sets/checks the mask
 before importing Torch, uses a RAM-backed lock, and verifies that GPU0's
 compute-process evidence is unchanged.
 
-## 4. Legacy batch usage
+## 4. Installed foreground and optional user-systemd service
+
+Copy deploy/service.env.example to a private mode-0600
+~/.config/slaif-zap-it/service.env, set the freshly verified physical GPU1
+UUID and operator model cache, and run zap-it-service from the installed
+candidate venv. Keep the listener on 127.0.0.1 and stop it with SIGTERM.
+
+The shipped deploy/zap-it-local.service is an uninstalled Type=simple
+foreground template. Before a deliberate human installation, replace its
+installed-venv executable placeholder, validate the private EnvironmentFile
+permissions, and validate the loopback port. Clean install, upgrade and
+rollback are ordinary venv replacement plus stop/start; uninstall removes only
+the unit, private config and candidate venv after stopping the service. Never
+run daemon-reload, enable or start it as part of package verification.
+
+The repository launcher remains supported:
+
+~~~bash
+scripts/serve_local.sh start
+scripts/serve_local.sh stop
+~~~
+
+## 5. Legacy batch usage
 
 The batch CLI and YAML examples remain available after the GPU environment is
 installed:
 
 ```bash
 .venv-gpu/bin/python zap-it-batch.py \
-  --config configs/goats.yaml \
+  --config configs/tomato.yaml \
   --input-image-dir path/to/images
 ```
 
