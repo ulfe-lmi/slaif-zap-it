@@ -110,7 +110,17 @@ be new per call.
 
 ## GPU and process
 
-Physical target GPU index 1; verify UUID/PCI/name/VRAM live. Launch with:
+Physical target is GPU index 1. Human/operator preflight on 2026-08-23 observed:
+
+```text
+GPU1: NVIDIA GeForce RTX 2080 Ti, 11264 MiB
+UUID: GPU-c457dbaf-991c-dc23-c781-0dc030776dd8
+GPU0: separate RTX 2080 Ti with an unrelated workload at that time
+```
+
+Re-verify index/UUID/PCI/name/VRAM/processes before every live GPU objective; this
+snapshot is planning evidence, not a permanent guarantee. GPU0 remains protected
+even if later idle. Launch with:
 
 ```text
 CUDA_DEVICE_ORDER=PCI_BUS_ID
@@ -120,8 +130,9 @@ CUDA_VISIBLE_DEVICES=1
 Inside process only `cuda:0` exists. Never use physical GPU0. Startup verifies
 visible count/device and expected UUID when configured. One service process,
 one GPU request, bounded queue. No multiple Uvicorn workers; no fork after CUDA.
-Optional BLIP3/full profile is enabled only after measured memory-fit/stability;
-otherwise reject honestly or implement explicit safe stage lifecycle.
+With ~11 GB GPU1 VRAM, never assume SAM2+CLIP+BLIP3 co-residency. Objective 003
+must measure individual/combined profiles and select an explicit safe strategy;
+unsupported configurations are rejected honestly rather than spilling to GPU0.
 
 ## Service/network
 
@@ -137,19 +148,35 @@ paths, credentials or model internals. Distinguish invalid image/config, unsuppo
 field/level/format, too large, busy, timeout/cancel, not ready, inference failure,
 response too large, and insufficient `/dev/shm`.
 
-## Modernization sequence
+## HWP-preloaded modernization sequence
 
-1. Professional baseline: audit/current tests, packaging, CPU CI+CodeQL, lint,
-   documentation/security/provenance; no API/GPU mutation.
-2. Pure in-memory typed core and deterministic outputs/identity mask.
-3. API contract and fake-engine tests; local loopback only.
-4. GPU1 environment/model installation verification and bounded live tests.
-5. Full verbosity/artifact parity, resource hardening, observability.
-6. Packaging/systemd/container/gateway integration after prior gates; external
-   deployment/final release only after latest human `ACCEPTED` disposition for
-   every applicable `CRITICAL.md` entry.
+Detailed draft `NNN-a` work orders for all seven numeric objectives live under
+`oap/strategic-instructions/initial-orders/`. They are human-preloaded intent,
+not active orders. Strategic reconciles each against live GitHub/host evidence,
+removes every draft/VERIFY marker, and only then publishes it.
 
-One numeric objective=one PR; amendments stay on same PR.
+1. **000 Professional baseline:** audit/current tests, packaging, CPU CI+CodeQL,
+   lint, documentation/security/provenance; no API/GPU mutation.
+2. **001 In-memory core:** typed single-image engine, artifact sinks, deterministic
+   object order, pure YOLO and uint16 identity mask; preserve CLI/video.
+3. **002 API contract:** multipart `/v1/completions`, hostile-input policy,
+   JSON/ZIP L0–L3, limits/errors/auth/health/concurrency with fake engine; no live
+   GPU service.
+4. **003 GPU1 qualification:** exact environment/model/license/revision audit and
+   bounded live tests; measure what fits safely on the actual ~11 GB GPU1.
+5. **004 Loopback activation:** one real service worker/request on freshly verified
+   loopback port and pinned GPU1 UUID; E2E, cleanup, restart and rollback.
+6. **005 Full parity/hardening:** overlap-preserving masks, safe geometry/
+   visualization parity, limits, failure/cancel/state-isolation, metrics and
+   service datasheet.
+7. **006 Packaging/integration/release readiness:** build/install artifacts,
+   operator packaging, optional tested container, SLAIF gateway/auth integration,
+   license/supply-chain review and release candidate; external deployment/final
+   release only after every applicable human adjudication gate is cleared.
+
+One numeric objective=one PR; `b..z` amend the same PR. Strategic may refine or
+split based on verified reality but must not casually replace the preloaded
+outcome or skip dependency gates.
 
 ## Security
 
@@ -160,9 +187,9 @@ or secrets. `/dev/shm` is ephemeral, not an authorization boundary.
 
 ## HWP, HJP and critical adjudication
 
-Human Work Preloading places intent/architecture/roadmap before OAP. Strategic
-must resolve ordinary ambiguity and make consequential provisional decisions; it
-may not stop merely from reluctance to choose.
+Human Work Preloading places intent/architecture/roadmap/detailed objective drafts
+before OAP. Strategic must resolve ordinary ambiguity and make consequential
+provisional decisions; it may not stop merely from reluctance to choose.
 
 `CRITICAL.md` is a rare append-only Deferred Human Adjudication Register. Append
 only if all five conditions in that file hold: unresolved by existing law,
