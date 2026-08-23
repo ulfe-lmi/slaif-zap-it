@@ -22,9 +22,38 @@ def test_torch_module_is_stub():
 def test_network_sockets_are_blocked():
     import socket
 
+    # Socket objects may be constructed (asyncio event loops need internal
+    # self-pipe sockets), but any outbound connection attempt outside
+    # loopback must fail loudly so the CPU suite stays offline.
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    except AssertionError as exc:
-        assert "sockets are disabled" in str(exc)
-    else:
-        raise AssertionError("socket creation unexpectedly succeeded; the offline guard failed")
+        try:
+            sock.connect(("example.com", 80))
+        except AssertionError as exc:
+            assert "disabled during the ZAP-IT CPU test suite" in str(exc)
+            assert "example.com" in str(exc)
+        else:
+            raise AssertionError(
+                "outbound connect unexpectedly succeeded; the offline guard failed"
+            )
+    finally:
+        sock.close()
+
+
+def test_loopback_connections_remain_available():
+    import socket
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        port = server.getsockname()[1]
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            client.connect(("127.0.0.1", port))
+            accepted, _ = server.accept()
+            accepted.close()
+        finally:
+            client.close()
+    finally:
+        server.close()
