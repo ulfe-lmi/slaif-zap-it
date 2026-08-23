@@ -1,0 +1,32 @@
+# Objective 003-a operator lock for CPython 3.12 on the verified GPU1 host.
+# Install with SAM2_BUILD_CUDA=0 when the host nvcc is not the same CUDA minor
+# used by the PyTorch wheel.  SAM2's Python implementation remains supported;
+# the optional connected-components extension is not required by this service.
+--index-url https://download.pytorch.org/whl/cu124
+torch==2.5.1
+torchvision==0.20.1
+torchaudio==2.5.1
+
+--extra-index-url https://pypi.org/simple
+accelerate==0.32.1
+einops==0.8.0
+einops-exts==0.0.4
+hydra-core==1.3.2
+huggingface-hub==0.24.6
+iopath==0.1.10
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+open-clip-torch==2.24.0
+packaging==24.1
+pillow==10.4.0
+pyyaml==6.0.2
+safetensors==0.4.3
+sentencepiece==0.2.0
+setuptools==75.1.0
+transformers==4.41.1
+tqdm==4.66.4
+# The opt-in live GPU marker test runner.
+pytest==9.1.1
+
+# Official SAM2 source, pinned to the code audited for this objective.
+SAM-2 @ git+https://github.com/facebookresearch/sam2.git@2b90b9f5ceec907a1c18123530e92e794ad901a4

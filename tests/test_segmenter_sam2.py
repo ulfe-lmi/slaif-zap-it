@@ -31,3 +31,8 @@ def test_run_uses_existing_generator(monkeypatch):
     )
     assert meta["num_masks"] == 1
     assert masks[0]["segmentation"].sum() == 1
+
+
+def test_real_generator_kwargs_preserve_upstream_defaults():
+    values = sam2_mod._generator_kwargs({"points_per_side": 8, "crop_n_layers": 0})
+    assert values == {"points_per_side": 8, "crop_n_layers": 0}

@@ -12,7 +12,7 @@ python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 ```
 
-The heavy GPU stack lives in the operator conda environment described in
+The heavy GPU stack lives in the operator-managed pip environment described in
 [INSTALL.md](INSTALL.md); do not add model/runtime weights to Git.
 
 ## Ground rules

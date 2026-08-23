@@ -2,8 +2,9 @@
 
 ZAP-IT is licensed under the MIT License (see [LICENSE](LICENSE)). It builds on
 the following third-party software and models. This file records pointers for
-license review; it is not legal advice. Runtime GPU dependencies are installed
-by the operator conda environment (`environment.yml`), not by `pip install`.
+license review; it is not legal advice. Objective 003-a uses the pinned
+repo-owned pip lock in `requirements-gpu-cu124.lock`; model weights remain
+operator cache assets and are never committed or redistributed.
 
 ## Python packages
 
@@ -18,18 +19,18 @@ by the operator conda environment (`environment.yml`), not by `pip install`.
 | ruff | formatter/linter | MIT |
 | build | packaging frontend | MIT |
 
-### GPU/runtime stack (conda environment `environment.yml`, operator-managed)
+### GPU/runtime stack (Objective 003-a pip lock, operator-managed)
 
 | Package | Role | License pointer |
 | --- | --- | --- |
-| pytorch 2.3.x / torchvision / torchaudio | tensor/GPU runtime | BSD-3-Clause |
-| detectron2 (incl. bundled ops) | panoptic visualization utilities | Apache-2.0 |
-| SAM-2 (`facebookresearch/sam2`) | segmentation implementation | Apache-2.0 |
-| transformers >= 4.41 | model loading/inference glue | Apache-2.0 |
-| open-clip-torch | optional CLIP backends | MIT |
-| opencv-python-headless | Canny/Hough geometry stage | Apache-2.0 |
-| huggingface-hub, accelerate, safetensors, sentencepiece | hub/model support | Apache-2.0 / MIT/HF variants — review before redistribution |
-| matplotlib | composite rendering | PSF-like (Matplotlib license) |
+| pytorch 2.5.1+cu124 / torchvision 0.20.1 / torchaudio 2.5.1 | tensor/GPU runtime | BSD-3-Clause |
+| pytest 9.1.1 | opt-in live GPU marker tests | MIT |
+| SAM-2 source commit `2b90b9f…` | segmentation implementation | Apache-2.0; optional CUDA extension disabled in this lock |
+| transformers 4.41.1 | model loading/inference glue | Apache-2.0 |
+| open-clip-torch 2.24.0, einops, einops-exts | XGen-MM remote-code dependencies | MIT / MIT / MIT; review before redistribution |
+| opencv-python-headless, hydra-core, iopath | image/optional SAM2 support | Apache-2.0 / MIT / Apache-2.0 |
+| huggingface-hub, accelerate, safetensors, sentencepiece | hub/model support | Apache-2.0 / Apache-2.0 / Apache-2.0 / Apache-2.0 |
+| detectron2 | optional panoptic visualization only | Not installed by the qualified runtime; legacy behavior remains available when supplied |
 
 ## Pretrained models referenced by the downloader/pipeline
 
@@ -38,13 +39,13 @@ never committed to this repository.
 
 | Model repo | Used by | Notes |
 | --- | --- | --- |
-| `facebook/sam2-hiera-large` | `modules/segmenter/sam2.py` | SAM 2 checkpoints; check current model-card license before any redistribution/commercial use. |
-| `openai/clip-vit-base-patch32` | `modules/classifier/clip.py` | OpenAI CLIP weights; MIT-style model card license at time of writing — re-verify. |
-| `Salesforce/xgen-mm-phi3-mini-instruct-r-v1` | `modules/verifier/blip3.py` | BLIP-3 family releases have carried non-commercial research terms in the past; **verify the exact model license before any production or commercial deployment.** |
+| `facebook/sam2-hiera-large` @ `e6a8e880…` | `modules/segmenter/sam2.py` | HF model card declares Apache-2.0; exact revision/provenance and cache size are in [runtime.md](docs/runtime.md). |
+| `openai/clip-vit-base-patch32` @ `3d74acf9…` | `modules/classifier/clip.py` | Pinned OpenAI research model card has no SPDX field and marks deployed use out of scope; do not treat it as a commercial/deployment license. |
+| `Salesforce/xgen-mm-phi3-mini-instruct-r-v1` @ `1d91d356…` | `modules/verifier/blip3.py` | HF model card and `LICENSE.txt` identify CC-BY-NC-4.0; `trust_remote_code` audit is in [runtime.md](docs/runtime.md). |
 
-Model revisions are not pinned yet; pinning/reviewing remote-code models and
-revisions is a planned modernization objective. Until then, treat model
-downloads as operator actions outside CI.
+Model revisions and the remote-code file hashes are pinned for Objective 003-a.
+The BLIP3 profile remains rejected on the verified 11 GiB GPU; pinning does not
+authorize client-selected model loading or commercial redistribution.
 
 ## Assets
 

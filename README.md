@@ -10,7 +10,7 @@ ZAP-IT is a high level computer‑vision pipeline built from foundational models
 
 ## Quick Start
 
-1. Install the dependencies and create the conda environment as described in [INSTALL.md](INSTALL.md).
+1. Install the CPU or qualified GPU environment as described in [INSTALL.md](INSTALL.md).
 2. Pick or create a YAML file in `configs/` describing your task (see [docs/CONFIG.md](docs/CONFIG.md)).
 3. Run the batch script over a folder of `.jpg` files:
    ```bash
@@ -69,15 +69,15 @@ python3 -m venv .venv
 
 Note that the CPU suite exercises pipeline logic through a documented stub
 harness; see [docs/BASELINE.md](docs/BASELINE.md) for the precise inventory of
-what is tested against real libraries versus stubs. The conda GPU environment
-from [INSTALL.md](INSTALL.md) remains required for actual inference.
+what is tested against real libraries versus stubs. The qualified pip GPU
+environment from [INSTALL.md](INSTALL.md) is required for actual inference.
 
 CI runs formatting/lint/wheel-build checks plus the CPU test suite on Python
 3.10–3.12 and CodeQL security analysis on every PR and push to `main`.
 
 ## Additional documentation
 
-- [INSTALL.md](INSTALL.md) – environment setup (conda GPU stack and CPU dev env).
+- [INSTALL.md](INSTALL.md) – CPU development and pinned GPU runtime setup.
 - [docs/CONFIG.md](docs/CONFIG.md) – YAML configuration reference.
 - [docs/API.md](docs/API.md) – HTTP `/v1/completions` contract (CPU/fake-engine).
 - [ALGORITHMS-DETAILED.md](ALGORITHMS-DETAILED.md) – stage-by-stage walkthrough.
@@ -85,8 +85,9 @@ CI runs formatting/lint/wheel-build checks plus the CPU test suite on Python
 - [CONTRIBUTING.md](CONTRIBUTING.md) – development workflow and rules.
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) – license/provenance pointers.
 - [SECURITY.md](SECURITY.md) – input/data/host security law.
+- [docs/runtime.md](docs/runtime.md) – Objective 003-a hardware, provenance and measured resource strategy.
 
-ZAP-IT currently ships the batch CLI described above plus the objective-002
-CPU-only HTTP contract (`POST /v1/completions`) exercised with a deterministic
-fake engine. No live model/GPU service is activated yet, so no
-service-readiness claims are made here.
+ZAP-IT currently ships the batch CLI, the objective-002 CPU-only HTTP contract
+(`POST /v1/completions`) exercised with a deterministic fake engine, and a
+qualified-but-not-activated GPU1 runtime. Objective 004 is still required
+before any live service listener or readiness claim is enabled.

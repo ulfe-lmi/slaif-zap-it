@@ -25,8 +25,8 @@ classifiers = [
 
 # The heavy GPU stack (torch/torchvision, SAM-2, detectron2, transformers,
 # open-clip-torch, opencv) is intentionally NOT declared here; it is provided by
-# the operator-managed conda environment documented in INSTALL.md and
-# environment.yml. This keeps CPU/dev installs free of model downloads.
+# the operator-managed pip environment documented in INSTALL.md and the GPU
+# lock. This keeps CPU/dev installs free of model downloads.
 dependencies = [
     "numpy",
     "pillow",
@@ -55,6 +55,7 @@ packages = [
     "src",
     "src.core",
     "src.service",
+    "src.runtime",
     "modules",
     "modules.classifier",
     "modules.geometry",
@@ -67,6 +68,9 @@ packages = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+    "gpu: opt-in serialized physical-GPU1 integration checks (never public CI)",
+]
 
 [tool.ruff]
 line-length = 100

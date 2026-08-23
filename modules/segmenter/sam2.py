@@ -41,6 +41,22 @@ class _DryRunMaskGenerator:
         return masks
 
 
+def _generator_kwargs(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep SAM2 defaults intact when an option is absent from YAML."""
+    values = {
+        "points_per_side": config.get("points_per_side"),
+        "pred_iou_thresh": config.get("pred_iou_thresh"),
+        "stability_score_thresh": config.get("stability_score_thresh"),
+        "min_mask_region_area": config.get("min_mask_region_area"),
+        "crop_n_layers": config.get("crop_n_layers"),
+        "crop_n_points_downscale_factor": config.get("crop_n_points_downscale_factor"),
+        "crop_overlap_ratio": config.get("crop_overlap_ratio"),
+        "box_nms_thresh": config.get("box_nms_thresh"),
+        "multimask_output": config.get("multimask_output"),
+    }
+    return {key: value for key, value in values.items() if value is not None}
+
+
 def initialize(
     config: Dict[str, Any],
     *,
@@ -69,20 +85,30 @@ def initialize(
         target_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model_name = config.get("model_name", "facebook/sam2-hiera-large")
-    model = build_sam2_hf(model_name)
+    revision = config.get("revision")
+    if revision:
+        # The upstream helper does not expose ``revision``.  Keep the model
+        # identity pinned for operator qualification without changing the
+        # legacy unpinned path used by existing CLI configurations.
+        from huggingface_hub import hf_hub_download
+        from sam2.build_sam import build_sam2
+
+        config_file = config.get("config_file", "configs/sam2/sam2_hiera_l.yaml")
+        checkpoint_name = config.get("checkpoint_name", "sam2_hiera_large.pt")
+        checkpoint = hf_hub_download(
+            repo_id=model_name,
+            filename=checkpoint_name,
+            revision=str(revision),
+        )
+        model = build_sam2(config_file=config_file, ckpt_path=checkpoint, device=target_device)
+    else:
+        model = build_sam2_hf(model_name, device=target_device)
     model.eval().to(target_device)
 
-    generator_kwargs = {
-        "points_per_side": config.get("points_per_side"),
-        "pred_iou_thresh": config.get("pred_iou_thresh"),
-        "stability_score_thresh": config.get("stability_score_thresh"),
-        "min_mask_region_area": config.get("min_mask_region_area"),
-        "crop_n_layers": config.get("crop_n_layers"),
-        "crop_n_points_downscale_factor": config.get("crop_n_points_downscale_factor"),
-        "crop_overlap_ratio": config.get("crop_overlap_ratio"),
-        "box_nms_thresh": config.get("box_nms_thresh"),
-        "multimask_output": config.get("multimask_output"),
-    }
+    # Passing explicit ``None`` overrides SAM2's constructor defaults and, for
+    # example, makes ``crop_n_points_downscale_factor ** layer`` fail.  Only
+    # operator-specified values belong in the upstream kwargs.
+    generator_kwargs = _generator_kwargs(config)
 
     mask_generator = SAM2AutomaticMaskGenerator(model, **generator_kwargs)
     return {"mask_generator": mask_generator}
