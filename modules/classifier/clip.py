@@ -16,7 +16,7 @@ class _DryRunClipFilter:
         self.verbosity = verbosity
         self.log_print = log_print_func if log_print_func else (lambda *a, **k: None)
 
-    def filter_masks(self, masks, _image_np, _out_dir, _fname_stem):
+    def filter_masks(self, masks, _image_np, _out_dir, _fname_stem, artifact_sink=None):
         for idx, mask in enumerate(masks, start=1):
             label = f"dryrun region {idx}"
             mask["clip_label"] = label
@@ -113,7 +113,7 @@ class _ClipFilter:
         )
         return (best_label, best_score, best_prompt)
 
-    def filter_masks(self, masks, image_np, out_dir, fname_stem):
+    def filter_masks(self, masks, image_np, out_dir, fname_stem, artifact_sink=None):
         if self.text_embeds is None or self.text_embeds.numel() == 0 or not masks:
             return masks
 
@@ -140,8 +140,11 @@ class _ClipFilter:
             if self.debug and best_prompt is not None:
                 safe_prompt = best_prompt.replace(" ", "_").replace(",", "_")
                 patch_file = f"{fname_stem}_patch{i}_{safe_prompt}.jpg"
-                patch_path = os.path.join(out_dir, patch_file)
-                Image.fromarray(patch).save(patch_path, "JPEG")
+                if artifact_sink is not None:
+                    artifact_sink.store_image(patch_file, patch)
+                else:
+                    patch_path = os.path.join(out_dir, patch_file)
+                    Image.fromarray(patch).save(patch_path, "JPEG")
                 self.log_print(
                     f"[_ClipFilter debug] => wrote debug patch: {patch_file}", 2, self.verbosity
                 )
@@ -203,8 +206,14 @@ def run(
 
     out_dir = params.get("out_dir")
     fname_stem = params.get("fname_stem", "image")
+    artifact_sink = params.get("artifact_sink")
 
-    processed_masks = clip_filter.filter_masks(masks, image_np, out_dir, fname_stem)
+    if artifact_sink is not None:
+        processed_masks = clip_filter.filter_masks(
+            masks, image_np, out_dir, fname_stem, artifact_sink=artifact_sink
+        )
+    else:
+        processed_masks = clip_filter.filter_masks(masks, image_np, out_dir, fname_stem)
     meta = {
         "num_masks": len(processed_masks) if processed_masks is not None else 0,
     }

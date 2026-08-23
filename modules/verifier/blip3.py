@@ -272,7 +272,22 @@ class _Blip3Filter:
             model_cfg, device=device, verbosity=verbosity, log_print_func=self.log_print
         )
 
-    def filter_masks(self, masks, image_np, out_dir, fname_stem):
+    def _write_debug_artifacts(
+        self, patch, out_dir, fname_stem, safe_lbl, idx, answer, artifact_sink
+    ):
+        """Write one debug JPEG plus answer text via sink or legacy files."""
+        patch_file = f"{fname_stem}_blip3_{idx:04d}_{safe_lbl}.jpg"
+        text_name = patch_file.replace(".jpg", ".txt")
+        if artifact_sink is not None:
+            artifact_sink.store_image(patch_file, patch)
+            artifact_sink.store_text(text_name, answer)
+        else:
+            Image.fromarray(patch).save(os.path.join(out_dir, patch_file), "JPEG")
+            with open(os.path.join(out_dir, text_name), "w") as f:
+                f.write(answer)
+        self.log_print(f"[_Blip3Filter debug] => wrote {patch_file}", 2, self.verbosity)
+
+    def filter_masks(self, masks, image_np, out_dir, fname_stem, artifact_sink=None):
         if not self.label_cfg:
             return masks, []
 
@@ -326,12 +341,15 @@ class _Blip3Filter:
                 answers.append(answer)
 
                 if cfg.get("debug", False):
-                    safe_lbl = key.replace(" ", "_")
-                    patch_file = f"{fname_stem}_blip3_{idx:04d}_{safe_lbl}.jpg"
-                    Image.fromarray(patch).save(os.path.join(out_dir, patch_file), "JPEG")
-                    with open(os.path.join(out_dir, patch_file.replace(".jpg", ".txt")), "w") as f:
-                        f.write(answer)
-                    self.log_print(f"[_Blip3Filter debug] => wrote {patch_file}", 2, self.verbosity)
+                    self._write_debug_artifacts(
+                        patch,
+                        out_dir,
+                        fname_stem,
+                        key.replace(" ", "_"),
+                        idx,
+                        answer,
+                        artifact_sink,
+                    )
 
                 ans_l = answer.lower()
                 true_s = str(cfg.get("trueresult", "")).lower()
@@ -360,12 +378,9 @@ class _Blip3Filter:
             answers.append(answer)
 
             if cfg.get("debug", False):
-                safe_lbl = lbl.replace(" ", "_")
-                patch_file = f"{fname_stem}_blip3_{idx:04d}_{safe_lbl}.jpg"
-                Image.fromarray(patch).save(os.path.join(out_dir, patch_file), "JPEG")
-                with open(os.path.join(out_dir, patch_file.replace(".jpg", ".txt")), "w") as f:
-                    f.write(answer)
-                self.log_print(f"[_Blip3Filter debug] => wrote {patch_file}", 2, self.verbosity)
+                self._write_debug_artifacts(
+                    patch, out_dir, fname_stem, lbl.replace(" ", "_"), idx, answer, artifact_sink
+                )
 
             ans_l = answer.lower()
             true_s = str(cfg.get("trueresult", "")).lower()
@@ -390,7 +405,7 @@ class _DryRunBlip3Filter:
         self.verbosity = verbosity
         self.log_print = log_print_func or (lambda *a, **k: None)
 
-    def filter_masks(self, masks, _image_np, _out_dir, _fname_stem):
+    def filter_masks(self, masks, _image_np, _out_dir, _fname_stem, artifact_sink=None):
         answers = []
         for idx, mask in enumerate(masks, start=1):
             if idx % 2 == 1:
@@ -441,8 +456,14 @@ def run(
 
     out_dir = params.get("out_dir")
     fname_stem = params.get("fname_stem", "image")
+    artifact_sink = params.get("artifact_sink")
 
-    updated_masks, answers = blip_filter.filter_masks(masks, image_np, out_dir, fname_stem)
+    if artifact_sink is not None:
+        updated_masks, answers = blip_filter.filter_masks(
+            masks, image_np, out_dir, fname_stem, artifact_sink=artifact_sink
+        )
+    else:
+        updated_masks, answers = blip_filter.filter_masks(masks, image_np, out_dir, fname_stem)
     meta = {
         "answers": answers,
         "num_masks": len(updated_masks) if updated_masks is not None else 0,
