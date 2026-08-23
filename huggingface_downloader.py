@@ -29,9 +29,9 @@ from typing import List
 from huggingface_hub import snapshot_download, login
 
 # Exact repos from your old downloader
-SAM2_REPO   = "facebook/sam2-hiera-large"
-CLIP_REPO   = "openai/clip-vit-base-patch32"
-BLIP3_REPO  = "Salesforce/xgen-mm-phi3-mini-instruct-r-v1"
+SAM2_REPO = "facebook/sam2-hiera-large"
+CLIP_REPO = "openai/clip-vit-base-patch32"
+BLIP3_REPO = "Salesforce/xgen-mm-phi3-mini-instruct-r-v1"
 
 DEFAULT_REPOS = [SAM2_REPO, CLIP_REPO, BLIP3_REPO]
 
@@ -42,7 +42,10 @@ def ensure_login(token_arg: str | None, non_interactive: bool) -> None:
         login(token=tok, add_to_git_credential=True)
         return
     if non_interactive:
-        print("INFO: non-interactive mode; skipping login (set HF_TOKEN or --token if gated).", file=sys.stderr)
+        print(
+            "INFO: non-interactive mode; skipping login (set HF_TOKEN or --token if gated).",
+            file=sys.stderr,
+        )
         return
     print("No HF token provided. Enter one if any repo is gated (leave empty to skip).")
     try:
@@ -74,11 +77,16 @@ def dl(repo: str, base: Path) -> Path:
 
 def main(argv: List[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("-o", "--output", help="Destination base directory (default: $WORKDIR/models or ./models).")
+    ap.add_argument(
+        "-o", "--output", help="Destination base directory (default: $WORKDIR/models or ./models)."
+    )
     ap.add_argument("--token", help="HF token (overrides HF_TOKEN).")
     ap.add_argument("--non-interactive", action="store_true", help="Do not prompt for token.")
-    ap.add_argument("--with-blip3-processors", action="store_true",
-                    help="Also pull tokenizer & image processor for the BLIP-3 repo.")
+    ap.add_argument(
+        "--with-blip3-processors",
+        action="store_true",
+        help="Also pull tokenizer & image processor for the BLIP-3 repo.",
+    )
     args = ap.parse_args(argv)
 
     # Honor HF_HOME if set (recommended to set HF_HOME=$WORKDIR/huggingface on HPC)
@@ -93,9 +101,9 @@ def main(argv: List[str] | None = None) -> int:
 
     ok = True
     try:
-        sam2_dir  = dl(SAM2_REPO, out_base)
-        clip_dir  = dl(CLIP_REPO, out_base)
-        blip_dir  = dl(BLIP3_REPO, out_base)
+        dl(SAM2_REPO, out_base)
+        dl(CLIP_REPO, out_base)
+        blip_dir = dl(BLIP3_REPO, out_base)
     except Exception as e:
         ok = False
         print(f"ERROR: {e}", file=sys.stderr)
@@ -116,4 +124,3 @@ def main(argv: List[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-    

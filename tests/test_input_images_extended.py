@@ -1,5 +1,4 @@
 import numpy as np
-from PIL import Image
 
 from modules.input import images as img_mod
 
@@ -20,7 +19,11 @@ def test_load_image_uses_exif_transpose(tmp_path, monkeypatch):
         return img
 
     monkeypatch.setattr(img_mod.ImageOps, "exif_transpose", fake_transpose)
-    monkeypatch.setattr(img_mod.Image, "open", lambda path: img_mod.Image.fromarray(np.zeros((2, 2, 3), dtype=np.uint8)))
+    monkeypatch.setattr(
+        img_mod.Image,
+        "open",
+        lambda path: img_mod.Image.fromarray(np.zeros((2, 2, 3), dtype=np.uint8)),
+    )
 
     pil_img, arr = img_mod.load_image("ignored.jpg")
     assert pil_img.size == (2, 2)

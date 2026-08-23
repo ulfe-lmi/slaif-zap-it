@@ -1,9 +1,9 @@
 """Visualization helpers and pipeline orchestration for ZAP-IT."""
+
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, Iterable
 
-import cv2
 import numpy as np
 import torch
 from PIL import Image
@@ -21,7 +21,9 @@ __all__ = [
 ]
 
 
-def render_annotated(image_np: np.ndarray, masks: Iterable[Dict[str, Any]], alpha: float = 0.5) -> np.ndarray:
+def render_annotated(
+    image_np: np.ndarray, masks: Iterable[Dict[str, Any]], alpha: float = 0.5
+) -> np.ndarray:
     """Return an alpha-blended overlay of ``masks`` on top of ``image_np``."""
     out = image_np.astype(np.float32, copy=True)
     sorted_masks = sorted(masks, key=lambda x: x.get("area", 0), reverse=True)

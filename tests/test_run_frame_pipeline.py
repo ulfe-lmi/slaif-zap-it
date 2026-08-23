@@ -37,7 +37,11 @@ def test_run_frame_pipeline_happy_path(monkeypatch, tmp_path, pipeline_context):
     monkeypatch.setattr("src.batch.save_roi_debug", lambda arr, path: saved_rois.append(path))
 
     def fake_resize(image_np, resize_value):
-        return image_np, {"mode": "downscale", "factor": 0.5, "size": (image_np.shape[1], image_np.shape[0])}
+        return image_np, {
+            "mode": "downscale",
+            "factor": 0.5,
+            "size": (image_np.shape[1], image_np.shape[0]),
+        }
 
     monkeypatch.setattr("src.batch.resize_image", fake_resize)
 
@@ -81,7 +85,10 @@ def test_run_frame_pipeline_happy_path(monkeypatch, tmp_path, pipeline_context):
 
     monkeypatch.setattr("src.batch.run_blip3", fake_run_blip3)
 
-    monkeypatch.setattr("src.batch.generate_visualizations", lambda *args, **kwargs: {"sam": np.zeros((4, 4, 3), dtype=np.uint8)})
+    monkeypatch.setattr(
+        "src.batch.generate_visualizations",
+        lambda *args, **kwargs: {"sam": np.zeros((4, 4, 3), dtype=np.uint8)},
+    )
 
     exporter = DummyExporter()
     image = np.zeros((4, 4, 3), dtype=np.uint8)
@@ -101,7 +108,9 @@ def test_run_frame_pipeline_happy_path(monkeypatch, tmp_path, pipeline_context):
     )
 
     assert saved_rois
-    assert isinstance(segmenter_state, dict) and segmenter_state.get("mask_generator") == "generator"
+    assert (
+        isinstance(segmenter_state, dict) and segmenter_state.get("mask_generator") == "generator"
+    )
     assert clip_state.get("clip")
     assert blip_state.get("blip")
 

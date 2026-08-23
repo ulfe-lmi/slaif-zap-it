@@ -2,6 +2,22 @@
 
 ZAP-IT relies on PyTorch with CUDA acceleration, Hugging Face transformers, SAM2, BLIP-3, CLIP and a few additional packages. The recommended way to reproduce our software stack is to create a Conda (or Mamba) environment from the supplied `environment.yml` file and then pull the model checkpoints from Hugging Face.
 
+## 0. CPU-only development environment (tests, linting, packaging)
+
+If you only want to run the test suite, linters or package builds — no
+inference, no model downloads — use a plain virtualenv:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e '.[dev]'
+```
+
+This installs numpy/Pillow/PyYAML plus pytest, ruff, coverage and build tooling
+only; heavy GPU libraries are intentionally excluded (see `pyproject.toml`).
+Canonical verification commands are listed in [CONTRIBUTING.md](CONTRIBUTING.md),
+and [docs/BASELINE.md](docs/BASELINE.md) documents exactly which behaviors the
+CPU suite covers via its stub harness versus what needs the full stack below.
+
 ## 1. Prerequisites
 
 1. **CUDA-enabled GPU** – the pipeline is GPU-first. Ensure that the GPU drivers available on your machine (or via HPC modules) match CUDA 12.1.

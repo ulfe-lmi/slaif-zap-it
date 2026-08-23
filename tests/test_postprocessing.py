@@ -31,7 +31,9 @@ def test_filter_by_area_bbox_enforces_bbox_and_logs():
         _make_mask(10, (0, 0, 5, 6)),
         _make_mask(10, (0, 0, 9, 9)),
     ]
-    kept = filter_by_area_bbox(masks, post_maxsize=50, max_w=5, max_h=6, verbosity=2, log_print_func=logger)
+    kept = filter_by_area_bbox(
+        masks, post_maxsize=50, max_w=5, max_h=6, verbosity=2, log_print_func=logger
+    )
     assert len(kept) == 1
     assert kept[0]["segmentation"].sum() == 30
     assert any("postsam2processing" in msg for msg, *_ in messages)

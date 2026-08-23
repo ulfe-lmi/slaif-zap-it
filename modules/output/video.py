@@ -1,4 +1,5 @@
 """FFmpeg-backed MJPEG video writers for visualization streams."""
+
 from __future__ import annotations
 
 import os
@@ -80,12 +81,16 @@ class _FFmpegMJPEGWriter:
                 pass
 
         assert self._proc.stderr is not None
-        self._stderr_thread = threading.Thread(target=_drain_stderr, args=(self._proc.stderr,), daemon=True)
+        self._stderr_thread = threading.Thread(
+            target=_drain_stderr, args=(self._proc.stderr,), daemon=True
+        )
         self._stderr_thread.start()
         self._width = width
         self._height = height
         if self.verbosity >= 2:
-            print(f"[video] => started ffmpeg writer for {self.output_path} ({width}x{height} @ {self.fps:.3f}fps)")
+            print(
+                f"[video] => started ffmpeg writer for {self.output_path} ({width}x{height} @ {self.fps:.3f}fps)"
+            )
 
     def write(self, frame: np.ndarray) -> None:
         if frame.ndim != 3 or frame.shape[2] != 3:
@@ -148,7 +153,9 @@ class VideoWriterManager:
                 output_path = os.path.join(base_dir, str(spec.get("filename", f"{vis_id}.avi")))
                 fps = float(spec.get("fps", default_fps))
             else:
-                raise ValueError(f"video.{vis_id} must be a string path or a mapping (got {type(spec)!r})")
+                raise ValueError(
+                    f"video.{vis_id} must be a string path or a mapping (got {type(spec)!r})"
+                )
             self._paths[vis_id] = output_path
             self._fps[vis_id] = fps
             if self._verbosity >= 2:
@@ -161,7 +168,9 @@ class VideoWriterManager:
                 continue
             writer = self._writers.get(vis_id)
             if writer is None:
-                writer = _FFmpegMJPEGWriter(output_path, self._fps[vis_id], quality=self._quality, verbosity=self._verbosity)
+                writer = _FFmpegMJPEGWriter(
+                    output_path, self._fps[vis_id], quality=self._quality, verbosity=self._verbosity
+                )
                 self._writers[vis_id] = writer
             writer.write(frame)
 
@@ -177,7 +186,9 @@ class NullVideoWriter(VideoWriterManager):
     def __init__(self) -> None:  # pragma: no cover - trivial wrapper
         super().__init__({}, base_dir=".")
 
-    def write(self, frames: Mapping[str, np.ndarray]) -> None:  # pragma: no cover - intentionally empty
+    def write(
+        self, frames: Mapping[str, np.ndarray]
+    ) -> None:  # pragma: no cover - intentionally empty
         return
 
     def close(self) -> None:  # pragma: no cover - intentionally empty

@@ -6,7 +6,9 @@ from modules.verifier import blip3 as blip_mod
 
 def test_initialize_dryrun_alternates_labels():
     state = blip_mod.initialize({}, dryrun=True, verbosity=0)
-    masks = [{"segmentation": np.ones((1, 1), dtype=bool), "clip_label": "initial"} for _ in range(3)]
+    masks = [
+        {"segmentation": np.ones((1, 1), dtype=bool), "clip_label": "initial"} for _ in range(3)
+    ]
     filt = state["blip3_filter"]
     updated, answers = filt.filter_masks(masks, np.zeros((1, 1, 3), dtype=np.uint8), ".", "frame")
     assert answers[0].startswith("dryrun")
@@ -34,7 +36,13 @@ def test_run_with_mock_filter(monkeypatch):
     masks = [{"segmentation": np.ones((1, 1), dtype=bool), "clip_label": "maybe"}]
     state, processed, meta = blip_mod.run(
         None,
-        {"dryrun": False, "config": {"label": {}}, "masks": masks, "out_dir": ".", "fname_stem": "img"},
+        {
+            "dryrun": False,
+            "config": {"label": {}},
+            "masks": masks,
+            "out_dir": ".",
+            "fname_stem": "img",
+        },
         np.zeros((1, 1, 3), dtype=np.uint8),
     )
     assert processed[0]["clip_label"] == "approved"

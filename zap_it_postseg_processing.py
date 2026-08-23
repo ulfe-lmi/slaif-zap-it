@@ -7,8 +7,7 @@ import warnings
 from src.postprocessing import filter_by_area_bbox as _filter_by_area_bbox
 
 warnings.warn(
-    "'zap_it_postseg_processing' is deprecated; import from "
-    "'src.postprocessing' instead.",
+    "'zap_it_postseg_processing' is deprecated; import from 'src.postprocessing' instead.",
     DeprecationWarning,
     stacklevel=2,
 )

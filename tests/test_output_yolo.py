@@ -7,9 +7,7 @@ from modules.output.yolo import YoloDatasetExporter
 
 
 def test_yolo_exporter_creates_files(tmp_path, monkeypatch):
-    config = {
-        "export_yolo_det": {"labels": "cat,dog", "trainsplit": 100, "sample_roi": True}
-    }
+    config = {"export_yolo_det": {"labels": "cat,dog", "trainsplit": 100, "sample_roi": True}}
     monkeypatch.setattr("modules.output.yolo.random.random", lambda: 0.3)
 
     exporter = YoloDatasetExporter(config, str(tmp_path), output_root=str(tmp_path / "yolo"))
