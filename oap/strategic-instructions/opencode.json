@@ -1,0 +1,12 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "strategic_model_init_material.md",
+    "OAP-COMMUNICATION-strategic.md",
+    "ARCHITECTURE-for-agents.md",
+    "INITIAL-ROADMAP.md",
+    "RUNTIME.md"
+  ],
+  "permission": "allow",
+  "share": "disabled"
+}
