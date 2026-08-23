@@ -278,6 +278,7 @@ def test_decode_png_to_rgb_array():
     array = decode_image_safely(png_bytes(), max_decoded_pixels=10_000)
     assert array.shape == (6, 8, 3)
     assert array.dtype == np.uint8
+    assert array.flags.writeable
 
 
 def test_decode_jpeg_allowed():

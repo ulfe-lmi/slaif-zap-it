@@ -17,7 +17,7 @@ try:
 except ImportError:  # pragma: no cover - pillow is a required dependency
     Image = None  # type: ignore[assignment]
 
-from .errors import IdentityMaskOverflowError
+from .errors import CoreError, IdentityMaskOverflowError
 from .results import ObjectResult
 
 __all__ = [
@@ -64,7 +64,13 @@ def render_yolo(objects: Sequence[ObjectResult], *, image_width: int, image_heig
     return "".join(chunks)
 
 
-def render_identity_png(objects: Sequence[ObjectResult], *, width: int, height: int) -> bytes:
+def render_identity_png(
+    objects: Sequence[ObjectResult],
+    *,
+    width: int,
+    height: int,
+    ensure_all_ids: bool = False,
+) -> bytes:
     """Render the lossless uint16 identity mask PNG for ``objects``.
 
     Contract:
@@ -75,6 +81,9 @@ def render_identity_png(objects: Sequence[ObjectResult], *, width: int, height: 
       (disconnected components therefore share one ID);
     - contested (overlapping) pixels are won by the larger-area object; exact
       area ties are won by the smaller instance ID;
+    - when ``ensure_all_ids`` is true, a deterministic row-major source pixel
+      is reserved for any otherwise fully occluded object, preserving the
+      service contract that IDs 1..N remain bijective with the object list;
     - more than :data:`MAX_IDENTITY_OBJECTS` objects raise
       :class:`IdentityMaskOverflowError` before any pixel buffer allocation;
     - encoding is deterministic for equal inputs within one environment.
@@ -96,6 +105,41 @@ def render_identity_png(objects: Sequence[ObjectResult], *, width: int, height: 
     paint_order = sorted(objects, key=lambda obj: (obj.area_px, -obj.instance_id))
     for obj in paint_order:
         canvas[obj.mask] = obj.instance_id
+    if ensure_all_ids and objects:
+        # The baseline winner policy can make a smaller object disappear when
+        # it is fully covered by a larger mask.  Preserve the source masks and
+        # reserve one distinct source pixel for each missing ID.  Do not steal
+        # the last visible pixel of another object; if no such projection
+        # exists, fail closed instead of returning a misleading artifact.
+        visible_counts = {
+            int(instance_id): int(np.count_nonzero(canvas == instance_id))
+            for instance_id in (obj.instance_id for obj in objects)
+        }
+        reserved_pixels: set[tuple[int, int]] = set()
+        for obj in sorted(objects, key=lambda item: item.instance_id):
+            if visible_counts.get(obj.instance_id, 0) > 0:
+                continue
+            rows, cols = np.nonzero(obj.mask)
+            selected: tuple[int, int] | None = None
+            for row, col in zip(rows.tolist(), cols.tolist()):
+                pixel = (int(row), int(col))
+                if pixel in reserved_pixels:
+                    continue
+                owner = int(canvas[pixel])
+                if owner and visible_counts.get(owner, 0) <= 1:
+                    continue
+                selected = pixel
+                break
+            if selected is None:
+                raise CoreError(
+                    "identity mask cannot preserve a distinct pixel for every object ID"
+                )
+            owner = int(canvas[selected])
+            if owner:
+                visible_counts[owner] -= 1
+            canvas[selected] = obj.instance_id
+            visible_counts[obj.instance_id] = visible_counts.get(obj.instance_id, 0) + 1
+            reserved_pixels.add(selected)
     if Image is None:  # pragma: no cover - broken install guard
         raise RuntimeError("Pillow is required to encode PNG artifacts.")
     buffer = io.BytesIO()

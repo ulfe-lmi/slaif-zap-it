@@ -27,11 +27,36 @@ class _DryRunClipFilter:
         return masks
 
 
+def _class_map_from(clip_config: Dict[str, Any]) -> Dict[str, List[str]]:
+    """Parse the legacy ``labels``/``label <name>`` config into a class map."""
+    class_map: Dict[str, List[str]] = {}
+    labels_cfg = clip_config.get("labels", None)
+    if isinstance(labels_cfg, dict):
+        for cname, val in labels_cfg.items():
+            if not isinstance(val, str):
+                continue
+            flat = val.replace("\n", ",")
+            prompts = [p.strip() for p in flat.split(",") if p.strip()]
+            class_map[cname] = prompts
+    for key, val in clip_config.items():
+        if isinstance(key, str) and key.lower().startswith("label "):
+            cname = key.split("label ", 1)[1].strip()
+            flat = str(val).replace("\n", ",")
+            prompts = [p.strip() for p in flat.split(",") if p.strip()]
+            class_map[cname] = prompts
+    return class_map
+
+
 class _ClipFilter:
     """Lightweight wrapper around a CLIP model for zero-shot classification."""
 
     def __init__(
-        self, clip_config: Dict[str, Any], device="cuda", verbosity=1, log_print_func=None
+        self,
+        clip_config: Dict[str, Any],
+        device="cuda",
+        verbosity=1,
+        log_print_func=None,
+        local_files_only: bool = False,
     ):
         self.verbosity = verbosity
         self.device = device
@@ -39,30 +64,8 @@ class _ClipFilter:
         self.padding = clip_config.get("padding", 20)
         self.log_print = log_print_func if log_print_func else (lambda *a, **k: None)
 
-        self.class_map: Dict[str, List[str]] = {}
-
-        labels_cfg = clip_config.get("labels", None)
-        if isinstance(labels_cfg, dict):
-            for cname, val in labels_cfg.items():
-                if not isinstance(val, str):
-                    continue
-                flat = val.replace("\n", ",")
-                prompts = [p.strip() for p in flat.split(",") if p.strip()]
-                self.class_map[cname] = prompts
-
-        for key, val in clip_config.items():
-            if isinstance(key, str) and key.lower().startswith("label "):
-                cname = key.split("label ", 1)[1].strip()
-                flat = str(val).replace("\n", ",")
-                prompts = [p.strip() for p in flat.split(",") if p.strip()]
-                self.class_map[cname] = prompts
-
-        self.class_idx: List[str] = []
-        self.all_prompts: List[str] = []
-        for cname, p_list in self.class_map.items():
-            for prompt in p_list:
-                self.all_prompts.append(prompt)
-                self.class_idx.append(cname)
+        self.class_map: Dict[str, List[str]] = _class_map_from(clip_config)
+        self._rebuild_prompt_index()
 
         # Local imports avoid touching transformers/torch when running in dry-run mode.
         import torch
@@ -74,19 +77,53 @@ class _ClipFilter:
         model_name = clip_config.get("model_name", "openai/clip-vit-base-patch32")
         revision = clip_config.get("revision")
         load_kwargs = {"revision": str(revision)} if revision else {}
+        if local_files_only:
+            load_kwargs["local_files_only"] = True
         self.processor = CLIPProcessor.from_pretrained(model_name, **load_kwargs)
         self.model = CLIPModel.from_pretrained(model_name, **load_kwargs).to(device)
         self.model.eval()
 
         if self.all_prompts:
-            with torch.no_grad():
-                text_inputs = self.processor(
-                    text=self.all_prompts, return_tensors="pt", padding=True
-                ).to(self.device)
-                text_emb = self.model.get_text_features(**text_inputs)
-                self.text_embeds = text_emb / text_emb.norm(dim=-1, keepdim=True)
+            self._encode_text_prompts()
         else:
             self.text_embeds = None
+
+    def _rebuild_prompt_index(self) -> None:
+        """Recompute the flat prompt/class index from ``class_map``."""
+        self.class_idx: List[str] = []
+        self.all_prompts: List[str] = []
+        for cname, p_list in self.class_map.items():
+            for prompt in p_list:
+                self.all_prompts.append(prompt)
+                self.class_idx.append(cname)
+
+    def _encode_text_prompts(self) -> None:
+        torch = self._torch
+        with torch.no_grad():
+            text_inputs = self.processor(
+                text=self.all_prompts, return_tensors="pt", padding=True
+            ).to(self.device)
+            text_emb = self.model.get_text_features(**text_inputs)
+            self.text_embeds = text_emb / text_emb.norm(dim=-1, keepdim=True)
+
+    def update_labels(self, clip_config: Dict[str, Any]) -> bool:
+        """Re-encode prompts when a request supplies different labels.
+
+        The resident service reuses one CLIP model across requests; the model
+        weights stay untouched and only the cheap text-projection is
+        recomputed when the effective class map changes. Returns whether an
+        update was applied.
+        """
+        new_class_map = _class_map_from(clip_config or {})
+        if new_class_map == self.class_map:
+            return False
+        self.class_map = new_class_map
+        self._rebuild_prompt_index()
+        if self.all_prompts:
+            self._encode_text_prompts()
+        else:
+            self.text_embeds = None
+        return True
 
     def classify_single(self, patch: np.ndarray, mask_idx: int):
         import time
@@ -162,6 +199,7 @@ def initialize(
     device="cuda",
     verbosity: int = 1,
     log_print_func=None,
+    local_files_only: bool = False,
 ) -> Dict[str, Any]:
     """Create a CLIP filter or a dry-run stub."""
 
@@ -172,7 +210,13 @@ def initialize(
         return {"clip_filter": _DryRunClipFilter(verbosity=verbosity, log_print_func=log)}
 
     log("[classifier.clip] Initializing CLIP filter", 1, verbosity)
-    clip_filter = _ClipFilter(config, device=device, verbosity=verbosity, log_print_func=log)
+    clip_filter = _ClipFilter(
+        config,
+        device=device,
+        verbosity=verbosity,
+        log_print_func=log,
+        local_files_only=local_files_only,
+    )
     return {"clip_filter": clip_filter}
 
 
@@ -200,6 +244,12 @@ def run(
         )
         state.update(init_state)
         clip_filter = state.get("clip_filter")
+    else:
+        # Resident runtime: keep the loaded model, re-encode prompts only when
+        # this request supplies a different effective label map.
+        update_labels = getattr(clip_filter, "update_labels", None)
+        if callable(update_labels):
+            update_labels(params.get("config", {}) or {})
 
     image_np = images[0] if isinstance(images, (list, tuple)) else images
 

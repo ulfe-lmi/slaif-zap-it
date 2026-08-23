@@ -42,7 +42,9 @@ rejected with stable codes before any expensive work.
 - **L0**: completion envelope + normalized YOLO lines in `choices[0].text`
   + minimal metadata (request id, image dims, class mapping, config digest).
 - **L1**: L0 + lossless uint16 identity PNG artifact (`identity-mask.png`,
-  background `0`, instance ids `1..N`, larger-area overlap winner).
+  background `0`, instance ids `1..N`). Overlaps use the larger-area winner;
+  if that would fully occlude an object, the service reserves a deterministic
+  source pixel so the PNG IDs remain bijective with YOLO/object records.
 - **L2**: L1 + per-object records containing only fields actually produced
   (bbox pixel+normalized, area, centroid, SAM quality, CLIP score, BLIP3
   answer when present, geometry hook when present).
