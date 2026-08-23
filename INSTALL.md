@@ -1,116 +1,102 @@
 # Installation
 
-ZAP-IT relies on PyTorch with CUDA acceleration, Hugging Face transformers, SAM2, BLIP-3, CLIP and a few additional packages. The recommended way to reproduce our software stack is to create a Conda (or Mamba) environment from the supplied `environment.yml` file and then pull the model checkpoints from Hugging Face.
+ZAP-IT has a light CPU development environment and a separate operator-managed
+GPU environment. The GPU path is pinned for the verified Objective 003-a host;
+it does not start a service or expose a listener.
 
-## 0. CPU-only development environment (tests, linting, packaging)
+## 0. CPU-only development
 
-If you only want to run the test suite, linters or package builds — no
-inference, no model downloads — use a plain virtualenv:
+This path runs tests, linting and packaging without CUDA, model downloads or
+network access from the test suite:
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
+.venv/bin/pytest -q --cov=src --cov=modules --cov-report=term-missing
+.venv/bin/ruff format --check .
+.venv/bin/ruff check .
+.venv/bin/python -m build
 ```
 
-This installs numpy/Pillow/PyYAML plus pytest, ruff, coverage and build tooling
-only; heavy GPU libraries are intentionally excluded (see `pyproject.toml`).
-Canonical verification commands are listed in [CONTRIBUTING.md](CONTRIBUTING.md),
-and [docs/BASELINE.md](docs/BASELINE.md) documents exactly which behaviors the
-CPU suite covers via its stub harness versus what needs the full stack below.
+The CPU tests use fakes for heavyweight model libraries. See
+[docs/BASELINE.md](docs/BASELINE.md) for the exact coverage boundary.
 
-## 1. Prerequisites
+## 1. Qualified GPU environment
 
-1. **CUDA-enabled GPU** – the pipeline is GPU-first. Ensure that the GPU drivers available on your machine (or via HPC modules) match CUDA 12.1.
-2. **Conda or Mamba** – the instructions below assume that either `conda` or `mamba` is available in your shell. On an HPC system, this is often exposed via a module such as `module load anaconda3` or `module load mambaforge`.
-3. **Hugging Face account (optional but recommended)** – use `huggingface-cli login` if you need authenticated access to gated models.
-
-### HPC-specific guidance
-
-On multi-user clusters the CUDA toolkit, compilers and Python are typically provided as environment modules. Before creating the Conda environment, load the stack that matches the versions pinned in `environment.yml`:
+Requirements are CPython 3.12, a compatible NVIDIA driver and `uv`. The lock
+uses PyTorch 2.5.1/cu124 wheels and the pinned SAM2/Transformers support stack.
+The verified host uses physical GPU index 1; GPU0 is protected.
 
 ```bash
-module load gcc/11.3.0              # or a newer GCC that your site supports
-module load cuda/12.1.1             # matches pytorch-cuda=12.1 from environment.yml
-module load cudnn/8.9.7             # optional, only if provided separately
-module load nccl/2.18.3             # optional, recommended for multi-GPU jobs
-module load anaconda3/2023.09       # provides conda; adjust to your site's module name
+uv venv .venv-gpu --python python3.12
+SAM2_BUILD_CUDA=0 uv pip install --python .venv-gpu/bin/python \
+  -r requirements-gpu-cu124.lock
+
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+export CUDA_VISIBLE_DEVICES=1
+export SLAIF_ZAP_IT_EXPECTED_GPU_UUID=GPU-c457dbaf-991c-dc23-c781-0dc030776dd8
+export SLAIF_ZAP_IT_STRICT_GPU=1
+export SLAIF_ZAP_IT_RESOURCE_STRATEGY=sam2_clip_resident_blip3_rejected
+export SLAIF_ZAP_IT_SUPPORTED_PROFILES=sam2,clip,sam2_clip
 ```
 
-> 💡 **Tip:** Ask your system administrators for the module names that correspond to CUDA 12.1, cuDNN 8.9+ and GCC 11+. Once the modules are loaded you can create the Conda environment exactly as on a workstation.
+`SAM2_BUILD_CUDA=0` avoids compiling an optional extension with the host's
+system nvcc minor. The Python SAM2 implementation is still installed and
+qualified. Detectron2 is intentionally not installed: it is lazy and optional
+for the legacy panoptic visualization path.
 
-If your cluster offers Mamba it will significantly reduce environment solve time:
+The historical `environment.yml` is retained as a legacy reference and is not
+the reproducible Objective 003-a environment on this host. Do not use it to
+change system packages or CUDA.
+
+## 2. Pinned model snapshots and qualification
+
+Download only the approved, immutable model revisions into the operator's
+default Hugging Face cache and run the bounded qualification:
 
 ```bash
-module load mambaforge
+.venv-gpu/bin/python scripts/qualify_gpu_runtime.py --download
+.venv-gpu/bin/python scripts/qualify_gpu_runtime.py
 ```
 
-## 2. Create the Conda environment
+The script uses an in-memory generated fixture, captures all-GPU snapshots,
+checks the masked UUID, measures SAM2/CLIP separately and together, and
+rejects BLIP3 before load when its conservative prediction exceeds the 90%
+budget. It never writes weights or request data to the repository or
+`/dev/shm`.
 
-With the required modules loaded (or on a workstation with recent NVIDIA drivers) run:
+Exact revisions, licenses, remote-code audit, measured tables, supported
+profiles and the selected Objective 004 port are recorded in
+[docs/runtime.md](docs/runtime.md). Model use remains subject to the notices in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); weights are not committed.
+
+## 3. Optional live GPU test
+
+The live test is explicit, serialized and excluded from CPU CI:
 
 ```bash
-# Using conda (works everywhere)
-conda env create -f environment.yml
-
-# OR using mamba for faster solves
-mamba env create -f environment.yml
-
-conda activate zap-it
+ZAP_IT_RUN_GPU=1 \
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 \
+SLAIF_ZAP_IT_EXPECTED_GPU_UUID=GPU-c457dbaf-991c-dc23-c781-0dc030776dd8 \
+ZAP_IT_TESTS_ALLOW_SOCKETS=1 \
+.venv-gpu/bin/pytest -m gpu tests/test_gpu_integration.py
 ```
 
-The `environment.yml` file pins PyTorch 2.3 with CUDA 12.1 support, along with the compiler toolchain (`cmake`, `ninja`) required by Detectron2 and other native extensions.
+Without `ZAP_IT_RUN_GPU=1`, the module skips honestly. It sets/checks the mask
+before importing Torch, uses a RAM-backed lock, and verifies that GPU0's
+compute-process evidence is unchanged.
 
-### CPU-only fallback
+## 4. Legacy batch usage
 
-If you only have CPU access, remove the `pytorch-cuda=12.1` entry from `environment.yml` and let Conda resolve a CPU build of PyTorch instead. Keep in mind that inference will be significantly slower without a GPU.
-
-## 3. Model code and checkpoint downloads
-
-The environment already installs the latest SAM2 code directly from GitHub as well as the supporting libraries (`transformers`, `open-clip-torch`, `accelerate`, etc.). You still need to download the pretrained model weights. The easiest way is via the Hugging Face CLI:
+The batch CLI and YAML examples remain available after the GPU environment is
+installed:
 
 ```bash
-conda activate zap-it
-huggingface-cli login  # only if the models require authentication
-
-# SAM 2
-huggingface-cli download facebook/sam2-hiera-base --local-dir models/sam2
-
-# BLIP-3 (choose the variant that matches your use case; base is shown here)
-huggingface-cli download Salesforce/blip3-itm-base --local-dir models/blip3
-
-# CLIP (ViT-L/14 example; swap in the architecture you need)
-huggingface-cli download openai/clip-vit-large-patch14 --local-dir models/clip
+.venv-gpu/bin/python zap-it-batch.py \
+  --config configs/goats.yaml \
+  --input-image-dir path/to/images
 ```
 
-All commands above respect the `HF_HOME` environment variable. On a cluster you can set it to a scratch location to avoid filling your home directory:
-
-```bash
-export HF_HOME=/scratch/$USER/huggingface
-```
-
-If you prefer to script the downloads inside Python, `huggingface_hub.snapshot_download()` is available because it is included in the Conda environment.
-
-## 4. Verifying the install
-
-After the environment is active and the models are downloaded, run a quick smoke test to confirm that CUDA is visible:
-
-```bash
-python - <<'PY'
-import torch
-print("PyTorch version:", torch.__version__)
-print("CUDA available:", torch.cuda.is_available())
-if torch.cuda.is_available():
-    print("GPU name:", torch.cuda.get_device_name(0))
-PY
-```
-
-When running on a Slurm-style HPC scheduler, remember to request a GPU in your job script (e.g. `#SBATCH --gpus=1`) and load the same modules you used when creating the environment before activating Conda in the job.
-
-## 5. Additional resources
-
-- Example configuration files are in the `configs/` directory.
-- See [docs/CONFIG.md](docs/CONFIG.md) for details on creating custom YAML configurations.
-- Hugging Face model cards provide the most up-to-date checkpoints:
-  - [facebook/sam2-hiera-base](https://huggingface.co/facebook/sam2-hiera-base)
-  - [Salesforce/blip3-itm-base](https://huggingface.co/Salesforce/blip3-itm-base)
-  - [openai/clip-vit-large-patch14](https://huggingface.co/openai/clip-vit-large-patch14)
+The Objective 003 runtime policy is operator-owned. Uploaded API YAML cannot
+select a model repository, revision, device, cache, path, command or resource
+strategy. Objective 004 is required before starting the local API service.

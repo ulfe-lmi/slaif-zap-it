@@ -29,6 +29,7 @@ ERROR_STATUS_CODES: Mapping[str, int] = {
     "unsupported_verbosity": 400,
     "unsupported_format": 400,
     "unsupported_model": 400,
+    "unsupported_profile": 400,
     "stream_unsupported": 400,
     "unauthorized": 401,
     "payload_too_large": 413,

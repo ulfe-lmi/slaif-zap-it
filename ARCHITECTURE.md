@@ -485,7 +485,7 @@ strategic first order must capture:
 - existing compute/graphics processes on every GPU;
 - driver and CUDA runtime;
 - PyTorch/CUDA versions in the intended environment;
-- whether the stated 22/24 GB GPU-1 memory is real;
+- whether the preloaded GPU-1 capacity matches a fresh live measurement;
 - whether `/dev/shm` and a candidate port are available.
 
 Service environment:

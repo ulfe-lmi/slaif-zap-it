@@ -28,7 +28,7 @@ Consequences:
 
 - Real-library behavior (true PIL imaging, true torch semantics, detectron2
   rendering) is NOT exercised by this suite. Full-stack behavior requires the
-  conda GPU environment and is out of scope for CPU CI.
+  qualified pip GPU environment and is out of scope for CPU CI.
 - The stubs are intentionally minimal; tests that pass under them characterize
   orchestration logic (config flow, filtering, YOLO export formatting, path
   handling), not model inference quality.
@@ -79,3 +79,7 @@ CUDA stays unavailable, proving the suite never reaches GPU or network code.
 In-memory core extraction, service API, GPU qualification and identity-mask
 semantics are future objectives tracked by the modernization plan
 (see [MODERNIZATION-TARGET.md](MODERNIZATION-TARGET.md)).
+
+Objective 003-a runtime qualification is recorded separately in
+[runtime.md](runtime.md); it does not alter the CPU-only baseline or make GPU
+behavior part of public CI.

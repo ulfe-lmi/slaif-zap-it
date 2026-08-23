@@ -71,8 +71,11 @@ class _ClipFilter:
         self._torch = torch
 
         self.log_print("[_ClipFilter] loading clip-vit-base-patch32", 1, self.verbosity)
-        self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-        self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+        model_name = clip_config.get("model_name", "openai/clip-vit-base-patch32")
+        revision = clip_config.get("revision")
+        load_kwargs = {"revision": str(revision)} if revision else {}
+        self.processor = CLIPProcessor.from_pretrained(model_name, **load_kwargs)
+        self.model = CLIPModel.from_pretrained(model_name, **load_kwargs).to(device)
         self.model.eval()
 
         if self.all_prompts:
