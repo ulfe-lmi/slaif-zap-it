@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dev tooling
-        run: python -m pip install -e '.[dev]'
+        run: python -m pip install -e '.[dev,service]'
       - name: Ruff format check
         run: ruff format --check .
       - name: Ruff lint
@@ -40,6 +40,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install package with dev extras
-        run: python -m pip install -e '.[dev]'
+        run: python -m pip install -e '.[dev,service]'
       - name: Run CPU test suite with coverage gate
         run: pytest -q --cov=src --cov=modules --cov-report=term-missing
