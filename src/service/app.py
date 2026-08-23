@@ -187,6 +187,12 @@ def create_app(
         started = getattr(request.state, "metrics_started", None)
         if started is not None:
             metrics.request_duration.observe(time.monotonic() - started)
+        serialization_started = getattr(request.state, "metrics_serialization_started", None)
+        if serialization_started is not None and not getattr(
+            request.state, "metrics_serialization_recorded", False
+        ):
+            metrics.serialization_duration.observe(time.monotonic() - serialization_started)
+            request.state.metrics_serialization_recorded = True
         request.state.metrics_recorded = True
 
     app = FastAPI(
@@ -497,6 +503,7 @@ def create_app(
         )
 
         serialization_started = time.monotonic()
+        request.state.metrics_serialization_started = serialization_started
         if settings_local.test_serialization_delay_seconds:
             await asyncio.sleep(settings_local.test_serialization_delay_seconds)
         check_deadline()
@@ -513,7 +520,9 @@ def create_app(
                 media_type="application/zip",
                 headers={"Content-Disposition": 'attachment; filename="zap-it-result.zip"'},
             )
+            check_deadline()
             metrics.serialization_duration.observe(time.monotonic() - serialization_started)
+            request.state.metrics_serialization_recorded = True
             metrics.update_gpu()
             metrics.observe_success(
                 verbosity=parsed.verbosity,
@@ -525,7 +534,6 @@ def create_app(
                 + len(sink.artifacts()),
             )
             metrics.request_duration.observe(time.monotonic() - started)
-            check_deadline()
             request.state.metrics_recorded = True
             return response
 
@@ -537,7 +545,9 @@ def create_app(
         )
         check_deadline()
         response = JSONResponse(status_code=200, content=document)
+        check_deadline()
         metrics.serialization_duration.observe(time.monotonic() - serialization_started)
+        request.state.metrics_serialization_recorded = True
         metrics.update_gpu()
         metrics.observe_success(
             verbosity=parsed.verbosity,
@@ -547,7 +557,6 @@ def create_app(
             artifacts=len(document["service"].get("artifacts", [])),
         )
         metrics.request_duration.observe(time.monotonic() - started)
-        check_deadline()
         request.state.metrics_recorded = True
         return response
 
