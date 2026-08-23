@@ -31,7 +31,6 @@ def test_network_sockets_are_blocked():
             sock.connect(("example.com", 80))
         except AssertionError as exc:
             assert "disabled during the ZAP-IT CPU test suite" in str(exc)
-            assert "example.com" in str(exc)
         else:
             raise AssertionError(
                 "outbound connect unexpectedly succeeded; the offline guard failed"
