@@ -111,6 +111,8 @@ class _Blip3QA:
         self.model_name = blip_config.get(
             "model_name", "Salesforce/xgen-mm-phi3-mini-instruct-r-v1"
         )
+        self.revision = blip_config.get("revision")
+        load_kwargs = {"revision": str(self.revision)} if self.revision else {}
 
         # dtype: "auto" | "float16" | "bfloat16" | "float32"
         dtype_cfg = str(blip_config.get("dtype", "auto")).lower()
@@ -152,6 +154,7 @@ class _Blip3QA:
         #      then move the fully materialized model to the target device + dtype.
         self.model = AutoModelForVision2Seq.from_pretrained(
             self.model_name,
+            **load_kwargs,
             trust_remote_code=True,
             use_safetensors=True,
             dtype=dtype,  # remote class prefers 'dtype='
@@ -172,6 +175,7 @@ class _Blip3QA:
         # Tokenizer & processor (prefer fast to avoid warnings; falls back if unavailable)
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.model_name,
+            **load_kwargs,
             trust_remote_code=True,
             use_fast=use_fast_tok,
             legacy=False,
@@ -181,6 +185,7 @@ class _Blip3QA:
 
         self.image_processor = AutoImageProcessor.from_pretrained(
             self.model_name,
+            **load_kwargs,
             trust_remote_code=True,
             use_fast=use_fast_proc,
         )

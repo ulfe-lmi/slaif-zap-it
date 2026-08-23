@@ -5,12 +5,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, Iterable
 
 import numpy as np
-import torch
 from PIL import Image
-
-from detectron2.data import Metadata
-from detectron2.structures import BitMasks, Instances
-from detectron2.utils.visualizer import ColorMode, Visualizer
 
 __all__ = [
     "render_annotated",
@@ -100,6 +95,16 @@ def build_composite_for_masks(
 
 def build_panoptic_final(orig_np: np.ndarray, final_masks: Iterable[Dict[str, Any]]) -> np.ndarray:
     """Create a detectron2-based panoptic overlay from ``final_masks``."""
+    try:
+        import torch
+        from detectron2.data import Metadata
+        from detectron2.structures import BitMasks, Instances
+        from detectron2.utils.visualizer import ColorMode, Visualizer
+    except ImportError as exc:
+        raise RuntimeError(
+            "panoptic visualization requires the optional detectron2 dependency"
+        ) from exc
+
     final_masks = list(final_masks)
     if not final_masks:
         return orig_np

@@ -26,6 +26,7 @@ from starlette.responses import Response
 
 from src.core.config import CoreConfig, config_digest
 from src.core.sinks import MemoryArtifactSink
+from src.runtime.strategy import RuntimePolicy, UnsupportedProfileError
 
 from .auth import verify_bearer_key
 from .envelope import (
@@ -126,8 +127,14 @@ def create_app(
     engine: EngineCallable,
     settings: Optional[ServiceSettings] = None,
     readiness_provider: Optional[ReadinessProvider] = None,
+    runtime_policy: Optional[RuntimePolicy] = None,
 ) -> FastAPI:
-    """Build the service app around an explicitly injected engine."""
+    """Build the service app around an explicitly injected engine.
+
+    ``runtime_policy`` is operator-owned startup state.  It is deliberately
+    separate from the uploaded YAML so a client cannot enable an unqualified
+    model combination or alter device/resource settings.
+    """
     resolved_settings = settings or ServiceSettings()
     readiness = readiness_provider or default_readiness_provider
     gate = InferenceGate(
@@ -158,6 +165,7 @@ def create_app(
     )
     app.state.settings = resolved_settings
     app.state.gate = gate
+    app.state.runtime_policy = runtime_policy
     app.state.started_monotonic = time.monotonic()
 
     @app.exception_handler(ServiceError)
@@ -310,6 +318,11 @@ def create_app(
         )
         validated = parse_hostile_config(parsed.config_bytes, verbosity=parsed.verbosity)
         core_config = CoreConfig.from_mapping(validated.effective_mapping)
+        if runtime_policy is not None:
+            try:
+                runtime_policy.validate_config(core_config)
+            except UnsupportedProfileError as exc:
+                raise ServiceError(str(exc), code="unsupported_profile") from exc
 
         ready = readiness()
         if not ready.ready:

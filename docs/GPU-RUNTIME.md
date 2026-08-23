@@ -49,3 +49,11 @@ Never spill to GPU0 or claim a stage ran when it did not.
 Never stop/reset/modify another process or physical GPU0. No driver/CUDA/power/
 persistence changes in ordinary orders. GPU tests are explicit, serial and clean
 only processes/workspaces they created.
+
+## Objective 003 qualification
+
+The live qualification record, pinned environment, model revisions, measured
+tables, supported profile and selected Objective 004 port are in
+[runtime.md](runtime.md). The measured strategy is resident SAM2+CLIP with
+BLIP3 rejected before load by the operator policy. This document remains the
+short launch/isolation law; it does not claim that a service is running.
