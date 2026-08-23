@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +21,7 @@ from src.runtime import live_service
 from src.runtime.live_service import (
     LiveServiceConfig,
     LiveServiceError,
+    PreflightReport,
     ResidentRegistry,
     compose_readiness,
     live_engine_callable,
@@ -108,18 +112,22 @@ def test_preflight_reports_verified_state(monkeypatch, tmp_path):
     monkeypatch.setenv("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
     monkeypatch.setattr(live_service, "verify_port_unused", _free_port_check)
-    config = LiveServiceConfig(
-        host="127.0.0.1",
-        port=39001,
-        tmp_root=str(tmp_path / "shm"),
-        expected_gpu_uuid="GPU-x",
-    )
-    report = preflight(config)
-    assert report.launch_environment_ok is True
-    assert report.port_check.unused is True
-    assert report.shm_free_mib > 0
-    root = Path(report.shm_root)
-    assert (root.stat().st_mode & 0o777) == 0o700
+    root = Path("/dev/shm") / f"zap-it-live-unit-{tmp_path.name}"
+    try:
+        config = LiveServiceConfig(
+            host="127.0.0.1",
+            port=39001,
+            tmp_root=str(root),
+            expected_gpu_uuid="GPU-x",
+        )
+        report = preflight(config)
+        assert report.launch_environment_ok is True
+        assert report.port_check.unused is True
+        assert report.shm_free_mib > 0
+        assert Path(report.shm_root) == root.resolve()
+        assert (root.stat().st_mode & 0o777) == 0o700
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def test_preflight_rejects_busy_port(monkeypatch, tmp_path):
@@ -130,14 +138,56 @@ def test_preflight_rejects_busy_port(monkeypatch, tmp_path):
         return PortCheck(host=host, port=port, ss_listener=True, bind_succeeded=False)
 
     monkeypatch.setattr(live_service, "verify_port_unused", busy)
+    root = Path("/dev/shm") / f"zap-it-live-unit-{tmp_path.name}"
+    try:
+        config = LiveServiceConfig(
+            host="127.0.0.1",
+            port=39002,
+            tmp_root=str(root),
+            expected_gpu_uuid="GPU-x",
+        )
+        with pytest.raises(LiveServiceError, match="verified-unused loopback port"):
+            preflight(config)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_startup_log_omits_operator_filesystem_paths():
+    secret_root = "/dev/shm/operator-secret-7f3d"
+    secret_cache = "/srv/private/model-cache-7f3d"
     config = LiveServiceConfig(
-        host="127.0.0.1",
-        port=39002,
-        tmp_root=str(tmp_path / "shm"),
+        port=39003,
+        tmp_root=secret_root,
+        model_cache_root=secret_cache,
         expected_gpu_uuid="GPU-x",
     )
-    with pytest.raises(LiveServiceError, match="verified-unused loopback port"):
-        preflight(config)
+    report = PreflightReport(
+        launch_environment_ok=True,
+        shm_root=secret_root,
+        shm_free_mib=123.4,
+        port_check=PortCheck("127.0.0.1", 39003, False, True),
+    )
+    line = live_service._startup_log_line(config, report)
+    assert "shm_ready=true" in line
+    assert "shm_free_mib=123.4" in line
+    assert secret_root not in line
+    assert secret_cache not in line
+
+
+def test_main_rejects_canonical_shm_escape_before_port_or_cuda(monkeypatch, capsys):
+    monkeypatch.setenv("SLAIF_ZAP_IT_PORT", "39004")
+    monkeypatch.setenv("SLAIF_ZAP_IT_EXPECTED_GPU_UUID", "GPU-x")
+    monkeypatch.setenv("SLAIF_ZAP_IT_TMP_ROOT", "/dev/shm/../../tmp/zap-it-escape")
+    monkeypatch.setattr(live_service, "require_launch_environment", lambda *a, **k: None)
+    monkeypatch.setattr(
+        live_service,
+        "verify_port_unused",
+        lambda *a, **k: pytest.fail("port inspection must follow root validation"),
+    )
+    assert live_service.main() == 2
+    error = capsys.readouterr().err
+    assert "strict descendant" in error
+    assert "/dev/shm/../../tmp" not in error
 
 
 def test_main_exit_code_2_when_port_missing(monkeypatch, capsys):
@@ -352,6 +402,30 @@ def test_launcher_scripts_parse(script):
         ["bash", "-n", str(script)], capture_output=True, text=True, check=False
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_launcher_shm_rejection_is_sanitized_before_service_start():
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "SLAIF_ZAP_IT_PYTHON": sys.executable,
+            "SLAIF_ZAP_IT_EXPECTED_GPU_UUID": "GPU-test",
+            "SLAIF_ZAP_IT_PORT": "39006",
+            "SLAIF_ZAP_IT_TMP_ROOT": "/dev/shm/../../tmp/zap-it-escape",
+        }
+    )
+    result = subprocess.run(
+        [str(REPO_ROOT / "scripts" / "serve_local.sh"), "start"],
+        cwd=REPO_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "strict descendant of /dev/shm" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "/dev/shm/../../tmp" not in result.stderr
 
 
 def test_launcher_publishes_pid_only_after_exact_entrypoint_ownership():

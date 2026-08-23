@@ -86,9 +86,16 @@ prepare_runtime() {
   }
   run_python - "$TMP_ROOT" <<'PY'
 import sys
-from src.runtime.shm import ensure_shm_root
+from src.runtime.shm import ShmError, ensure_shm_root
 
-ensure_shm_root(sys.argv[1], min_free_bytes=64 * 1024 * 1024)
+try:
+    ensure_shm_root(sys.argv[1], min_free_bytes=64 * 1024 * 1024)
+except ShmError as exc:
+    print(f"serve_local: shared-memory workspace check failed: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+except Exception:
+    print("serve_local: shared-memory workspace could not be validated", file=sys.stderr)
+    raise SystemExit(2)
 PY
   umask 077
   mkdir -p -- "$RUNTIME_ROOT"

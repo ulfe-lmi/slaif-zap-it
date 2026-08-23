@@ -8,6 +8,7 @@ values share one ordering definition by construction.
 from __future__ import annotations
 
 import io
+from collections import deque
 from typing import Sequence
 
 import numpy as np
@@ -17,7 +18,7 @@ try:
 except ImportError:  # pragma: no cover - pillow is a required dependency
     Image = None  # type: ignore[assignment]
 
-from .errors import CoreError, IdentityMaskOverflowError
+from .errors import IdentityMaskOverflowError, IdentityMaskProjectionError
 from .results import ObjectResult
 
 __all__ = [
@@ -33,6 +34,113 @@ YOLO_DECIMALS = 6
 
 #: Highest representable instance id in a uint16 identity mask (0=background).
 MAX_IDENTITY_OBJECTS = 65535
+
+
+def _representative_assignment(
+    objects: Sequence[ObjectResult], canvas: np.ndarray
+) -> dict[int, tuple[int, int]]:
+    """Return a deterministic minimum-override matching for service IDs.
+
+    Every object is connected to each true source pixel in its retained mask.
+    A zero-cost edge is an already visible winner pixel; all other edges are
+    overrides.  Successive shortest augmenting paths therefore find the
+    minimum number of canvas changes, with candidate order breaking ties by
+    visible-winner preference and then row-major position.
+    """
+    ordered = sorted(objects, key=lambda item: item.instance_id)
+    candidates_by_object: list[list[tuple[int, int]]] = []
+    all_pixels: set[tuple[int, int]] = set()
+    for obj in ordered:
+        rows, cols = np.nonzero(obj.mask)
+        candidates = [(int(row), int(col)) for row, col in zip(rows.tolist(), cols.tolist())]
+        if not candidates:
+            raise IdentityMaskProjectionError(
+                "identity mask cannot preserve a distinct source pixel for every object ID"
+            )
+        candidates_by_object.append(candidates)
+        all_pixels.update(candidates)
+
+    pixels = sorted(all_pixels)
+    pixel_index = {pixel: index for index, pixel in enumerate(pixels)}
+    object_count = len(ordered)
+    source = 0
+    object_offset = 1
+    pixel_offset = object_offset + object_count
+    sink = pixel_offset + len(pixels)
+    graph: list[list[list[int]]] = [[] for _ in range(sink + 1)]
+
+    def add_edge(start: int, end: int, cost: int) -> list[int]:
+        forward = [end, len(graph[end]), 1, cost]
+        reverse = [start, len(graph[start]), 0, -cost]
+        graph[start].append(forward)
+        graph[end].append(reverse)
+        return forward
+
+    # The rank sum is bounded by object_count * len(pixels). Making one
+    # override more expensive than that entire secondary range guarantees
+    # that override minimization is always the primary objective.
+    override_cost = object_count * max(1, len(pixels)) + 1
+    edge_refs: list[tuple[int, tuple[int, int], list[int]]] = []
+    for object_index, (obj, candidates) in enumerate(zip(ordered, candidates_by_object)):
+        object_node = object_offset + object_index
+        add_edge(source, object_node, 0)
+        preferred = [pixel for pixel in candidates if int(canvas[pixel]) == int(obj.instance_id)]
+        preferred_set = set(preferred)
+        candidate_order = preferred + [pixel for pixel in candidates if pixel not in preferred_set]
+        for rank, pixel in enumerate(candidate_order):
+            owner = int(canvas[pixel])
+            cost = rank if owner == int(obj.instance_id) else override_cost + rank
+            edge = add_edge(object_node, pixel_offset + pixel_index[pixel], cost)
+            edge_refs.append((object_index, pixel, edge))
+    for pixel_index_value in range(len(pixels)):
+        add_edge(pixel_offset + pixel_index_value, sink, 0)
+
+    # Successive shortest augmenting paths are complete for this bounded
+    # bipartite assignment. SPFA handles the negative reverse edges while
+    # retaining stable graph insertion order for deterministic equal-cost ties.
+    for _ in range(object_count):
+        distances: list[int | None] = [None] * len(graph)
+        previous: list[tuple[int, list[int]] | None] = [None] * len(graph)
+        distances[source] = 0
+        queue: deque[int] = deque([source])
+        queued = {source}
+        while queue:
+            node = queue.popleft()
+            queued.discard(node)
+            distance = distances[node]
+            assert distance is not None
+            for edge in graph[node]:
+                if edge[2] <= 0:
+                    continue
+                candidate_distance = distance + edge[3]
+                if distances[edge[0]] is None or candidate_distance < distances[edge[0]]:
+                    distances[edge[0]] = candidate_distance
+                    previous[edge[0]] = (node, edge)
+                    if edge[0] not in queued:
+                        queue.append(edge[0])
+                        queued.add(edge[0])
+        if distances[sink] is None:
+            raise IdentityMaskProjectionError(
+                "identity mask cannot preserve a distinct source pixel for every object ID"
+            )
+        node = sink
+        while node != source:
+            prior = previous[node]
+            assert prior is not None
+            prior_node, edge = prior
+            edge[2] -= 1
+            graph[node][edge[1]][2] += 1
+            node = prior_node
+
+    assignment: dict[int, tuple[int, int]] = {}
+    for object_index, pixel, edge in edge_refs:
+        if edge[2] == 0:
+            assignment[int(ordered[object_index].instance_id)] = pixel
+    if len(assignment) != object_count:
+        raise IdentityMaskProjectionError(
+            "identity mask cannot preserve a distinct source pixel for every object ID"
+        )
+    return assignment
 
 
 def format_yolo_line(class_id: int, cx: float, cy: float, bw: float, bh: float) -> str:
@@ -106,40 +214,13 @@ def render_identity_png(
     for obj in paint_order:
         canvas[obj.mask] = obj.instance_id
     if ensure_all_ids and objects:
-        # The baseline winner policy can make a smaller object disappear when
-        # it is fully covered by a larger mask.  Preserve the source masks and
-        # reserve one distinct source pixel for each missing ID.  Do not steal
-        # the last visible pixel of another object; if no such projection
-        # exists, fail closed instead of returning a misleading artifact.
-        visible_counts = {
-            int(instance_id): int(np.count_nonzero(canvas == instance_id))
-            for instance_id in (obj.instance_id for obj in objects)
-        }
-        reserved_pixels: set[tuple[int, int]] = set()
-        for obj in sorted(objects, key=lambda item: item.instance_id):
-            if visible_counts.get(obj.instance_id, 0) > 0:
-                continue
-            rows, cols = np.nonzero(obj.mask)
-            selected: tuple[int, int] | None = None
-            for row, col in zip(rows.tolist(), cols.tolist()):
-                pixel = (int(row), int(col))
-                if pixel in reserved_pixels:
-                    continue
-                owner = int(canvas[pixel])
-                if owner and visible_counts.get(owner, 0) <= 1:
-                    continue
-                selected = pixel
-                break
-            if selected is None:
-                raise CoreError(
-                    "identity mask cannot preserve a distinct pixel for every object ID"
-                )
-            owner = int(canvas[selected])
-            if owner:
-                visible_counts[owner] -= 1
-            canvas[selected] = obj.instance_id
-            visible_counts[obj.instance_id] = visible_counts.get(obj.instance_id, 0) + 1
-            reserved_pixels.add(selected)
+        # The baseline winner policy can make objects disappear when they are
+        # fully covered. Match every object to one distinct true source pixel;
+        # applying the selected representatives is the minimum deterministic
+        # set of projection overrides and never mutates source masks.
+        assignment = _representative_assignment(objects, canvas)
+        for obj in objects:
+            canvas[assignment[int(obj.instance_id)]] = obj.instance_id
     if Image is None:  # pragma: no cover - broken install guard
         raise RuntimeError("Pillow is required to encode PNG artifacts.")
     buffer = io.BytesIO()

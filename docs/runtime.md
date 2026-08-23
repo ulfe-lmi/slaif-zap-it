@@ -153,12 +153,15 @@ the strategy, supported profiles, model revision, device or readiness state.
 
 ## Shared memory and port qualification
 
-`ensure_shm_root()` creates/refuses a symlink and requires the configured root
-to be mode 0700. `ShmWorkspace` creates opaque mode-0700 request directories,
-atomically writes mode-0600 files and unconditionally removes its own directory
-on success or error. CPU tests cover traversal rejection, permissions and
-residue. The live root `/dev/shm/slaif-zap-it` was mode 0700, had 26964.1 MiB
-free, and was empty after qualification.
+`ensure_shm_root()` canonicalizes the configured root and requires it to be a
+strict descendant of `/dev/shm`; it refuses outside paths, escaping
+intermediate symlinks, a symlink final root and insecure permissions.
+`ShmWorkspace` creates opaque mode-0700 request directories, atomically writes
+mode-0600 files and unconditionally removes its own directory on success or
+error. CPU tests cover traversal rejection, canonical containment, permissions
+and residue. Startup logs report only `shm_ready=true` and bounded free
+capacity, never the operator root path. The live root `/dev/shm/slaif-zap-it`
+was mode 0700, had 26964.1 MiB free, and was empty after qualification.
 
 Port `127.0.0.1:17891` was selected for Objective 004. It was absent from a
 live `ss -H -ltn` scan and passed a transient bind check; the socket was closed
