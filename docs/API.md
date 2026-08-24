@@ -1,4 +1,4 @@
-# ZAP-IT HTTP API (Objective 005-a contract)
+# ZAP-IT HTTP API
 
 ```text
 POST /v1/completions
@@ -8,12 +8,11 @@ Content-Type: multipart/form-data
 This is a **ZAP-IT-specific multimodal pipeline endpoint** using a conventional
 path. It is **not** drop-in OpenAI `text-completions` compatibility.
 
-The CPU contract is tested with `FakeEngine`; the operator launcher additionally
-selects the adaptive pinned SAM2/CLIP/BLIP3 residency profile on freshly
-verified physical GPU1. Cards below 24576 MiB use serialized host-RAM swapping;
-cards at or above the boundary use the implemented all-resident path, which is
-not live-qualified until 007-c. No persistent listener is started by the package
-factory.
+The contract is tested with a CPU fake engine and qualified locally with pinned
+SAM2, CLIP, and BLIP3 models. The supported operational profile uses serialized
+host-RAM/GPU transitions for BLIP3. The >=24 GB all-resident implementation is
+not yet a live-qualified deployment profile. No persistent listener is started
+by the package factory.
 
 ## Endpoints
 
@@ -254,8 +253,8 @@ measured evidence and deployment prerequisites.
 
 ## Limitations
 
-- The package factory is CPU/fake-engine; live readiness requires the qualified
-  operator launcher and pinned GPU1 profile.
+- Live readiness requires the operator launcher, a freshly pinned exclusive
+  GPU, and the complete local model cache.
 - No streaming; no asynchronous jobs; no video API.
 - BLIP3 request rules are bounded to 32 questions and 32 generated tokens per
   question. Model identity, revision, dtype, device and residency are fixed

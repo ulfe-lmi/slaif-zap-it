@@ -1,6 +1,7 @@
 # Explicit source-distribution allowlist. Release artifacts contain source,
 # generated-fixture tests and operator documentation, never demos/media/OAP.
 include README.md LICENSE THIRD_PARTY_NOTICES.md SECURITY.md TESTING.md
+include ARCHITECTURE.md CONTRIBUTING.md
 include CHANGELOG.md RELEASE_NOTES.md
 include INSTALL.md requirements-gpu-cu124.lock .secrets.baseline
 recursive-include src *.py
@@ -13,6 +14,7 @@ include scripts/smoke_local_service.py scripts/smoke_local_goats.py
 include scripts/smoke_installed_package.py
 include scripts/verify_release_artifacts.py
 include scripts/scan_release_artifacts.py
+include scripts/check_documentation.py
 include configs/glasswool.yaml configs/icecream.yaml configs/soccer.yaml configs/tomato.yaml
 
 prune assets

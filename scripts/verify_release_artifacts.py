@@ -61,6 +61,8 @@ REQUIRED_TEXT_NAMES = frozenset({"LICENSE", "THIRD_PARTY_NOTICES.md", "README.md
 REQUIRED_SDIST_NAMES = frozenset(
     {
         "INSTALL.md",
+        "ARCHITECTURE.md",
+        "CONTRIBUTING.md",
         "requirements-gpu-cu124.lock",
         ".secrets.baseline",
         "LICENSE",
@@ -74,6 +76,7 @@ REQUIRED_SDIST_NAMES = frozenset(
         "deploy/zap-it-local.service",
         "scripts/verify_release_artifacts.py",
         "scripts/scan_release_artifacts.py",
+        "scripts/check_documentation.py",
         "scripts/smoke_installed_package.py",
         "src/runtime/live_service.py",
         "src/service/app.py",
@@ -87,6 +90,7 @@ REQUIRED_SDIST_NAMES = frozenset(
         "configs/icecream.yaml",
         "configs/soccer.yaml",
         "configs/tomato.yaml",
+        "docs/README.md",
     }
 )
 REQUIRED_WHEEL_MODULES = frozenset(

@@ -1,28 +1,140 @@
-# Algorithms Used
+# Algorithms
 
-ZAP-IT combines several well known algorithms and models to form a complete pipeline.
+ZAP-IT builds object annotations by composing pretrained models and deterministic
+post-processing. It does not train or fine-tune these models. Configuration
+selects prompts, thresholds, filtering, rendering, and trusted batch outputs.
 
-## SAM2 – Segment Anything Model 2
-SAM2 generates segmentation masks given an input image. The pipeline runs it in a single pass, optionally on a resized version of the image or ROI. Parameters such as point density and IoU thresholds are configurable in the YAML file.
+## Pipeline
 
-## CLIP – Contrastive Language–Image Pre-training
-When prompts are provided, CLIP performs zero-shot classification of each mask. The best label among the prompts is attached to the mask and used to filter the results.
+```text
+image
+  -> optional ROI and resize
+  -> SAM2 candidate masks
+  -> area and bounding-box filtering
+  -> optional CLIP labeling
+  -> optional BLIP3 verification/relabeling
+  -> keep-label filtering
+  -> deterministic object ordering
+  -> masks, metadata, visualizations, YOLO
+```
 
-## BLIP‑3 – Verification
-After CLIP, cropped masks can optionally be verified with the BLIP‑3 VQA model.
-Each mask is questioned using a yes/no prompt. If the model's answer contains the
-configured false string, the mask is re-labelled as `negative` and discarded.
+The batch CLI and HTTP service share this algorithm chain through
+`src.core.run_single_image()`. They differ at their trust and I/O boundaries:
+the CLI accepts trusted paths and writers, while the service accepts one bounded
+image and an allowlisted YAML subset.
 
-## Post‑Segmentation Filtering
-After SAM2, masks can be discarded based on area or bounding-box size. This keeps only relevant regions before classification or visualization.
+## Preprocessing
 
-## Geometry (Canny + Hough, legacy-only)
-The repository retains Canny/Hough helpers for trusted legacy integrations, but
-the canonical in-memory core does not execute this stage. The current service
-rejects geometry before inference; future activation requires a governed
-scientific-stage order and an in-memory refactor of the file-writing helper.
+The `preprocessing` section can crop a region of interest and uniformly resize
+the inference image. Candidate masks are remapped to the original image
+coordinates before areas, bounding boxes, identity images, and YOLO coordinates
+are produced.
+
+Downscaled masks use inverse nearest-neighbor projection so every destination
+pixel samples a valid source pixel. This avoids the edge loss caused by the
+legacy forward projection.
+
+## SAM2 segmentation
+
+SAM2 automatic mask generation proposes candidate regions without
+task-specific training. The trusted CLI may tune generator parameters such as
+point density, crop layers, intersection-over-union thresholds, and stability
+thresholds.
+
+The local service uses an operator-fixed resident generator. Uploaded YAML
+cannot change generator construction, model identity, revision, or device.
+
+SAM2 provides masks and available quality values; ZAP-IT does not reinterpret
+those values as calibrated object confidence.
+
+## Candidate filtering
+
+Area and bounding-box limits remove unsuitable candidates before the more
+expensive classification stages. These are deterministic pixel-space filters,
+not learned predictions.
+
+Filtering early reduces CLIP/BLIP3 work and bounds response construction. Final
+keep-label filtering occurs after optional relabeling.
+
+## CLIP classification
+
+CLIP performs zero-shot classification over each surviving mask crop. A YAML
+label maps to one or more natural-language prompts. ZAP-IT encodes the prompt
+set, embeds each crop, and assigns the class associated with the highest
+similarity.
+
+The service keeps the pinned CLIP model resident and refreshes only
+request-specific prompt embeddings. CLIP similarity is useful ranking evidence,
+but it is not a calibrated probability.
+
+Tracked examples such as [`configs/tomato.yaml`](../configs/tomato.yaml) show
+the prompt format without depending on private or operator-held fixtures.
+
+## BLIP3 verification
+
+BLIP3/XGen-MM is an optional visual question-answering verifier. Rules can
+target a CLIP label or low-score candidates, ask a bounded question, interpret
+configured true/false substrings, and optionally assign a replacement class.
+
+Service requests provide only rule mappings. The model, revision, FP16 dtype,
+tokenizer, processor, device, cache, and residency strategy remain pinned. The
+service limits each request to 32 planned questions and 32 generated tokens per
+question.
+
+On the qualified 11 GB profile, BLIP3 lives in host RAM until its stage. SAM2
+and CLIP run on GPU first; the registry then swaps them out, executes BLIP3 on
+GPU, and restores the baseline. Per-mask image patches use the mask bounding box
+with a minimum 128-pixel extent; the pinned processor maps arbitrary aspect
+ratios to a finite 378-pixel tile grid.
+
+## Deterministic object results
+
+After final filtering, objects are ordered by descending area, centroid row,
+centroid column, and original candidate index. Request-local instance IDs are
+assigned from this order.
+
+The same order drives:
+
+- five-field normalized YOLO lines;
+- per-object metadata;
+- uint16 identity-mask values;
+- overlap-preserving RLE masks;
+- annotated visualizations.
+
+Identity-mask overlaps use the documented deterministic winner policy. The
+single-valued PNG cannot preserve overlap by itself, so the full response keeps
+each object's source mask/RLE.
 
 ## Visualization
-The core can return configured in-memory overlays. The service supports only
-bounded `annotated` streams at L3; panoptic and file/video writers remain
-legacy-only capabilities.
+
+The service supports bounded in-memory annotated and alpha-overlay streams at
+verbosity 3. It preflights raw RGB memory and artifact budgets before inference.
+
+Panoptic/Detectron2 rendering and Canny/Hough geometry helpers remain legacy
+components. They are not executed by the canonical service and no absent field
+is fabricated.
+
+## YOLO output and dataset export
+
+Every final object can produce:
+
+```text
+<class_id> <center_x> <center_y> <width> <height>
+```
+
+Coordinates are normalized to the original image dimensions with fixed decimal
+formatting. The service returns these lines in `choices[0].text` and ZIP output.
+
+The trusted batch exporter can additionally construct YOLO image/label folder
+trees and a dataset manifest. Dataset export is intentionally not available
+through the stateless API.
+
+## Scientific limitations
+
+- Outputs depend on pretrained model behavior, prompts, thresholds, and image
+  conditions; they are not guaranteed ground truth.
+- CLIP scores and SAM2 quality values are not calibrated end-to-end confidence.
+- BLIP3 answers are generated text interpreted by configured substring rules.
+- Qualification demonstrates bounded execution and stability, not accuracy or
+  fitness for a specific deployment.
+- Model licenses and use restrictions apply independently of repository code.

@@ -24,6 +24,8 @@ jobs:
         run: ruff format --check .
       - name: Ruff lint
         run: ruff check .
+      - name: Documentation integrity
+        run: python scripts/check_documentation.py
       - name: Build wheel
         run: python -m build --wheel
 
