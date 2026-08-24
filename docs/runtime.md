@@ -219,8 +219,8 @@ unbounded growth. Object and answer counts were both zero for this academic
 configuration, while BLIP3 execution was independently present in every L3
 stage status. The harness reported zero request-workspace files/bytes before
 and after the sequence; after service stop the complete `/dev/shm` root was
-empty. The all-resident profile was qualified separately by Objective 008 below;
-these figures remain the low-card comparison baseline.
+empty. Objective 008's combined-profile result is the foundational all-resident
+qualification below; these figures remain the low-card comparison baseline.
 
 ## Objective 008 all-resident qualification
 
@@ -311,6 +311,70 @@ After Phase B/C, the service was stopped gracefully. Port 17891 was free, no
 ZAP-IT process or compute-process row remained, the assigned GPU returned to
 15 MiB used / 24109 MiB free, host RAM reported 21116 MiB available, and
 `/dev/shm/slaif-zap-it` was empty. No unrelated device or process was changed.
+
+## Objective 009 four-profile matrix
+
+Status: `PASSED` for the exact authenticated eight-call matrix on hinton2,
+2026-08-24. The process used `CUDA_DEVICE_ORDER=PCI_BUS_ID`, physical index 0,
+the assigned UUID above, `CUDA_VISIBLE_DEVICES=0`, offline Hugging Face mode,
+one loopback worker and one active request. The generated 128x128 RGB fixture
+and API-safe YAML were held in memory; the harness emitted no response bodies,
+prompts, answers, filenames, request IDs or credentials.
+
+The first matrix-tool invocation was `FAILED` as a harness-shape check: the
+service correctly returned an additional `ordering` stage status that the new
+validator had not listed. No model or service failure was observed, the
+validator was corrected in scope, and the exact sequence was rerun successfully.
+
+The rerun sequence was:
+
+```text
+sam2, sam2_clip, sam2_blip3, sam2_clip_blip3,
+sam2_clip_blip3, sam2_blip3, sam2_clip, sam2
+```
+
+Every call was authenticated L3 JSON HTTP 200 with strategy
+`sam2_clip_blip3_gpu_resident`, logical `cuda:0`, exactly the three pinned
+SAM2/CLIP/BLIP3 identities, eight stage statuses, zero residency transitions,
+and one runtime-registry initialization for the process. `sam2` executed only
+SAM2; `sam2_clip` executed SAM2 and CLIP; `sam2_blip3` executed SAM2 and BLIP3
+with eight bounded answers; and `sam2_clip_blip3` executed all three with eight
+bounded answers. The two calls for every profile had identical content-free
+semantic digests; timings were allowed to vary.
+
+| Call | Profile | Latency ms | Objects | Answers | Peak reserved MiB | Free MiB | RSS MiB | Digest prefix |
+|---:|---|---:|---:|---:|---:|---:|---:|---|
+| 1 | `sam2` | 201.2 | 8 | 0 | 11912.0 | 11864.8 | 12752.4 | `4b8febc645a4` |
+| 2 | `sam2_clip` | 807.2 | 8 | 0 | 11912.0 | 11864.8 | 12752.4 | `a8a6e0b5e943` |
+| 3 | `sam2_blip3` | 2299.4 | 8 | 8 | 11912.0 | 11864.8 | 12752.4 | `fcbf3d1e4761` |
+| 4 | `sam2_clip_blip3` | 1652.6 | 8 | 8 | 11912.0 | 11864.8 | 12752.4 | `c1ed971ded2b` |
+| 5 | `sam2_clip_blip3` | 1652.1 | 8 | 8 | 11912.0 | 11864.8 | 12752.4 | `c1ed971ded2b` |
+| 6 | `sam2_blip3` | 1624.8 | 8 | 8 | 11912.0 | 11864.8 | 12752.4 | `fcbf3d1e4761` |
+| 7 | `sam2_clip` | 177.2 | 8 | 0 | 11912.0 | 11864.8 | 12752.4 | `a8a6e0b5e943` |
+| 8 | `sam2` | 192.4 | 8 | 0 | 11912.0 | 11864.8 | 12752.4 | `4b8febc645a4` |
+
+| Profile | First / minimum / maximum / median latency ms | Objects | Answers | Stage count | Semantic digest |
+|---|---:|---:|---:|---:|---|
+| `sam2` | 201.2 / 192.4 / 201.2 / 196.8 | 8 / 8 / 8 / 8 | 0 / 0 / 0 / 0 | 8 / 8 / 8 / 8 | `4b8febc645a4b0a838e1dcb50d4fb07f9140d9bffd2c96b22239a9dcf85f8e5a` |
+| `sam2_clip` | 807.2 / 177.2 / 807.2 / 492.2 | 8 / 8 / 8 / 8 | 0 / 0 / 0 / 0 | 8 / 8 / 8 / 8 | `a8a6e0b5e9433b1319cf9fbb3e8c19e738ccf4f515fea0a74ed215020a819671` |
+| `sam2_blip3` | 2299.4 / 1624.8 / 2299.4 / 1962.1 | 8 / 8 / 8 / 8 | 8 / 8 / 8 / 8 | 8 / 8 / 8 / 8 | `fcbf3d1e4761a2ef5f58818820e87cc106f90609715f6511e78743b50214e302` |
+| `sam2_clip_blip3` | 1652.6 / 1652.1 / 1652.6 / 1652.3 | 8 / 8 / 8 / 8 | 8 / 8 / 8 / 8 | 8 / 8 / 8 / 8 | `c1ed971ded2bdb581c4c646bfc9d29e43fc5e0b2d6929c565e708e7c41849be8` |
+
+For the eight calls, Torch current/peak allocated was 9635.6/11188.8 MiB,
+current/peak reserved was 11912.0/11912.0 MiB, and sampled free memory was
+11864.8 MiB. Peak reserved was 53.85% of the 24,576-MiB physical capacity and
+strictly below the 22,118.4-MiB (90%) ceiling. Maximum RSS was 12,752.4 MiB;
+GPU and host samples showed no monotonic growth, reload, CPU migration,
+fallback, or request persistence. During the live process the shared-memory
+root contained only the launcher's runtime entry; after graceful stop, port
+17891 was free, no ZAP-IT or compute process remained, the assigned GPU
+returned to 15 MiB used / 24,109 MiB free, and the root was empty.
+
+This matrix closes the GPU-memory deferrals from Objectives 003/007 through
+Objectives 007–009. It is bounded local research evidence, not an SLA,
+accuracy claim, commercial-license clearance, or external deployment. Geometry,
+panoptic, licensing, tracked-media, gateway/deployment, and final-release gates
+remain unsupported or separately governed for reasons other than GPU memory.
 
 ## Shared memory and port qualification
 

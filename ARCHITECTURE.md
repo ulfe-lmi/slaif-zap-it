@@ -74,7 +74,9 @@ Approved SAM2, CLIP, and BLIP3 identities/revisions are fixed in operator code.
 Snapshots live in an operator-managed Hugging Face cache and are loaded with
 network access disabled during service operation.
 
-The historical live-qualified strategy is sequential:
+Residency is selected from fresh physical capacity after an explicit operator
+index and UUID pin, and the process exposes the selected card only as logical
+`cuda:0`. Below 24,576 MiB the live-qualified strategy is sequential:
 
 ```text
 normal request:  SAM2 + CLIP on GPU, BLIP3 in host RAM
@@ -96,8 +98,11 @@ so two transitions cannot overlap.
 An all-three-GPU-resident implementation is selected automatically from fresh
 physical capacity at or above 24,576 MiB. It requires all pinned holders to
 prove residency on logical `cuda:0` before readiness and performs no request-
-time movement. The historical sequential profile remains selected below the
-boundary.
+time movement. Objective 009's authenticated real matrix covers all four
+supported profiles on the assigned 24,576-MiB RTX 3090. Both strategies are
+bounded local research evidence, not an SLA, accuracy claim, commercial-license
+clearance, or external deployment. Geometry/panoptic and deployment/release
+gates remain separate for reasons other than GPU memory.
 
 ### Device guard
 

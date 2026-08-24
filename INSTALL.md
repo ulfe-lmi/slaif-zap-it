@@ -126,9 +126,13 @@ CUDA_VISIBLE_DEVICES=<verified physical GPU index>
 
 It must see exactly one logical device as `cuda:0` and match the pinned UUID.
 
-The historical live-qualified residency is the sequential SAM2+CLIP/BLIP3
-profile measured on the 11 GB RTX 2080 Ti. On a separately qualified card with
-at least 24,576 MiB, the service selects the all-resident profile automatically.
+Cards below 24,576 MiB use the live-qualified sequential SAM2+CLIP/BLIP3
+stage-boundary lifecycle measured on the historical 11 GB RTX 2080 Ti. Cards at
+or above 24,576 MiB use the live-qualified all-resident lifecycle measured on
+the assigned RTX 3090. The Objective 009 matrix covers all four supported
+profiles; both modes expose only logical `cuda:0` after the explicit operator
+index and UUID pin. This is bounded local research evidence, not a production,
+license, SLA, accuracy, or external-deployment claim.
 
 ## Optional GPU integration test
 

@@ -18,3 +18,17 @@ def _checker():
 
 def test_current_documentation_is_coherent_and_stale_claims_are_absent():
     assert _checker().check_repository(REPO_ROOT) == []
+
+
+def test_audited_obsolete_residency_claims_are_rejected():
+    checker = _checker()
+    samples = (
+        "all-resident qualification remains separate",
+        "pending a separate live qualification",
+        "the only live-qualified BLIP3 residency",
+        "implemented and CPU/fake-tested but is not live-qualified",
+    )
+    for sample in samples:
+        assert any(
+            pattern.search(sample) for pattern in checker.FORBIDDEN_CURRENT_PATTERNS.values()
+        )

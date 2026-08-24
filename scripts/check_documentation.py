@@ -51,6 +51,19 @@ FORBIDDEN_CURRENT_PATTERNS = {
     "deleted algorithm document": re.compile(r"ALGORITHMS-DETAILED\.md"),
     "deleted runtime document": re.compile(r"GPU-RUNTIME\.md"),
     "generated documentation dump": re.compile(r"everything\.txt"),
+    "obsolete all-resident qualification claim": re.compile(
+        r"all-resident qualification remains separate", re.IGNORECASE
+    ),
+    "obsolete pending all-resident qualification claim": re.compile(
+        r"pending a separate live qualification", re.IGNORECASE
+    ),
+    "obsolete low-card-only BLIP3 claim": re.compile(
+        r"only live-qualified BLIP3 residency", re.IGNORECASE
+    ),
+    "obsolete fake-tested all-resident claim": re.compile(
+        r"implemented and CPU/fake-tested.{0,100}not\s+(?:claimed as\s+)?live-qualified",
+        re.IGNORECASE,
+    ),
 }
 
 MARKDOWN_LINK = re.compile(r"!?(?:\[[^\]]*\])\(([^)]+)\)")

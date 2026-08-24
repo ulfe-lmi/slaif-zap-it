@@ -17,7 +17,12 @@ otherwise. No ZAP-IT package, tag, or GitHub release has been published.
   FP16 model state, stage-aware sequential residency, restoration/failure
   handling, memory/transition metrics, and repeated local qualification on the
   11 GB target GPU.
+- 2026-08-24: Objectives 008–009 add the assigned 24,576-MiB RTX 3090
+  all-resident qualification and an explicit interleaved matrix covering all
+  four supported service profiles. GPU-memory deferrals from Objectives 003/007
+  are closed by Objectives 007–009; the measurements remain bounded local
+  research evidence.
 - Legacy batch/video behavior remains supported. Geometry activation, panoptic
   service output, gateway integration, containers, LAN/public listeners,
-  all-resident >=24 GB qualification, and final release authorization remain
-  outside the current candidate.
+  licensing/media review, and final release authorization remain separate
+  unsupported or release-gated scope, not memory-blocked work.

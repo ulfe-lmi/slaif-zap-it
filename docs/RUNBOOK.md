@@ -2,10 +2,13 @@
 
 This runbook operates the tested local ZAP-IT service from one host process.
 It binds only to `127.0.0.1` and exposes one explicitly operator-selected
-physical GPU as logical `cuda:0`. The historical qualified 11 GB profile keeps
-BLIP3 host-resident and swaps it with SAM2+CLIP; the >=24 GB profile keeps all
-three pinned FP16 holders resident once separately qualified. This is not a LAN, public,
-customer-data, or production-release runbook.
+physical GPU as logical `cuda:0`. Below 24,576 MiB the historical 11 GB
+RTX 2080 Ti uses the live-qualified sequential stage-boundary lifecycle; at or
+above 24,576 MiB the assigned RTX 3090 uses the live-qualified all-resident
+lifecycle. The Objective 009 matrix covers all four supported profiles. This is
+bounded local research evidence, not a LAN, public, customer-data,
+production-release, SLA, accuracy, or commercial-license runbook. Geometry,
+panoptic, deployment and release gates remain separate.
 
 ## Before every activation
 
@@ -106,6 +109,15 @@ containing bounded nested BLIP3 verification rules is supported. The service
 fixes BLIP3 to FP16, 32 questions/request and 32 generated tokens per question;
 model IDs, revisions, dtype, paths and runtime controls remain rejected.
 Geometry and panoptic visualization remain unsupported.
+
+The operator-only `scripts/profile_matrix.py` harness sends the exact sanitized
+sequence `sam2, sam2_clip, sam2_blip3, sam2_clip_blip3, sam2_clip_blip3,
+sam2_blip3, sam2_clip, sam2` as authenticated L3 JSON requests. It requires
+the all-resident strategy, logical `cuda:0`, all three pinned model identities,
+zero transitions, stage-specific semantics, bounded BLIP3 answers, repeatable
+content-free shape digests, the 90% physical-memory ceiling, and no request
+residue. It uses only a generated 128x128 RGB fixture and in-memory API-safe
+YAML and never prints response bodies or answer text.
 
 Scrape `GET /metrics` during the bounded run. It is process-local and contains
 only finite labels; it must not contain filenames, labels, prompts, answers,
