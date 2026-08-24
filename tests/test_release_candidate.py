@@ -20,6 +20,13 @@ from PIL import Image
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO_ROOT / "scripts"
 
+REMOVED_DEMO_DIRECTORIES = (
+    "demos/glasswool",
+    "demos/icecream",
+    "demos/industrial",
+    "demos/soccer",
+)
+
 
 def _load_script(name: str):
     sys.path.insert(0, str(SCRIPTS))
@@ -31,6 +38,13 @@ def _load_script(name: str):
         return module
     finally:
         sys.path.pop(0)
+
+
+def test_purged_demo_datasets_remain_absent_and_ignored():
+    ignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
+    for relative in REMOVED_DEMO_DIRECTORIES:
+        assert not (REPO_ROOT / relative).exists()
+        assert f"/{relative}/" in ignore
 
 
 def test_central_crop_uses_exact_integer_middle_half_without_disk_write(tmp_path):

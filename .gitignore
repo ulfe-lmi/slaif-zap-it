@@ -180,8 +180,14 @@ last_results/
 # Operator-only service settings; keep checked-in templates visible.
 deploy/*.env
 
-# Nonredistributable local academic goat inputs. Keep operator copies in place
-# for the opt-in local harness, but never carry them in the public tip/builds.
+# Rights-cleared local academic goat inputs remain operator-supplied and excluded
+# from public tips/builds as defense in depth.
 /configs/goats.yaml
 /configs/goats2.yaml
 /demos/goats/
+
+# Demo datasets deliberately purged from current and historical Git refs.
+/demos/glasswool/
+/demos/icecream/
+/demos/industrial/
+/demos/soccer/

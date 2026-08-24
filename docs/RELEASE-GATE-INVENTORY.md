@@ -30,9 +30,7 @@ assets/logo.png.
 
 demos/01-peppers.jpg, demos/02-peppers.jpg, demos/03-peppers.jpg,
 demos/04-harbor.jpg, demos/05-harbor.jpg, demos/06-harbor.jpg,
-demos/glasswool/L_top_rectified.jpg, demos/icecream/icecream_1.jpg,
-demos/icecream/icecream_2.jpg, demos/industrial/bad.jpg,
-demos/industrial/good.jpg, demos/millet/millet1.jpg, demos/millet/millet2.jpg,
+demos/millet/millet1.jpg, demos/millet/millet2.jpg,
 demos/overwater/davimar_seq_15_00305.jpg,
 demos/overwater/inhouse_seq_01_00120.jpg,
 demos/overwater/inhouse_seq_23_00060.jpg,
@@ -43,12 +41,7 @@ demos/overwater/mastr_0095_00009.jpg,
 demos/overwater/mastr_0264_00009.jpg,
 demos/overwater/mastr_0483_00009.jpg,
 demos/overwater/yt019_03_00263.jpg, demos/overwater/yt021_02_00149.jpg,
-demos/overwater/yt039_03_00240.jpg, demos/soccer/soccer01.jpg,
-demos/soccer/soccer02.jpg, demos/soccer/soccer03.jpg,
-demos/soccer/soccer04.jpg, demos/soccer/soccer05.jpg,
-demos/soccer/soccer06.jpg, demos/soccer/soccer07.jpg,
-demos/soccer/soccer08.jpg, demos/soccer/soccer09.jpg,
-demos/soccer/soccer10.jpg,
+demos/overwater/yt039_03_00240.jpg,
 demos/tomato/2022-07-22-16-25-44-48.jpg,
 demos/tomato/2022-07-22-17-35-54-17.jpg,
 demos/tomato/2022-07-22-22-15-39-09.jpg,
@@ -67,6 +60,12 @@ demos/underwater/Powder Blue Tang_20170105_051822A_001.jpg,
 demos/underwater/Powder Blue Tang_20170105_051950A_005.jpg,
 demos/underwater/Parrot Fish_20170106_023727A_606.jpg,
 demos/underwater/Turtle_20230815_095315A_029.jpg.
+
+The `demos/glasswool/`, `demos/icecream/`, `demos/industrial/`, and
+`demos/soccer/` datasets were intentionally removed from every writable Git ref
+through a coordinated history rewrite. Their similarly named YAML examples in
+`configs/` remain because they contain configuration text, not the removed
+images.
 
 The four goat paths are `configs/goats.yaml`, `configs/goats2.yaml`,
 `demos/goats/goats1.jpg`, and `demos/goats/goats2.jpg`. Their redistribution
