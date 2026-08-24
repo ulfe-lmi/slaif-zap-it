@@ -3,7 +3,7 @@
 This module is the objective 004 activation layer between the measured
 objective 003 runtime and the objective 002 HTTP contract. It owns:
 
-- operator-only launch configuration (strict physical-GPU1 masking, pinned
+- operator-only launch configuration (strict operator-index masking, pinned
   GPU UUID, verified loopback port, RAM-backed temp root);
 - a fail-closed preflight that runs before any CUDA library is imported;
 - a resident model registry that loads the supported ``sam2_clip`` profile
@@ -33,6 +33,7 @@ from .device import (
     DeviceGuardError,
     inspect_physical_gpu,
     inspect_visible_device,
+    parse_physical_gpu_index,
     require_launch_environment,
     require_physical_gpu_match,
 )
@@ -62,7 +63,6 @@ __all__ = [
 ]
 
 _LOOPBACK_HOST = "127.0.0.1"
-_PHYSICAL_GPU_INDEX = 1
 _SHM_MIN_FREE_BYTES = 64 * 1024 * 1024
 
 
@@ -79,7 +79,9 @@ class LiveServiceConfig:
     tmp_root: str = "/dev/shm/slaif-zap-it"
     model_cache_root: str | None = None
     expected_gpu_uuid: str | None = None
-    physical_gpu_index: int = _PHYSICAL_GPU_INDEX
+    # Python callers retain the historical index-1 compatibility default. The
+    # strict shell launcher requires the operator to set this explicitly.
+    physical_gpu_index: int = 1
     strict_gpu: bool = True
 
     def __post_init__(self) -> None:
@@ -89,8 +91,6 @@ class LiveServiceConfig:
             raise LiveServiceError("SLAIF_ZAP_IT_PORT must be a valid TCP port")
         if int(self.physical_gpu_index) < 0:
             raise LiveServiceError("physical GPU index must be non-negative")
-        if self.strict_gpu and int(self.physical_gpu_index) != _PHYSICAL_GPU_INDEX:
-            raise LiveServiceError("the live service may expose only physical GPU index 1")
         if self.strict_gpu and not (self.expected_gpu_uuid or "").strip():
             raise LiveServiceError("strict GPU operation requires SLAIF_ZAP_IT_EXPECTED_GPU_UUID")
 
@@ -106,11 +106,12 @@ class LiveServiceConfig:
             port = int(raw_port)
         except ValueError as exc:
             raise LiveServiceError("SLAIF_ZAP_IT_PORT must be an integer") from exc
-        raw_index = (env.get("SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX") or "1").strip()
         try:
-            physical = int(raw_index)
+            physical = parse_physical_gpu_index(env.get("SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX"))
         except ValueError as exc:
-            raise LiveServiceError("SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX must be an integer") from exc
+            raise LiveServiceError(
+                "SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX must be a non-negative decimal integer"
+            ) from exc
         strict_raw = (env.get("SLAIF_ZAP_IT_STRICT_GPU") or "1").strip().lower()
         strict = strict_raw not in {"0", "false", "no", "off"}
         return cls(
@@ -178,7 +179,7 @@ def masked_gpu_uuid(
     """Return the UUID of the one visible GPU, preferring masked torch state.
 
     Some NVIDIA utility versions report every physical GPU even when a child
-    process has ``CUDA_VISIBLE_DEVICES=1``. PyTorch's device properties are
+    process has the one operator-selected ``CUDA_VISIBLE_DEVICES`` value. PyTorch's device properties are
     already in the masked logical view and are therefore authoritative here;
     the ``nvidia-smi`` path remains a useful fallback when no torch module is
     available.
@@ -232,6 +233,7 @@ class ResidentRegistry:
         self._metrics: Any | None = None
         self.transition_events: list[str] = []
         self.transition_seconds: dict[str, float] = {}
+        self._transition_count = 0
 
     def bind_metrics(self, metrics: Any) -> None:
         """Attach the service's fixed-label metrics before startup loading."""
@@ -251,6 +253,73 @@ class ResidentRegistry:
     def error_type(self) -> str | None:
         with self._lock:
             return self._error_type
+
+    @property
+    def transition_count(self) -> int:
+        """Return the number of completed residency boundary transitions."""
+        with self._lock:
+            return self._transition_count
+
+    @staticmethod
+    def _holder_devices(value: Any, seen: set[int] | None = None) -> list[str]:
+        """Collect device facts from known model-holder/container shapes."""
+        if value is None:
+            return []
+        seen = seen or set()
+        marker = id(value)
+        if marker in seen:
+            return []
+        seen.add(marker)
+        if isinstance(value, dict):
+            devices: list[str] = []
+            for child in value.values():
+                devices.extend(ResidentRegistry._holder_devices(child, seen))
+            return devices
+        if isinstance(value, (list, tuple)):
+            devices = []
+            for child in value:
+                devices.extend(ResidentRegistry._holder_devices(child, seen))
+            return devices
+
+        devices = []
+        direct = getattr(value, "device", None)
+        if direct is not None:
+            devices.append(str(direct))
+        parameters = getattr(value, "parameters", None)
+        if callable(parameters):
+            try:
+                parameter = next(iter(parameters()))
+            except (StopIteration, TypeError, RuntimeError):
+                parameter = None
+            parameter_device = getattr(parameter, "device", None)
+            if parameter_device is not None:
+                devices.append(str(parameter_device))
+        for name in (
+            "model",
+            "predictor",
+            "mask_generator",
+            "clip_filter",
+            "blip3_filter",
+            "blip3_qa",
+            "qa",
+        ):
+            child = getattr(value, name, None)
+            if child is not None:
+                devices.extend(ResidentRegistry._holder_devices(child, seen))
+        return devices
+
+    @classmethod
+    def _all_holders_on_device(cls, states: Mapping[str, Any], device_name: str) -> bool:
+        expected = str(device_name)
+        if expected == "cuda":
+            expected = "cuda:0"
+        for name in ("segmenter", "clip", "blip3"):
+            devices = cls._holder_devices(states.get(name))
+            if not devices or any(
+                ("cuda:0" if item == "cuda" else item) != expected for item in devices
+            ):
+                return False
+        return True
 
     def verdict(self) -> RuntimeReadiness:
         """Honest registry-only readiness verdict."""
@@ -298,6 +367,11 @@ class ResidentRegistry:
                 or "segmenter" not in states
                 or "clip" not in states
                 or (self._require_blip3 and "blip3" not in states)
+                or (
+                    self._strategy == ALL_RESIDENT_RESIDENCY_MODE
+                    and self._require_blip3
+                    and not self._all_holders_on_device(states, self._device_name)
+                )
             ):
                 self._failed = True
                 self._error_type = "ValueError"
@@ -415,6 +489,9 @@ class ResidentRegistry:
     def _observe_transition(self, direction: str, outcome: str, started: float) -> None:
         duration = max(time.perf_counter() - started, 0.0)
         self.transition_seconds[direction] = round(duration, 3)
+        if outcome == "success":
+            with self._lock:
+                self._transition_count += 1
         if self._metrics is not None:
             self._metrics.observe_residency_transition(direction, outcome, duration)
 
@@ -525,6 +602,7 @@ def default_resident_loader(
             {
                 "model_name": sam_spec.model_id,
                 "revision": sam_spec.revision,
+                "dtype": "float16",
                 "points_per_side": 8,
                 "points_per_batch": 8,
                 "pred_iou_thresh": 0.5,
@@ -539,6 +617,7 @@ def default_resident_loader(
             {
                 "model_name": clip_spec.model_id,
                 "revision": clip_spec.revision,
+                "dtype": "float16",
                 # Resident CLIP loads without text prompts; effective labels
                 # arrive per request through the uploaded YAML.
                 "labels": {},
@@ -655,6 +734,8 @@ def wrap_test_injection(engine: Callable[..., Any]) -> Callable[..., Any]:
     is process-wide and never request-selectable; normal launches do not use it.
     """
     mode = (os.environ.get("SLAIF_ZAP_IT_TEST_INJECT") or "").strip().lower()
+    one_shot = mode.endswith("_once")
+    base_mode = mode.removesuffix("_once") if one_shot else mode
     raw_delay = (os.environ.get("SLAIF_ZAP_IT_TEST_DELAY_SECONDS") or "0").strip()
     try:
         delay = max(float(raw_delay), 0.0)
@@ -664,10 +745,19 @@ def wrap_test_injection(engine: Callable[..., Any]) -> Callable[..., Any]:
     if not mode and delay <= 0:
         return engine
 
+    one_shot_lock = threading.Lock()
+    one_shot_used = False
+
     def injected(*args: Any, **kwargs: Any) -> Any:
-        if mode in {"failure", "fail", "inference_failure"}:
+        nonlocal one_shot_used
+        if one_shot:
+            with one_shot_lock:
+                if one_shot_used:
+                    return engine(*args, **kwargs)
+                one_shot_used = True
+        if base_mode in {"failure", "fail", "inference_failure"}:
             raise RuntimeError("operator-injected inference failure")
-        if mode in {"delay", "timeout", "cancel"} and delay > 0:
+        if base_mode in {"delay", "timeout", "cancel"} and delay > 0:
             time.sleep(delay)
         return engine(*args, **kwargs)
 
@@ -719,7 +809,10 @@ def main() -> int:
         print(f"serve_local: {exc}", file=sys.stderr)
         return 2
     if not config.strict_gpu:
-        print("serve_local: strict physical GPU1 mode cannot be disabled", file=sys.stderr)
+        print(
+            "serve_local: strict operator-selected physical GPU mode cannot be disabled",
+            file=sys.stderr,
+        )
         return 2
     if config.model_cache_root:
         # Set the operator cache before importing model libraries.  The value
@@ -766,6 +859,7 @@ def main() -> int:
             physical.total_memory_mib,
             expected_gpu_uuid=config.expected_gpu_uuid,
             physical_gpu_index=config.physical_gpu_index,
+            physical_total_memory_mib=physical.total_memory_mib,
             strict_gpu=True,
         )
     except (DeviceGuardError, TypeError, ValueError) as exc:
@@ -805,6 +899,13 @@ def main() -> int:
             name: {"id": spec.model_id, "revision": spec.revision}
             for name, spec in APPROVED_MODEL_SPECS.items()
             if name in {"sam2", "clip", "blip3"}
+        },
+        "residency": {
+            "logical_device": "cuda:0",
+            "all_models_resident": policy.strategy == ALL_RESIDENT_RESIDENCY_MODE,
+            "request_transition_policy": (
+                "none" if policy.strategy == ALL_RESIDENT_RESIDENCY_MODE else "stage_boundary"
+            ),
         },
     }
     app = create_app(

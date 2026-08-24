@@ -102,27 +102,30 @@ on success/error/cancel. Never use repository `output/`, `last_results/`, cwd,
 `/tmp`, or persistent disk for request data unless an explicit order changes the
 contract. No request identifier contains user filenames or content.
 
-## Physical GPU-1 law
+## Operator-assigned physical GPU law
 
-Target hardware is a shared multi-GPU host. Human/operator preflight on
-2026-08-23 observed physical GPU index 1 as an ordinary NVIDIA GeForce RTX 2080
-Ti with **11264 MiB** VRAM, UUID
-`GPU-c457dbaf-991c-dc23-c781-0dc030776dd8`; physical GPU0 was another 11264-MiB
-RTX 2080 Ti with an unrelated Python workload. These facts must be re-verified
-live before every GPU objective because process/free-memory state and device
-mapping can change. GPU0 remains protected even if it later appears idle.
+Target hardware is a shared multi-GPU host. The historical maelstrom1
+qualification on 2026-08-23 used physical GPU index 1, an ordinary NVIDIA
+GeForce RTX 2080 Ti with **11264 MiB** VRAM, UUID
+`GPU-c457dbaf-991c-dc23-c781-0dc030776dd8`; that host-specific snapshot remains
+planning evidence only. An active order may explicitly authorize a different
+operator-assigned card, as 008-a does for hinton2 physical index 0, UUID
+`GPU-a91444df-4e87-011e-3347-9b3a4b9f9575`, RTX 3090 and **24576 MiB**. The
+complete assigned-card facts must be re-verified live before every GPU phase;
+all other devices and unrelated processes remain protected.
 
 Service launch MUST set:
 
 ```text
 CUDA_DEVICE_ORDER=PCI_BUS_ID
-CUDA_VISIBLE_DEVICES=1
+CUDA_VISIBLE_DEVICES=<SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX>
 ```
 
-After visibility masking, application code uses `cuda:0`; it MUST NOT hardcode
-`cuda:1`. Strategic/order records physical index, GPU UUID, PCI bus, exact model,
-VRAM, driver, CUDA/PyTorch compatibility, and existing processes. Never allocate
-on, kill processes on, reset, reconfigure, or steal memory from physical GPU 0.
+After visibility masking, application code uses `cuda:0`; it MUST NOT hardcode a
+physical index. Strategic/order records the assigned physical index, GPU UUID,
+PCI bus, exact model, VRAM, driver, CUDA/PyTorch compatibility, and existing
+processes. Never allocate on, kill processes on, reset, reconfigure, or steal
+memory from any unassigned device.
 Subprocesses inherit the same visibility mask. One API process and one inference
 request at a time until profiling proves otherwise. With ~11 GB VRAM, never
 assume SAM2+CLIP+BLIP3 co-residency; Objective 003 must measure and select an
@@ -138,7 +141,7 @@ STRATEGIC=$HOME/opencode-supervision/slaif-zap-it
 TMP_ROOT=/dev/shm/slaif-zap-it
 HOST=127.0.0.1
 PORT=live-verified-unused
-PHYSICAL_GPU=1
+PHYSICAL_GPU=operator-assigned index
 ```
 
 Without an explicit active service-mutation order, NEVER modify/stop/restart:

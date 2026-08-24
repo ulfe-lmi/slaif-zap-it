@@ -15,7 +15,7 @@ from src.runtime.strategy import (
 TARGET_UUID = "GPU-c457dbaf-991c-dc23-c781-0dc030776dd8"
 
 
-def test_live_config_is_loopback_ephemeral_and_pinned_to_physical_gpu1():
+def test_live_config_is_loopback_ephemeral_and_pinned_to_operator_gpu():
     config = live_service.LiveServiceConfig(
         port=17891,
         expected_gpu_uuid=TARGET_UUID,
@@ -24,12 +24,12 @@ def test_live_config_is_loopback_ephemeral_and_pinned_to_physical_gpu1():
     assert config.host == "127.0.0.1"
     assert config.physical_gpu_index == 1
 
-    with pytest.raises(live_service.LiveServiceError, match="physical GPU index 1"):
-        live_service.LiveServiceConfig(
-            port=17891,
-            expected_gpu_uuid=TARGET_UUID,
-            physical_gpu_index=0,
-        )
+    assigned = live_service.LiveServiceConfig(
+        port=17891,
+        expected_gpu_uuid=TARGET_UUID,
+        physical_gpu_index=0,
+    )
+    assert assigned.physical_gpu_index == 0
     # CPU preflight tests may use pytest's isolated temporary directory; the
     # real entrypoint enforces the /dev/shm boundary before serving.
     assert (
@@ -47,12 +47,14 @@ def test_live_config_reads_operator_cache_and_port_without_client_fields():
         {
             "SLAIF_ZAP_IT_PORT": "23654",
             "SLAIF_ZAP_IT_EXPECTED_GPU_UUID": TARGET_UUID,
+            "SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX": "0",
             "SLAIF_ZAP_IT_TMP_ROOT": "/dev/shm/slaif-zap-it",
             "SLAIF_ZAP_IT_MODEL_CACHE_ROOT": "/dev/shm/model-cache",
         }
     )
     assert config.port == 23654
     assert config.model_cache_root == "/dev/shm/model-cache"
+    assert config.physical_gpu_index == 0
 
 
 def test_preflight_checks_all_operator_boundaries(monkeypatch):

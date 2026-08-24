@@ -1,10 +1,10 @@
 # Local service runbook
 
 This runbook operates the tested local ZAP-IT service from one host process.
-It binds only to `127.0.0.1` and exposes one operator-selected physical GPU as
-logical `cuda:0`. On the qualified 11 GB host, BLIP3 is host-resident and swaps
-with SAM2+CLIP for each BLIP3 request. The >=24 GB all-resident implementation
-is not yet a live-qualified procedure. This is not a LAN, public,
+It binds only to `127.0.0.1` and exposes one explicitly operator-selected
+physical GPU as logical `cuda:0`. The historical qualified 11 GB profile keeps
+BLIP3 host-resident and swaps it with SAM2+CLIP; the >=24 GB profile keeps all
+three pinned FP16 holders resident once separately qualified. This is not a LAN, public,
 customer-data, or production-release runbook.
 
 ## Before every activation
@@ -22,8 +22,9 @@ ss -H -ltn
 df -h /dev/shm
 ```
 
-Confirm that physical GPU1 still has the expected UUID, PCI/model/VRAM facts,
-and that GPU0's unrelated processes are unchanged. The candidate port is not a
+Confirm that the explicitly assigned physical index has the expected UUID,
+PCI/model/VRAM facts and no compute process; all other devices' unrelated
+processes are unchanged. The candidate port is not a
 reservation: `scripts/serve_local.sh start` re-verifies it with `ss` and a
 transient bind immediately before the service opens it.
 
@@ -39,7 +40,7 @@ set -a
 set +a
 ```
 
-Replace the UUID with the fresh physical GPU1 value and set
+Set the explicit physical index and matching fresh UUID, then set
 `SLAIF_ZAP_IT_MODEL_CACHE_ROOT` to the operator cache containing the pinned
 SAM2, CLIP and BLIP3 snapshots. Do not add model IDs, revisions, devices,
 URLs, paths, dtypes, or credentials to request YAML; those are startup policy. Keep the
@@ -154,12 +155,12 @@ nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory \
 find /dev/shm/slaif-zap-it -mindepth 1 -maxdepth 2 -printf '%M %p\n'
 ```
 
-Confirm one service PID owns both resident models, no wildcard/LAN listener
-exists, GPU0's process/memory lines are byte-stable, and the root is empty
+Confirm one service PID owns all three resident models, no wildcard/LAN listener
+exists, every unassigned device's process/memory lines are byte-stable, and the root is empty
 after stop. For concurrency, overlap two real requests: one runs, the other
 must receive deterministic `503 service_busy` with `Retry-After` when queue
 depth is zero. Repeat a bounded number of calls and record latency, response
-size, GPU1 allocated/reserved memory, process RSS, and residue; this is not a
+size, assigned-GPU allocated/reserved memory, process RSS, and residue; this is not a
 soak test or a leak-proof claim.
 
 Exercise invalid image/YAML, hostile model-control rejection, injected operator-only
@@ -189,16 +190,16 @@ find /dev/shm/slaif-zap-it -mindepth 1 -maxdepth 2 -print
 
 Remove only this checkout's optional user configuration and, if explicitly
 desired, its repo-owned launcher/unit files. Do not remove shared
-model-cache entries, stop unrelated GPU0 work, alter NVIDIA/CUDA, firewall/VPN,
+model-cache entries, stop unrelated GPU work, alter NVIDIA/CUDA, firewall/VPN,
 global credentials, or delete persistent user data. The end-of-round state is a
-free loopback port, no ZAP-IT process, GPU1 near its pre-round baseline, GPU0
-unchanged, and an empty `/dev/shm/slaif-zap-it` root.
+free loopback port, no ZAP-IT process, the assigned GPU near its pre-round
+baseline, other devices unchanged, and an empty `/dev/shm/slaif-zap-it` root.
 
 ## Installed candidate and local academic regression
 
 The unpublished 0.1.0 wheel exposes the foreground zap-it-service console
 entrypoint. Install it in a clean venv outside the checkout, source a private
-mode-0600 EnvironmentFile, and use the same GPU1 UUID, logical cuda:0 and
+mode-0600 EnvironmentFile, and use the same assigned-GPU UUID, logical cuda:0 and
 loopback-only checks documented above. The optional user-systemd template is
 Type=simple, uses that EnvironmentFile and an explicit installed-venv
 placeholder; it is shipped uninstalled. Upgrade is a stopped venv replacement

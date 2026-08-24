@@ -9,10 +9,11 @@ This is a **ZAP-IT-specific multimodal pipeline endpoint** using a conventional
 path. It is **not** drop-in OpenAI `text-completions` compatibility.
 
 The contract is tested with a CPU fake engine and qualified locally with pinned
-SAM2, CLIP, and BLIP3 models. The supported operational profile uses serialized
-host-RAM/GPU transitions for BLIP3. The >=24 GB all-resident implementation is
-not yet a live-qualified deployment profile. No persistent listener is started
-by the package factory.
+SAM2, CLIP, and BLIP3 models. Operational residency is capacity-selected: the
+historical 11-GB profile uses serialized host-RAM/GPU transitions for BLIP3,
+while a strictly qualified card at or above 24 GiB keeps all three pinned
+holders on logical `cuda:0`. No persistent listener is started by the package
+factory.
 
 ## Endpoints
 

@@ -49,9 +49,10 @@ returning. On the qualified 11 GB RTX 2080 Ti, isolated BLIP3 peaked at
 9,532 MiB reserved (88.09% of CUDA-visible memory); ten repeated central-crop
 pipeline calls completed in approximately 10.2–11.5 seconds each.
 
-The all-three-model resident implementation exists for cards with at least
-24,576 MiB, but it has not yet completed its separate live qualification. No
-request can select a model, revision, device, dtype, or residency policy.
+Cards with physical capacity at or above 24,576 MiB automatically use the
+all-three-model resident profile after strict index/UUID/capacity checks; the
+historical 11 GB profile retains the bounded BLIP3 swap. No request can select
+a model, revision, device, dtype, or residency policy.
 
 ## Quick start: development
 

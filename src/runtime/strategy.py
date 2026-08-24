@@ -68,6 +68,7 @@ class RuntimePolicy:
     supported_profiles: tuple[str, ...] = SUPPORTED_RESIDENT_PROFILES
     expected_gpu_uuid: str | None = None
     physical_gpu_index: int = 1
+    physical_total_memory_mib: int | None = None
     strict_gpu: bool = True
     model_registry_ready: bool = False
 
@@ -79,6 +80,8 @@ class RuntimePolicy:
             raise ValueError(f"unknown runtime profile(s): {sorted(unknown)!r}")
         if self.physical_gpu_index < 0:
             raise ValueError("physical_gpu_index must be non-negative")
+        if self.physical_total_memory_mib is not None and self.physical_total_memory_mib <= 0:
+            raise ValueError("physical GPU total memory must be positive")
         if self.strict_gpu and not self.expected_gpu_uuid:
             raise ValueError("strict GPU policy requires expected_gpu_uuid")
 
@@ -99,7 +102,9 @@ class RuntimePolicy:
         strict_raw = env.get("SLAIF_ZAP_IT_STRICT_GPU", "1").strip().lower()
         strict = strict_raw not in {"0", "false", "no", "off"}
         uuid = expected_gpu_uuid or env.get("SLAIF_ZAP_IT_EXPECTED_GPU_UUID") or None
-        physical = int(env.get("SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX", "1"))
+        from .device import parse_physical_gpu_index
+
+        physical = parse_physical_gpu_index(env.get("SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX"))
         return cls(
             strategy=strategy,
             supported_profiles=_csv(profiles_raw),
@@ -116,6 +121,7 @@ class RuntimePolicy:
         *,
         expected_gpu_uuid: str | None,
         physical_gpu_index: int = 1,
+        physical_total_memory_mib: int | None = None,
         strict_gpu: bool = True,
         model_registry_ready: bool = False,
     ) -> "RuntimePolicy":
@@ -125,6 +131,11 @@ class RuntimePolicy:
             supported_profiles=SUPPORTED_RESIDENT_PROFILES,
             expected_gpu_uuid=expected_gpu_uuid,
             physical_gpu_index=physical_gpu_index,
+            physical_total_memory_mib=(
+                int(total_memory_mib)
+                if physical_total_memory_mib is None
+                else int(physical_total_memory_mib)
+            ),
             strict_gpu=strict_gpu,
             model_registry_ready=model_registry_ready,
         )
@@ -163,6 +174,16 @@ class RuntimePolicy:
                 expected_uuid = f"GPU-{expected_uuid}"
             if visible_uuid != expected_uuid:
                 return RuntimeReadiness(False, "visible GPU UUID does not match the operator pin")
+            if self.physical_total_memory_mib is not None:
+                visible_total = getattr(device_report, "total_memory_mib", None)
+                if visible_total is None:
+                    return RuntimeReadiness(False, "visible GPU capacity is unavailable")
+                capacity_delta = self.physical_total_memory_mib - int(visible_total)
+                allowed_delta = max(1024, int(round(self.physical_total_memory_mib * 0.05)))
+                if capacity_delta < 0 or capacity_delta > allowed_delta:
+                    return RuntimeReadiness(
+                        False, "visible GPU capacity does not match the operator pin"
+                    )
         elif device_report is None:
             return RuntimeReadiness(False, "runtime device evidence is not available")
         if not self.model_registry_ready:
@@ -175,6 +196,7 @@ class RuntimePolicy:
             supported_profiles=self.supported_profiles,
             expected_gpu_uuid=self.expected_gpu_uuid,
             physical_gpu_index=self.physical_gpu_index,
+            physical_total_memory_mib=self.physical_total_memory_mib,
             strict_gpu=self.strict_gpu,
             model_registry_ready=ready,
         )

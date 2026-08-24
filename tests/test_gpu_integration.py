@@ -1,4 +1,4 @@
-"""Opt-in, serialized physical-GPU1 smoke checks.
+"""Opt-in, serialized operator-assigned-GPU smoke checks.
 
 Normal CPU CI does not collect live model tests as a requirement.  Operators
 run this module explicitly with ``ZAP_IT_RUN_GPU=1`` and the launch mask.
@@ -55,10 +55,21 @@ def _compute_processes() -> list[str]:
     return result.stdout.splitlines()
 
 
-def test_masked_device_is_pinned_gpu1_and_gpu0_is_untouched(gpu_test_lock, monkeypatch):
+def test_masked_device_is_pinned_to_assigned_gpu_and_others_are_untouched(
+    gpu_test_lock, monkeypatch
+):
+    raw_index = os.environ.get("SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX")
+    if raw_index is None:
+        pytest.skip("SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX is required for strict live tests")
+    try:
+        physical_index = int(raw_index, 10)
+    except ValueError:
+        pytest.fail("SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX must be decimal")
+    if physical_index < 0:
+        pytest.fail("SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX must be non-negative")
     monkeypatch.setenv("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
-    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
-    require_launch_environment(physical_gpu_index=1)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", str(physical_index))
+    require_launch_environment(physical_gpu_index=physical_index)
     import torch
 
     expected_uuid = os.environ.get("SLAIF_ZAP_IT_EXPECTED_GPU_UUID")
@@ -70,6 +81,6 @@ def test_masked_device_is_pinned_gpu1_and_gpu0_is_untouched(gpu_test_lock, monke
     assert report.logical_index == 0
     assert report.uuid == expected_uuid
     assert report.visible_count == 1
-    assert [line for line in after if "GPU-4c129e25" in line] == [
-        line for line in before if "GPU-4c129e25" in line
+    assert [line for line in after if expected_uuid not in line] == [
+        line for line in before if expected_uuid not in line
     ]

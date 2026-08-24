@@ -12,6 +12,7 @@ from .device import (
     inspect_physical_gpu,
     inspect_visible_device,
     launch_environment,
+    parse_physical_gpu_index,
     require_launch_environment,
     require_physical_gpu_match,
 )
@@ -53,6 +54,7 @@ __all__ = [
     "inspect_physical_gpu",
     "make_readiness_provider",
     "launch_environment",
+    "parse_physical_gpu_index",
     "require_launch_environment",
     "require_physical_gpu_match",
     "select_residency_mode",

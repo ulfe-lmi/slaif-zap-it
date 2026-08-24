@@ -58,7 +58,9 @@ class _Cuda:
         return 10_000, 11_264
 
 
-def _registry(mode: str = SEQUENTIAL_RESIDENCY_MODE) -> tuple[ResidentRegistry, list[str]]:
+def _registry(
+    mode: str = SEQUENTIAL_RESIDENCY_MODE, *, blip_device: str | None = None
+) -> tuple[ResidentRegistry, list[str]]:
     events: list[str] = []
     states = {
         "segmenter": {"model": _Holder("sam2", events, device="cuda:0")},
@@ -67,7 +69,11 @@ def _registry(mode: str = SEQUENTIAL_RESIDENCY_MODE) -> tuple[ResidentRegistry, 
             "model": _Holder(
                 "blip3",
                 events,
-                device="cuda:0" if mode == ALL_RESIDENT_RESIDENCY_MODE else "cpu",
+                device=(
+                    blip_device
+                    if blip_device is not None
+                    else ("cuda:0" if mode == ALL_RESIDENT_RESIDENCY_MODE else "cpu")
+                ),
                 estimated_gpu_bytes=100,
             ),
             "max_questions": 32,
@@ -295,6 +301,14 @@ def test_no_blip_request_and_all_resident_request_do_not_swap() -> None:
             lambda *_args, **kwargs: kwargs.get("blip3_state"), None, config, runner_kwargs={}
         )
         assert registry.transition_events == []
+
+
+def test_all_resident_readiness_requires_all_three_holders_on_logical_cuda0() -> None:
+    registry, _events = _registry(ALL_RESIDENT_RESIDENCY_MODE, blip_device="cpu")
+    registry.load()
+    assert registry.failed
+    assert registry.error_type == "ValueError"
+    assert not registry.verdict().ready
 
 
 def test_pre_transition_failure_does_not_invent_blip3_move() -> None:

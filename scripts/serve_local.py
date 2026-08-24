@@ -4,8 +4,9 @@
 Launch environment (see docs/RUNBOOK.md):
 
     CUDA_DEVICE_ORDER=PCI_BUS_ID
-    CUDA_VISIBLE_DEVICES=1
-    SLAIF_ZAP_IT_EXPECTED_GPU_UUID=GPU-...   # live-verified physical GPU1 UUID
+    SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX=<assigned-physical-index>
+    CUDA_VISIBLE_DEVICES=<assigned-physical-index>  # launcher derives this
+    SLAIF_ZAP_IT_EXPECTED_GPU_UUID=GPU-...   # live-verified UUID for that index
     SLAIF_ZAP_IT_HOST=127.0.0.1
     SLAIF_ZAP_IT_PORT=<freshly verified unused port>
     SLAIF_ZAP_IT_TMP_ROOT=/dev/shm/slaif-zap-it

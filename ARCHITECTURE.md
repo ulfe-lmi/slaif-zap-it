@@ -74,7 +74,7 @@ Approved SAM2, CLIP, and BLIP3 identities/revisions are fixed in operator code.
 Snapshots live in an operator-managed Hugging Face cache and are loaded with
 network access disabled during service operation.
 
-The live-qualified strategy is sequential:
+The historical live-qualified strategy is sequential:
 
 ```text
 normal request:  SAM2 + CLIP on GPU, BLIP3 in host RAM
@@ -93,8 +93,11 @@ context-managed `finally` restores baseline residency before response return;
 restoration failure makes readiness fail until restart. Requests are serialized
 so two transitions cannot overlap.
 
-An all-three-GPU-resident implementation exists for cards with at least
-24,576 MiB, but it is not a live-qualified operational claim yet.
+An all-three-GPU-resident implementation is selected automatically from fresh
+physical capacity at or above 24,576 MiB. It requires all pinned holders to
+prove residency on logical `cuda:0` before readiness and performs no request-
+time movement. The historical sequential profile remains selected below the
+boundary.
 
 ### Device guard
 
@@ -105,11 +108,11 @@ CUDA_DEVICE_ORDER=PCI_BUS_ID
 CUDA_VISIBLE_DEVICES=<operator-selected physical GPU index>
 ```
 
-The deployed host currently assigns physical GPU1. Startup independently checks
-physical index, UUID, PCI address, model, capacity, and compute processes, then
+Startup independently checks physical index, UUID, PCI address, model, capacity,
+and compute processes, then
 cross-checks the single masked CUDA device. It refuses an occupied or mismatched
-target instead of selecting another GPU. GPU0 and unrelated workloads are
-outside ZAP-IT authority.
+target instead of selecting another GPU. Unassigned devices and unrelated
+workloads are outside ZAP-IT authority.
 
 ### HTTP service
 

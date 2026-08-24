@@ -79,9 +79,10 @@ Model licenses and provenance are documented in
 
 ## Device and service configuration
 
-Before every launch, inspect all physical GPUs and processes. The current
-qualified host assigns physical GPU1 and protects GPU0, but indices and UUIDs
-must never be assumed from an old observation.
+Before every launch, inspect all physical GPUs and processes. Use the exact
+operator-assigned physical index and matching UUID; the historical maelstrom1
+qualification used GPU1, while the 008-a hinton2 qualification used GPU0.
+All other devices and processes remain protected.
 
 Copy the environment template and replace its placeholders:
 
@@ -119,14 +120,15 @@ GPU environment. The service must inherit:
 
 ```text
 CUDA_DEVICE_ORDER=PCI_BUS_ID
+SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX=<verified physical GPU index>
 CUDA_VISIBLE_DEVICES=<verified physical GPU index>
 ```
 
 It must see exactly one logical device as `cuda:0` and match the pinned UUID.
 
-The current live-qualified residency is the sequential SAM2+CLIP/BLIP3 profile
-measured on the 11 GB RTX 2080 Ti. The all-resident ≥24 GB implementation is not
-an operationally qualified deployment until its separate live gate completes.
+The historical live-qualified residency is the sequential SAM2+CLIP/BLIP3
+profile measured on the 11 GB RTX 2080 Ti. On a separately qualified card with
+at least 24,576 MiB, the service selects the all-resident profile automatically.
 
 ## Optional GPU integration test
 
@@ -136,7 +138,8 @@ The explicit GPU test is serialized and excluded from public CI:
 ZAP_IT_RUN_GPU=1 \
 ZAP_IT_TESTS_ALLOW_SOCKETS=1 \
 CUDA_DEVICE_ORDER=PCI_BUS_ID \
-CUDA_VISIBLE_DEVICES=1 \
+SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX=<assigned-physical-index> \
+CUDA_VISIBLE_DEVICES=<assigned-physical-index> \
 SLAIF_ZAP_IT_EXPECTED_GPU_UUID=<fresh-target-uuid> \
 .venv-gpu/bin/pytest -q -m gpu tests/test_gpu_integration.py
 ```

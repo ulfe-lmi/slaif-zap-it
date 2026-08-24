@@ -118,7 +118,7 @@ class _Blip3QA:
 
         self._torch = torch
         want_cuda = str(device).startswith("cuda")
-        self.device = torch.device("cuda" if (want_cuda and torch.cuda.is_available()) else "cpu")
+        self.device = torch.device(device if (want_cuda and torch.cuda.is_available()) else "cpu")
         self.verbosity = verbosity
         self.log_print = log_print_func or (lambda *a, **k: None)
 
@@ -301,7 +301,7 @@ class _Blip3Filter:
 
         self._torch = torch
         self.device = torch.device(
-            "cuda" if (str(device).startswith("cuda") and torch.cuda.is_available()) else "cpu"
+            device if (str(device).startswith("cuda") and torch.cuda.is_available()) else "cpu"
         )
         self.verbosity = verbosity
         self.log_print = log_print_func or (lambda *a, **k: None)

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Bounded Objective 003 GPU1 qualification runner.
+"""Bounded Objective 003 historical low-card qualification runner.
 
 Run this script only in the repo-owned GPU environment and with the launch
 mask already set:
 
-    CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 \
+    CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=<assigned-index> \
       .venv-gpu/bin/python scripts/qualify_gpu_runtime.py
 
 The script downloads only the three approved, revision-pinned model snapshots

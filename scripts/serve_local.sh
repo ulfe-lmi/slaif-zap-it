@@ -3,7 +3,8 @@
 #
 # Usage: scripts/serve_local.sh {start|stop|status|logs|restart}
 #
-# Start requires the operator to export the live-verified GPU UUID. If no port
+# Start requires the operator to export the live-verified physical GPU index
+# and UUID. If no port
 # is exported, the helper selects 17891, then 23654, then a verified free port
 # in 20000..40000. The service repeats the ss+bind preflight immediately before
 # opening its listener, so selection is never treated as a reservation.
@@ -103,13 +104,18 @@ PY
 }
 
 require_launch_env() {
-  : "${SLAIF_ZAP_IT_EXPECTED_GPU_UUID:?SLAIF_ZAP_IT_EXPECTED_GPU_UUID must name the live-verified physical GPU1 UUID}"
-  if [ "${SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX:-1}" != "1" ]; then
-    echo "serve_local: physical GPU index is fixed at 1" >&2
+  : "${SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX:?SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX must explicitly name the live-verified physical GPU index}"
+  : "${SLAIF_ZAP_IT_EXPECTED_GPU_UUID:?SLAIF_ZAP_IT_EXPECTED_GPU_UUID must name the live-verified physical GPU UUID}"
+  local physical_index="$SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX"
+  if [[ ! "$physical_index" =~ ^[0-9]+$ ]]; then
+    echo "serve_local: physical GPU index must be a non-negative decimal integer" >&2
     return 1
   fi
+  while [ "${physical_index#0}" != "$physical_index" ] && [ "$physical_index" != "0" ]; do
+    physical_index="${physical_index#0}"
+  done
   export CUDA_DEVICE_ORDER=PCI_BUS_ID
-  export CUDA_VISIBLE_DEVICES=1
+  export CUDA_VISIBLE_DEVICES="$physical_index"
   export SLAIF_ZAP_IT_HOST=127.0.0.1
   export SLAIF_ZAP_IT_TMP_ROOT="$TMP_ROOT"
 }
