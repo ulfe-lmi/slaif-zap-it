@@ -11,6 +11,7 @@ recursive-include docs *.md
 include deploy/zap-it-local.service deploy/service.env.example
 include scripts/serve_local.py scripts/serve_local.sh scripts/serve_local_stop.sh
 include scripts/smoke_local_service.py scripts/smoke_local_goats.py
+include scripts/smoke_model_control.py
 include scripts/profile_matrix.py
 include scripts/smoke_installed_package.py
 include scripts/verify_release_artifacts.py

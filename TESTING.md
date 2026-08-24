@@ -23,6 +23,10 @@ an unrelated mock.
   PNG, serializers and existing regressions; no CUDA/network/model download.
 - T2 CPU API: fake engine, multipart, levels, JSON/ZIP bytes, errors, auth,
   limits, concurrency/cancel, `/dev/shm` cleanup.
+- T2 model control: explicit/none settings, separate credentials, repository
+  index schemas, fixed-name/body policy, lifecycle idempotency/retry, gate
+  pause/drain, cancellation/timeout rollback, fake-holder cleanup, repeated
+  cycles, metrics labels and OpenAPI routes.
 - T3 GPU integration: explicit opt-in; physical GPU1 only; pinned models; one
   test at a time; before/after UUID/process/VRAM evidence; redistributable image.
 - T4 local deployment: verified free loopback port, health/readiness, all levels,
@@ -46,10 +50,18 @@ an explicit operational order creates and secures it.
 - one-image-only and config-only multipart cardinality;
 - no persistent files after success/error/cancel;
 - model/request state isolation across repeated/concurrent calls;
+- fixed-model `UNAVAILABLE|LOADING|READY|UNLOADING` transitions, load/unload
+  idempotency, readiness/admission race, active drain and cold-memory proof;
 - selected physical GPU visibility and no protected-GPU allocation in live tier;
 - bounded artifact count/per-item/total/base64/ZIP budget and no-truncation checks;
 - visualization execution policy, geometry pre-inference rejection, metrics
   privacy/cardinality and A/B/A state-isolation checks;
+
+The explicit lifecycle test tier remains CPU/fake-only unless an order grants a
+live qualification. A live qualification must use the exact order-assigned
+physical GPU, prove PID/listener continuity across cold-load-infer-drain-
+unload-reload-infer-unload, and record Torch allocated/reserved cold memory
+separately from the small persistent CUDA context.
 
 Every OAP order names exact commands and broad/focused scope. “All tests passed”
 means the entire named set ran and passed. Local success never substitutes for a

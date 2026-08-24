@@ -26,6 +26,41 @@ gates remain separate. No persistent listener is started by the package factory.
 | `/healthz` | GET | process/event-loop health (always unauthenticated) |
 | `/readyz` | GET | engine readiness via injected provider; honest `not_ready` |
 | `/metrics` | GET | process-local finite-cardinality Prometheus text |
+| `/v2` | GET | bounded metadata advertising the repository-management subset |
+| `/v2/repository/index` | POST | authenticated fixed-model lifecycle index |
+| `/v2/repository/models/zap-it-1/load` | POST | authenticated synchronous fixed-model load |
+| `/v2/repository/models/zap-it-1/unload` | POST | authenticated synchronous fixed-model unload |
+
+The `/v2` paths implement only the [Triton Model Repository
+Extension](https://docs.nvidia.com/deeplearning/triton-inference-server/archives/triton-inference-server-2450/user-guide/docs/protocol/extension_model_repository.html)
+management vocabulary (`index`, `load`, `unload`) for the immutable `zap-it-1`
+holder. They do not implement KServe V2 tensor inference; `/v1/completions`
+remains the only inference contract. This deliberately does not claim the
+[KServe V2 inference protocol](https://kserve.github.io/website/docs/concepts/architecture/data-plane/v2-protocol).
+Load and unload return an empty HTTP 200 body only after their lifecycle work
+has completed.
+
+## Explicit model control
+
+`SLAIF_ZAP_IT_MODEL_CONTROL_MODE=none` is the default and preserves background
+startup loading. In `explicit` mode startup is cold (`UNAVAILABLE`) and requires
+the separate `SLAIF_ZAP_IT_MODEL_CONTROL_API_KEY`; it must not equal
+`SLAIF_ZAP_IT_API_KEY`. Management uses `Authorization: Bearer <control-key>`
+even on loopback. The inference key never authorizes management, and neither
+credential is accepted in multipart YAML or echoed in responses.
+
+The repository index accepts only an empty body or `{ "ready": true|false }`.
+Load and unload accept only an empty body or `{}`. Unknown fields, query
+parameters, arbitrary model names, URL/path/revision/device overrides and
+percent-encoded name tricks are rejected before lifecycle work. Index entries
+use only `UNAVAILABLE`, `LOADING`, `READY` and `UNLOADING` states and a generic
+sanitized reason.
+
+Unload atomically pauses new and queued inference, drains the active synchronous
+call, releases all holders and verifies logical Torch allocated and reserved
+memory are each at most 64 MiB. A drain or memory-proof failure leaves the
+service honest and never returns a misleading success. The process, listener
+and `/healthz` remain live throughout.
 
 ## Request fields
 

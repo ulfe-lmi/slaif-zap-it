@@ -21,6 +21,7 @@ test environments can exercise every seam without them.
 from __future__ import annotations
 
 import os
+import gc
 import subprocess
 import threading
 import time
@@ -64,6 +65,7 @@ __all__ = [
 
 _LOOPBACK_HOST = "127.0.0.1"
 _SHM_MIN_FREE_BYTES = 64 * 1024 * 1024
+_MODEL_MEMORY_BOUND_BYTES = 64 * 1024 * 1024
 
 
 class LiveServiceError(RuntimeError):
@@ -224,6 +226,8 @@ class ResidentRegistry:
         self._lock = threading.Lock()
         self._transition_lock = threading.RLock()
         self._states: dict[str, Any] | None = None
+        self._ever_loaded = False
+        self._state_hint = "loading"
         self._ready = False
         self._failed = False
         self._error_type: str | None = None
@@ -234,6 +238,10 @@ class ResidentRegistry:
         self.transition_events: list[str] = []
         self.transition_seconds: dict[str, float] = {}
         self._transition_count = 0
+        self._initialization_count = 0
+        self.loaded_memory: dict[str, int] = {"allocated": 0, "reserved": 0}
+        self._load_baseline_memory: dict[str, int] = {"allocated": 0, "reserved": 0}
+        self.unload_memory: dict[str, int | float | bool] = {}
 
     def bind_metrics(self, metrics: Any) -> None:
         """Attach the service's fixed-label metrics before startup loading."""
@@ -259,6 +267,53 @@ class ResidentRegistry:
         """Return the number of completed residency boundary transitions."""
         with self._lock:
             return self._transition_count
+
+    @property
+    def initialization_count(self) -> int:
+        """Number of successful pinned-holder initializations."""
+        with self._lock:
+            return self._initialization_count
+
+    @staticmethod
+    def _cuda_memory(cuda: Any | None) -> dict[str, int] | None:
+        """Sample logical cuda:0 counters without initializing CUDA on CPU."""
+        if cuda is None:
+            return None
+        available = getattr(cuda, "is_available", None)
+        if callable(available):
+            try:
+                if not available():
+                    return None
+            except Exception:
+                return None
+        values: dict[str, int] = {}
+        for name in ("memory_allocated", "memory_reserved"):
+            getter = getattr(cuda, name, None)
+            if not callable(getter):
+                return None
+            try:
+                values[name.removeprefix("memory_")] = int(getter(0))
+            except (RuntimeError, TypeError, ValueError, OSError):
+                return None
+        return values
+
+    def _cuda_for_cleanup(self) -> Any | None:
+        cuda = self._cuda
+        if cuda is None:
+            try:
+                import torch
+
+                cuda = torch.cuda
+            except (ImportError, AttributeError):
+                return None
+        available = getattr(cuda, "is_available", None)
+        if callable(available):
+            try:
+                if not available():
+                    return None
+            except Exception:
+                return None
+        return cuda
 
     @staticmethod
     def _holder_devices(value: Any, seen: set[int] | None = None) -> list[str]:
@@ -335,6 +390,8 @@ class ResidentRegistry:
                     False,
                     f"resident model load failed ({self._error_type}); see operator runbook",
                 )
+            if self._state_hint == "unavailable":
+                return RuntimeReadiness(False, "resident model registry is unavailable")
             return RuntimeReadiness(False, "resident model registry is still loading")
 
     def wait_until_settled(self, timeout: float = 600.0) -> bool:
@@ -349,40 +406,141 @@ class ResidentRegistry:
         return False
 
     def load(self) -> None:
+        """Load pinned holders and allow a later unload/reload cycle."""
         import time
 
-        started = time.perf_counter()
-        try:
-            states = self._loader()
-        except Exception as exc:  # recorded as a sanitized category, never rethrown
+        with self._transition_lock:
             with self._lock:
-                self._failed = True
-                self._error_type = type(exc).__name__
-            if self._metrics is not None:
-                self._metrics.observe_model_initialization("registry", "failure")
-            return
-        with self._lock:
-            if (
-                not isinstance(states, dict)
-                or "segmenter" not in states
-                or "clip" not in states
-                or (self._require_blip3 and "blip3" not in states)
-                or (
+                if self._ready:
+                    return
+                self._failed = False
+                self._terminal_failure = False
+                self._error_type = None
+                self._state_hint = "loading"
+            baseline = self._cuda_memory(self._cuda_for_cleanup()) or {
+                "allocated": 0,
+                "reserved": 0,
+            }
+            started = time.perf_counter()
+            try:
+                states = self._loader()
+            except Exception as exc:  # recorded as a sanitized category, never rethrown
+                with self._lock:
+                    self._failed = True
+                    self._error_type = type(exc).__name__
+                    self._state_hint = "unavailable"
+                if self._metrics is not None:
+                    self._metrics.observe_model_initialization("registry", "failure")
+                return
+            valid = (
+                isinstance(states, dict)
+                and "segmenter" in states
+                and "clip" in states
+                and (not self._require_blip3 or "blip3" in states)
+                and not (
                     self._strategy == ALL_RESIDENT_RESIDENCY_MODE
                     and self._require_blip3
                     and not self._all_holders_on_device(states, self._device_name)
                 )
-            ):
-                self._failed = True
-                self._error_type = "ValueError"
+            )
+            if not valid:
+                with self._lock:
+                    self._failed = True
+                    self._error_type = "ValueError"
+                    self._state_hint = "unavailable"
                 if self._metrics is not None:
                     self._metrics.observe_model_initialization("registry", "failure")
                 return
-            self._states = states
-            self._ready = True
-            self.load_seconds = round(time.perf_counter() - started, 3)
-        if self._metrics is not None:
-            self._metrics.observe_model_initialization("registry", "success")
+            memory = self._cuda_memory(self._cuda_for_cleanup()) or {"allocated": 0, "reserved": 0}
+            with self._lock:
+                self._states = states
+                self._ready = True
+                self._ever_loaded = True
+                self._state_hint = "ready"
+                self._initialization_count += 1
+                self.load_seconds = round(time.perf_counter() - started, 3)
+                self.loaded_memory = memory
+                self._load_baseline_memory = baseline
+            if self._metrics is not None:
+                self._metrics.observe_model_initialization("registry", "success")
+
+    def unload(self) -> None:
+        """Release every holder and require the measured cold-memory bound."""
+        with self._transition_lock:
+            with self._lock:
+                if not self._ready or self._states is None:
+                    self._state_hint = "unavailable"
+                    return
+                states = self._states
+                # Make the model unreachable and readiness false before any
+                # potentially slow cleanup or proof operation.
+                self._states = None
+                self._ready = False
+                self._state_hint = "unavailable"
+                loaded_memory = dict(self.loaded_memory)
+            cleanup_error: Exception | None = None
+            try:
+                self._move_value(states, "cpu")
+                del states
+                gc.collect()
+                cuda = self._cuda_for_cleanup()
+                if cuda is not None:
+                    synchronize = getattr(cuda, "synchronize", None)
+                    if callable(synchronize):
+                        synchronize()
+                    empty_cache = getattr(cuda, "empty_cache", None)
+                    if callable(empty_cache):
+                        empty_cache()
+                    ipc_collect = getattr(cuda, "ipc_collect", None)
+                    if callable(ipc_collect):
+                        ipc_collect()
+                gc.collect()
+                memory = self._cuda_memory(cuda)
+                if memory is None:
+                    memory = {"allocated": 0, "reserved": 0}
+                loaded_allocated_delta = max(
+                    0, loaded_memory["allocated"] - self._load_baseline_memory["allocated"]
+                )
+                loaded_reserved_delta = max(
+                    0, loaded_memory["reserved"] - self._load_baseline_memory["reserved"]
+                )
+                remaining_allocated_delta = max(
+                    0, memory["allocated"] - self._load_baseline_memory["allocated"]
+                )
+                remaining_reserved_delta = max(
+                    0, memory["reserved"] - self._load_baseline_memory["reserved"]
+                )
+                self.unload_memory = {
+                    "allocated": memory["allocated"],
+                    "reserved": memory["reserved"],
+                    "loaded_allocated": loaded_memory["allocated"],
+                    "loaded_reserved": loaded_memory["reserved"],
+                    "allocated_released_90pct": remaining_allocated_delta
+                    <= max(_MODEL_MEMORY_BOUND_BYTES, loaded_allocated_delta // 10),
+                    "reserved_released_90pct": remaining_reserved_delta
+                    <= max(_MODEL_MEMORY_BOUND_BYTES, loaded_reserved_delta // 10),
+                }
+                if (
+                    memory["allocated"] > _MODEL_MEMORY_BOUND_BYTES
+                    or memory["reserved"] > _MODEL_MEMORY_BOUND_BYTES
+                    or not self.unload_memory["allocated_released_90pct"]
+                    or not self.unload_memory["reserved_released_90pct"]
+                ):
+                    raise LiveServiceError("model memory proof failed")
+            except Exception as exc:
+                cleanup_error = exc
+            if cleanup_error is not None:
+                with self._lock:
+                    self._failed = True
+                    self._error_type = (
+                        "MemoryProofError"
+                        if isinstance(cleanup_error, LiveServiceError)
+                        else "CleanupError"
+                    )
+                raise LiveServiceError("model unload memory proof failed") from cleanup_error
+            with self._lock:
+                self._failed = False
+                self._error_type = None
 
     def start_background_load(self) -> threading.Thread:
         with self._lock:
@@ -808,6 +966,13 @@ def main() -> int:
     except LiveServiceError as exc:
         print(f"serve_local: {exc}", file=sys.stderr)
         return 2
+    try:
+        from src.service.settings import ServiceSettings
+
+        settings = ServiceSettings.from_environment()
+    except (TypeError, ValueError) as exc:
+        print(f"serve_local: invalid service settings: {exc}", file=sys.stderr)
+        return 2
     if not config.strict_gpu:
         print(
             "serve_local: strict operator-selected physical GPU mode cannot be disabled",
@@ -867,7 +1032,6 @@ def main() -> int:
         return 3
 
     from src.service.app import create_app
-    from src.service.settings import ServiceSettings
 
     registry = ResidentRegistry(
         loader=default_resident_loader(
@@ -879,11 +1043,6 @@ def main() -> int:
         require_blip3=True,
         cuda_module=torch.cuda,
     )
-    try:
-        settings = ServiceSettings.from_environment()
-    except (TypeError, ValueError) as exc:
-        print(f"serve_local: invalid service settings: {exc}", file=sys.stderr)
-        return 2
     runtime_metadata = {
         "strategy": policy.strategy,
         "supported_profiles": list(policy.supported_profiles),
@@ -907,6 +1066,15 @@ def main() -> int:
                 "none" if policy.strategy == ALL_RESIDENT_RESIDENCY_MODE else "stage_boundary"
             ),
         },
+        "model_control": {
+            "mode": settings.model_control_mode,
+            "paths": [
+                "/v2/repository/index",
+                "/v2/repository/models/zap-it-1/load",
+                "/v2/repository/models/zap-it-1/unload",
+            ],
+            "management_subset_only": True,
+        },
     }
     app = create_app(
         engine=wrap_test_injection(live_engine_callable(registry)),
@@ -918,6 +1086,7 @@ def main() -> int:
         runtime_policy=policy,
         runtime_metadata=runtime_metadata,
         shutdown_callback=registry.shutdown,
+        model_registry=registry,
     )
     registry.bind_metrics(app.state.metrics)
 
@@ -939,7 +1108,10 @@ def main() -> int:
         flush=True,
     )
 
-    registry.start_background_load()
+    if settings.model_control_mode == "none":
+        # Preserve the qualified historical default: the fixed registry loads
+        # in the background while the listener and health endpoint stay live.
+        registry.start_background_load()
 
     import uvicorn
 

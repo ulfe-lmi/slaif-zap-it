@@ -41,7 +41,9 @@ filesystem adapters                    request/auth/resource guards
 ```
 
 The HTTP service binds to loopback, runs one worker and one active inference,
-and exposes exactly one operator-pinned physical GPU as logical `cuda:0`.
+and exposes exactly one operator-pinned physical GPU as logical `cuda:0`. An
+optional explicit model controller keeps that process/listener live while its
+fixed model is cold.
 
 ## Components
 
@@ -127,6 +129,25 @@ FastAPI exposes:
 - `GET /readyz` — device and model-registry readiness;
 - `GET /metrics` — bounded Prometheus evidence;
 - `POST /v1/completions` — one image plus one YAML configuration.
+
+The optional fixed-model management subset also exposes `GET /v2`,
+`POST /v2/repository/index`, and fixed-name `load`/`unload` paths. These follow
+the KServe/Triton Model Repository Extension vocabulary but do not implement
+KServe V2 tensor inference. `SLAIF_ZAP_IT_MODEL_CONTROL_MODE=none` preserves
+background startup loading; `explicit` requires a separate loopback bearer
+credential and starts `UNAVAILABLE`.
+
+Lifecycle state and inference admission share one authority:
+
+```text
+UNAVAILABLE -> LOADING -> READY -> UNLOADING -> UNAVAILABLE
+```
+
+Only `READY` admits inference. Load/unload work runs on one control executor;
+unload atomically pauses new/queued requests, drains the active call, drops
+all holders, runs bounded CUDA/GC cleanup, and proves the 64-MiB logical Torch
+allocated/reserved cold bound and measured loaded-memory release. Failed or
+cancelled operations settle in a stable sanitized state.
 
 The completion path enforces multipart cardinality, upload and decoded-image
 limits, YAML policy, host and shared-memory floors, one active inference,

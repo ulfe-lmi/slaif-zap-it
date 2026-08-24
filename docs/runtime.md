@@ -1,5 +1,31 @@
 # GPU runtime and measured evidence
 
+## Explicit model lifecycle
+
+The service has an optional single-process management controller. It is a
+fixed-model management extension aligned with the KServe/Triton Model
+Repository Extension, not generic model-repository support and not V2 tensor
+inference. The four states are:
+
+```text
+UNAVAILABLE -> LOADING -> READY -> UNLOADING -> UNAVAILABLE
+```
+
+`none` retains the qualified background startup load. `explicit` keeps the
+listener and `/healthz` live with no holders resident until an authenticated
+`POST /v2/repository/models/zap-it-1/load` completes. `READY` is the only
+inference-admitting state. The controller and `InferenceGate` share the
+authoritative admission boundary, so a readiness check racing an unload cannot
+start a new call after admission is paused.
+
+Management work runs on one bounded control executor. Unload first rejects new
+and queued inference, waits for the already active synchronous call, then
+drops every registry holder, runs garbage collection/CUDA cleanup, and proves
+the 64-MiB logical Torch allocated/reserved cold bound plus the measured 90%
+loaded-delta release. Timeout, cancellation and cleanup errors settle in a
+stable state with sanitized evidence; they do not abandon a transition or
+claim success.
+
 Status: `PASSED` for Objective 008’s bounded all-resident qualification on
 `hinton2` at 2026-08-24, with the historical sequential qualification retained
 below for comparison. This record is local research evidence, not a service

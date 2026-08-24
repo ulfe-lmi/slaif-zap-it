@@ -13,6 +13,10 @@ from typing import Mapping, Optional
 
 __all__ = [
     "API_KEY_ENV_VAR",
+    "MODEL_CONTROL_API_KEY_ENV_VAR",
+    "MODEL_CONTROL_MODE_ENV_VAR",
+    "MODEL_CONTROL_DRAIN_SECONDS_ENV_VAR",
+    "MODEL_CONTROL_OPERATION_SECONDS_ENV_VAR",
     "SETTINGS_ENV_PREFIX",
     "TMP_ROOT_ENV_VAR",
     "DEFAULT_TMP_ROOT",
@@ -21,6 +25,10 @@ __all__ = [
 ]
 
 API_KEY_ENV_VAR = "SLAIF_ZAP_IT_API_KEY"
+MODEL_CONTROL_API_KEY_ENV_VAR = "SLAIF_ZAP_IT_MODEL_CONTROL_API_KEY"
+MODEL_CONTROL_MODE_ENV_VAR = "SLAIF_ZAP_IT_MODEL_CONTROL_MODE"
+MODEL_CONTROL_DRAIN_SECONDS_ENV_VAR = "SLAIF_ZAP_IT_MODEL_CONTROL_DRAIN_SECONDS"
+MODEL_CONTROL_OPERATION_SECONDS_ENV_VAR = "SLAIF_ZAP_IT_MODEL_CONTROL_OPERATION_SECONDS"
 SETTINGS_ENV_PREFIX = "SLAIF_ZAP_IT_"
 TMP_ROOT_ENV_VAR = "SLAIF_ZAP_IT_TMP_ROOT"
 DEFAULT_TMP_ROOT = "/dev/shm/slaif-zap-it"
@@ -70,6 +78,10 @@ class ServiceSettings:
     retry_after_seconds: int = 5
     test_serialization_delay_seconds: float = 0.0
     api_key: Optional[str] = None
+    model_control_mode: str = "none"
+    model_control_api_key: Optional[str] = None
+    model_control_drain_seconds: float = 120.0
+    model_control_operation_seconds: float = 600.0
     model_id: str = SERVICE_MODEL_ID
     tmp_root: str = DEFAULT_TMP_ROOT
 
@@ -106,6 +118,19 @@ class ServiceSettings:
             raise ValueError("retry_after_seconds must be >= 0")
         if self.test_serialization_delay_seconds < 0:
             raise ValueError("test_serialization_delay_seconds must be >= 0")
+        if self.model_control_mode not in {"none", "explicit"}:
+            raise ValueError("model_control_mode must be 'none' or 'explicit'")
+        if not 0 < self.model_control_drain_seconds <= 3600:
+            raise ValueError("model_control_drain_seconds must be in (0, 3600]")
+        if not 0 < self.model_control_operation_seconds <= 3600:
+            raise ValueError("model_control_operation_seconds must be in (0, 3600]")
+        if self.model_control_mode == "explicit":
+            if not self.model_control_api_key:
+                raise ValueError(
+                    "explicit model control requires SLAIF_ZAP_IT_MODEL_CONTROL_API_KEY"
+                )
+            if self.api_key and self.model_control_api_key == self.api_key:
+                raise ValueError("model control and inference credentials must be different")
         if not self.model_id or not self.model_id.strip():
             raise ValueError("model_id must be a non-empty identifier")
 
@@ -163,6 +188,28 @@ class ServiceSettings:
                     "SLAIF_ZAP_IT_TEST_SERIALIZATION_DELAY_SECONDS must be non-negative"
                 )
             kwargs["test_serialization_delay_seconds"] = serialization_delay
+        mode = env.get(MODEL_CONTROL_MODE_ENV_VAR, "none").strip().lower()
+        if mode == "":
+            mode = "none"
+        kwargs["model_control_mode"] = mode
+        control_key = env.get(MODEL_CONTROL_API_KEY_ENV_VAR)
+        kwargs["model_control_api_key"] = control_key or None
+        for env_name, field_name in (
+            (
+                MODEL_CONTROL_DRAIN_SECONDS_ENV_VAR,
+                "model_control_drain_seconds",
+            ),
+            (
+                MODEL_CONTROL_OPERATION_SECONDS_ENV_VAR,
+                "model_control_operation_seconds",
+            ),
+        ):
+            raw_seconds = env.get(env_name)
+            if raw_seconds:
+                seconds = float(raw_seconds)
+                if seconds <= 0:
+                    raise ValueError(f"{env_name} must be positive")
+                kwargs[field_name] = seconds
         api_key = env.get(API_KEY_ENV_VAR)
         if api_key == "":
             api_key = None

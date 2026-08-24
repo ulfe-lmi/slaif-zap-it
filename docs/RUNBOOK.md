@@ -72,6 +72,25 @@ line matches this checkout, waits for graceful shutdown, removes the pid/log
 files, and leaves the service stopped. `restart` is a controlled stop followed
 by a fresh port/device preflight.
 
+For a cold explicit lifecycle activation, set
+`SLAIF_ZAP_IT_MODEL_CONTROL_MODE=explicit` and a private
+`SLAIF_ZAP_IT_MODEL_CONTROL_API_KEY` distinct from the inference key before
+starting. Verify the cold state with an authenticated
+`POST /v2/repository/index` (expect `UNAVAILABLE`), then load with an empty
+body at `/v2/repository/models/zap-it-1/load`. Query the index while loading;
+`/healthz` stays 200 and `/readyz` stays 503 until the index is `READY`.
+Unload with an empty body at the matching `unload` path. A successful response
+has an empty body and is returned only after admission pause, active drain,
+holder release, and the measured Torch memory proof. Repeat load/infer/unload
+once before treating lifecycle repeatability as qualified. The control key is
+never placed in request YAML, logs, metrics or evidence.
+
+The bounded operator helper `scripts/smoke_model_control.py --port
+"$SLAIF_ZAP_IT_PORT"` performs two sanitized load/idempotent-load/
+unload/idempotent-unload cycles and prints only HTTP status, lifecycle state
+and timing facts. It does not run inference or replace the required live
+GPU/PID/VRAM/cleanup evidence.
+
 Never use `killall`, GPU reset, `systemctl` on unrelated units, firewall
 commands, or a wildcard/LAN bind. The optional `deploy/zap-it-local.service`
 file is shipped uninstalled; installing or enabling it is a deliberate operator

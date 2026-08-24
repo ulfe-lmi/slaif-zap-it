@@ -60,7 +60,7 @@ preserving safe evidence.
 
 ## Tracked secret-baseline exceptions
 
-The committed detect-secrets baseline contains exactly six reviewed findings;
+The committed detect-secrets baseline contains exactly seven reviewed findings;
 the enforcing tracked-tree scan compares path, detector type and hashed value
 and requires review for any addition, removal or path change:
 
@@ -68,8 +68,9 @@ and requires review for any addition, removal or path change:
   immutable sanitized OAP evidence.
 - `src/runtime/models.py`: three `Hex High Entropy String` findings for the
   three pinned model-revision hex strings at lines 32, 40 and 48.
-- `src/service/settings.py`: one `Secret Keyword` finding for the
-  `SLAIF_ZAP_IT_API_KEY` environment-variable name at line 23.
+- `src/service/settings.py`: two `Secret Keyword` findings for the
+  `SLAIF_ZAP_IT_API_KEY` and dedicated model-control API-key environment
+  variable names at lines 27 and 28. Both are identifiers, not credentials.
 - `tests/test_service_units.py`: one `Secret Keyword` finding for the
   synthetic `secret-key` test value at line 160.
 

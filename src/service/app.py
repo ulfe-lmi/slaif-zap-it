@@ -11,6 +11,7 @@ Everything lives in memory; the service never persists request data.
 from __future__ import annotations
 
 import asyncio
+import json
 import secrets
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -149,6 +150,8 @@ def create_app(
     runtime_policy: Optional[RuntimePolicy] = None,
     runtime_metadata: Optional[Mapping[str, Any]] = None,
     shutdown_callback: Optional[Callable[[], None]] = None,
+    model_registry: Any | None = None,
+    lifecycle_controller: Any | None = None,
 ) -> FastAPI:
     """Build the service app around an explicitly injected engine.
 
@@ -163,16 +166,41 @@ def create_app(
         retry_after_seconds=resolved_settings.retry_after_seconds,
     )
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="zap-it-inference")
+    control_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="zap-it-model-control")
     metrics = ServiceMetrics()
+    controller = lifecycle_controller
+    if (
+        controller is None
+        and model_registry is not None
+        and resolved_settings.model_control_mode == "explicit"
+    ):
+        from .model_control import ModelLifecycleController
+
+        controller = ModelLifecycleController(
+            registry=model_registry,
+            gate=gate,
+            control_executor=control_executor,
+            operation_timeout_seconds=resolved_settings.model_control_operation_seconds,
+            drain_timeout_seconds=resolved_settings.model_control_drain_seconds,
+            metrics=metrics,
+        )
+    if controller is not None and resolved_settings.model_control_mode == "explicit":
+        if controller.is_ready:
+            gate.resume_now()
+        else:
+            gate.pause_now("model is not ready")
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         try:
             yield
         finally:
-            if shutdown_callback is not None:
+            if controller is not None:
+                await controller.shutdown()
+            elif shutdown_callback is not None:
                 shutdown_callback()
             executor.shutdown(wait=True, cancel_futures=True)
+            control_executor.shutdown(wait=True, cancel_futures=True)
 
     def require_api_key(request: Request) -> None:
         expected = resolved_settings.api_key
@@ -207,6 +235,7 @@ def create_app(
     app.state.runtime_policy = runtime_policy
     app.state.started_monotonic = time.monotonic()
     app.state.metrics = metrics
+    app.state.model_controller = controller
 
     @app.exception_handler(ServiceError)
     async def handle_service_error(request: Request, exc: ServiceError) -> JSONResponse:
@@ -251,6 +280,124 @@ def create_app(
         uptime = time.monotonic() - app.state.started_monotonic
         return {"status": "ok", "uptime_s": f"{uptime:.3f}"}
 
+    def repository_error(status_code: int, message: str) -> JSONResponse:
+        """Return the KServe/Triton repository-extension error shape."""
+        return JSONResponse(status_code=status_code, content={"error": message})
+
+    def require_control_key(request: Request) -> None:
+        if resolved_settings.model_control_mode != "explicit":
+            raise ServiceError(
+                "explicit model control is disabled",
+                code="model_control_disabled",
+            )
+        if controller is None:
+            raise ServiceError("model control is not configured", code="model_control_failure")
+        from .auth import verify_bearer_key
+
+        verify_bearer_key(
+            request.headers.get("authorization"),
+            resolved_settings.model_control_api_key or "",
+        )
+
+    async def repository_body(request: Request, *, allow_empty: bool) -> dict[str, Any]:
+        if request.query_params:
+            raise ServiceError(
+                "repository request parameters are not supported", code="unsupported_field"
+            )
+        body = await request.body()
+        if len(body) > 16 * 1024:
+            raise ServiceError("repository request body is too large", code="payload_too_large")
+        if not body.strip():
+            if allow_empty:
+                return {}
+            raise ServiceError(
+                "repository request body must be an object", code="invalid_multipart"
+            )
+        content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if content_type not in {"application/json", ""}:
+            raise ServiceError("repository request body must be JSON", code="invalid_multipart")
+        try:
+            value = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ServiceError(
+                "repository request body is malformed", code="invalid_multipart"
+            ) from exc
+        if not isinstance(value, dict):
+            raise ServiceError(
+                "repository request body must be an object", code="invalid_multipart"
+            )
+        return value
+
+    def repository_status(exc: ServiceError) -> JSONResponse:
+        return repository_error(exc.status_code, exc.message)
+
+    @app.get("/v2", tags=["model-management"])
+    async def v2_metadata() -> Dict[str, Any]:
+        return {
+            "name": "slaif-zap-it",
+            "version": SCHEMA_VERSION,
+            "extensions": ["model_repository"],
+            "model_repository": {
+                "management_subset": True,
+                "inference_endpoint": "/v1/completions",
+                "v2_tensor_inference": False,
+            },
+        }
+
+    @app.post("/v2/repository/index", tags=["model-management"])
+    async def repository_index(request: Request) -> Any:
+        try:
+            require_control_key(request)
+            body = await repository_body(request, allow_empty=True)
+            unknown = set(body).difference({"ready"})
+            if unknown or ("ready" in body and not isinstance(body["ready"], bool)):
+                raise ServiceError(
+                    "repository index request contains unsupported fields", code="unsupported_field"
+                )
+            if controller is None:
+                raise ServiceError("model control is not configured", code="model_control_failure")
+            return controller.snapshot(
+                ready_only=bool(body.get("ready", False)), model_name=resolved_settings.model_id
+            )
+        except ServiceError as exc:
+            return repository_status(exc)
+
+    async def validate_model_operation(request: Request, model_name: str) -> dict[str, Any]:
+        require_control_key(request)
+        if model_name != resolved_settings.model_id:
+            raise ServiceError("unsupported model name", code="unsupported_model", status_code=404)
+        return await repository_body(request, allow_empty=True)
+
+    @app.post("/v2/repository/models/{model_name:path}/load", tags=["model-management"])
+    async def repository_load(request: Request, model_name: str) -> Response:
+        try:
+            body = await validate_model_operation(request, model_name)
+            if body != {}:
+                raise ServiceError(
+                    "load request body must be empty or {}", code="unsupported_field"
+                )
+            if controller is None:
+                raise ServiceError("model control is not configured", code="model_control_failure")
+            await controller.load()
+            return Response(status_code=200, content=b"")
+        except ServiceError as exc:
+            return repository_status(exc)
+
+    @app.post("/v2/repository/models/{model_name:path}/unload", tags=["model-management"])
+    async def repository_unload(request: Request, model_name: str) -> Response:
+        try:
+            body = await validate_model_operation(request, model_name)
+            if body != {}:
+                raise ServiceError(
+                    "unload request body must be empty or {}", code="unsupported_field"
+                )
+            if controller is None:
+                raise ServiceError("model control is not configured", code="model_control_failure")
+            await controller.unload()
+            return Response(status_code=200, content=b"")
+        except ServiceError as exc:
+            return repository_status(exc)
+
     @app.get("/readyz", tags=["health"])
     async def readyz(request: Request) -> JSONResponse:
         try:
@@ -259,7 +406,10 @@ def create_app(
             metrics.readiness.set(0)
             record_error(request, exc.code)
             return _error_response(request, exc)
-        state = readiness()
+        if controller is not None and not controller.is_ready:
+            state = ReadyState(False, controller.readiness_detail())
+        else:
+            state = readiness()
         request_id = _request_id_for(request)
         if state.ready:
             metrics.readiness.set(1)
@@ -410,7 +560,10 @@ def create_app(
                 width=image_rgb.shape[1],
             )
 
-        ready = readiness()
+        if controller is not None and not controller.is_ready:
+            ready = ReadyState(False, controller.readiness_detail())
+        else:
+            ready = readiness()
         if not ready.ready:
             metrics.readiness.set(0)
             raise ServiceError(ready.detail or "engine not ready", code="not_ready")

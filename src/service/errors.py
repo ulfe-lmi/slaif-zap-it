@@ -40,6 +40,9 @@ ERROR_STATUS_CODES: Mapping[str, int] = {
     "internal_error": 500,
     "service_busy": 503,
     "not_ready": 503,
+    "model_control_disabled": 503,
+    "model_control_busy": 409,
+    "model_control_failure": 500,
     "insufficient_memory": 507,
     "insufficient_shm": 507,
     "timeout": 504,
@@ -47,7 +50,15 @@ ERROR_STATUS_CODES: Mapping[str, int] = {
 
 #: Error codes that justify advertising a retry to well-behaved clients.
 RETRYABLE_ERROR_CODES = frozenset(
-    {"service_busy", "not_ready", "timeout", "insufficient_memory", "insufficient_shm"}
+    {
+        "service_busy",
+        "not_ready",
+        "model_control_disabled",
+        "model_control_busy",
+        "timeout",
+        "insufficient_memory",
+        "insufficient_shm",
+    }
 )
 
 
