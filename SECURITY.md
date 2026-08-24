@@ -60,10 +60,12 @@ preserving safe evidence.
 
 ## Tracked secret-baseline exceptions
 
-The committed detect-secrets baseline contains exactly five reviewed findings;
+The committed detect-secrets baseline contains exactly six reviewed findings;
 the enforcing tracked-tree scan compares path, detector type and hashed value
 and requires review for any addition, removal or path change:
 
+- `oap/reports/008-a-report.md`: one reviewed `Secret Keyword` finding in the
+  immutable sanitized OAP evidence.
 - `src/runtime/models.py`: three `Hex High Entropy String` findings for the
   three pinned model-revision hex strings at lines 32, 40 and 48.
 - `src/service/settings.py`: one `Secret Keyword` finding for the
