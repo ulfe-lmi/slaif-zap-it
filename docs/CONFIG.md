@@ -84,7 +84,7 @@ may still contain model-level options, but the service accepts only nested
 request rules. The operator pins the model, revision and FP16 dtype, loads it
 from the local cache, and selects residency automatically from physical total
 GPU memory. Cards below 24576 MiB swap SAM2+CLIP and BLIP3; cards at or above
-the boundary use the all-resident implementation pending 007-b. Nested mappings
+the boundary use the all-resident implementation pending 007-c. Nested mappings
 define rules:
 
 - Nested mappings define rules. Keys that match existing CLIP labels trigger the

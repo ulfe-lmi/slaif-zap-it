@@ -435,6 +435,7 @@ def create_app(
                     raise ServiceError("request deadline exceeded", code="timeout")
                 try:
                     inference_started = time.monotonic()
+                    metrics.reset_gpu_peaks()
                     outcome = await _run_engine_bounded(
                         engine,
                         loop=loop,

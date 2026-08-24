@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from contextlib import nullcontext
+from contextlib import AbstractContextManager
 from typing import Any, Callable, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
@@ -132,6 +134,7 @@ def run_single_image(
     class_labels: Sequence[str] = (),
     render_visualizations: Optional[bool] = None,
     service_safe_artifact_names: bool = False,
+    blip3_stage_context: Optional[Callable[[], AbstractContextManager[Any]]] = None,
 ) -> SingleImageOutcome:
     """Execute the single-image pipeline fully in memory.
 
@@ -318,13 +321,15 @@ def run_single_image(
                 blip3_params["max_new_tokens"] = int(blip3_state["max_new_tokens"])
 
         def _run_blip3():
-            return stages.run_blip3(
-                blip3_state,
-                blip3_params,
-                image_rgb,
-                verbosity=verbosity,
-                log_print_func=log,
-            )
+            stage_context = blip3_stage_context() if blip3_stage_context else nullcontext()
+            with stage_context:
+                return stages.run_blip3(
+                    blip3_state,
+                    blip3_params,
+                    image_rgb,
+                    verbosity=verbosity,
+                    log_print_func=log,
+                )
 
         staged_blip3_state, masked_after_clip, _blip3_meta = timed("stage.blip3", _run_blip3)
         if staged_blip3_state is not None:

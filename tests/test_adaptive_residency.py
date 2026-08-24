@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import sys
+import types
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from modules.verifier.blip3 import Blip3ResourceLimitError, _Blip3Filter
+from modules.verifier.blip3 import Blip3ResourceLimitError, _Blip3Filter, _Blip3QA
+from src.core import CoreConfig, MemoryArtifactSink, StageFunctions, run_single_image
 from src.runtime.device import (
     DeviceGuardError,
     inspect_physical_gpu,
@@ -22,13 +25,22 @@ from src.runtime.strategy import (
 
 
 class _Holder:
-    def __init__(self, name: str, events: list[str], *, estimated_gpu_bytes: int = 0) -> None:
+    def __init__(
+        self,
+        name: str,
+        events: list[str],
+        *,
+        device: str = "cpu",
+        estimated_gpu_bytes: int = 0,
+    ) -> None:
         self.name = name
         self.events = events
+        self.device = device
         self.estimated_gpu_bytes = estimated_gpu_bytes
 
     def to(self, device: str) -> "_Holder":
         self.events.append(f"{self.name}:{device}")
+        self.device = device
         return self
 
 
@@ -49,10 +61,15 @@ class _Cuda:
 def _registry(mode: str = SEQUENTIAL_RESIDENCY_MODE) -> tuple[ResidentRegistry, list[str]]:
     events: list[str] = []
     states = {
-        "segmenter": {"model": _Holder("sam2", events)},
-        "clip": {"model": _Holder("clip", events)},
+        "segmenter": {"model": _Holder("sam2", events, device="cuda:0")},
+        "clip": {"model": _Holder("clip", events, device="cuda:0")},
         "blip3": {
-            "model": _Holder("blip3", events, estimated_gpu_bytes=100),
+            "model": _Holder(
+                "blip3",
+                events,
+                device="cuda:0" if mode == ALL_RESIDENT_RESIDENCY_MODE else "cpu",
+                estimated_gpu_bytes=100,
+            ),
             "max_questions": 32,
             "max_new_tokens": 32,
         },
@@ -125,12 +142,49 @@ def test_masked_torch_facts_must_match_physical_capacity() -> None:
     )
     require_physical_gpu_match(visible, physical)
 
+    driver_adjusted = visible.__class__(
+        mode=visible.mode,
+        available=visible.available,
+        visible_count=visible.visible_count,
+        logical_index=visible.logical_index,
+        name=visible.name,
+        uuid=visible.uuid,
+        total_memory_mib=10_821,
+    )
+    require_physical_gpu_match(driver_adjusted, physical)
+
+    materially_different = visible.__class__(
+        mode=visible.mode,
+        available=visible.available,
+        visible_count=visible.visible_count,
+        logical_index=visible.logical_index,
+        name=visible.name,
+        uuid=visible.uuid,
+        total_memory_mib=9_000,
+    )
+    with pytest.raises(DeviceGuardError, match="capacity"):
+        require_physical_gpu_match(materially_different, physical)
+
 
 def test_sequential_transition_order_and_restoration() -> None:
     registry, events = _registry()
     registry.load()
+    observed: list[str] = []
+
+    def runner(_image, _config, *, blip3_stage_context, segmenter_state, clip_state, **kwargs):
+        del kwargs
+        assert segmenter_state["model"].device == "cuda:0"
+        assert clip_state["model"].device == "cuda:0"
+        observed.append("sam2_clip_gpu")
+        with blip3_stage_context():
+            assert segmenter_state["model"].device == "cpu"
+            assert clip_state["model"].device == "cpu"
+            assert registry.states()["blip3"]["model"].device == "cuda:0"
+            observed.append("blip3_gpu")
+            return registry.states()["blip3"]
+
     outcome = registry.execute(
-        lambda _image, _config, **kwargs: kwargs["blip3_state"],
+        runner,
         np.zeros((2, 2, 3), dtype=np.uint8),
         _config(),
         runner_kwargs={},
@@ -149,7 +203,85 @@ def test_sequential_transition_order_and_restoration() -> None:
     ]
     assert events.count("sam2:cuda:0") == 1
     assert events.count("clip:cuda:0") == 1
+    assert observed == ["sam2_clip_gpu", "blip3_gpu"]
+    assert registry.states()["segmenter"]["model"].device == "cuda:0"
+    assert registry.states()["clip"]["model"].device == "cuda:0"
+    assert registry.states()["blip3"]["model"].device == "cpu"
     assert registry.verdict().ready
+
+
+@pytest.mark.parametrize("clip_enabled", [False, True])
+def test_engine_stage_hook_keeps_baseline_gpu_until_blip3(clip_enabled: bool) -> None:
+    registry, _events = _registry()
+    registry.load()
+    calls: list[str] = []
+
+    config = CoreConfig(
+        alpha=0.5,
+        roi_val=None,
+        resize_val=None,
+        prep_debug=False,
+        clip_cfg={"labels": {"goat": "a goat"}} if clip_enabled else {},
+        blip3_cfg={"goat": {"question": "is this an animal?"}},
+        sam2_cfg={},
+        postsam2_cfg={},
+        vis_cfg={},
+    )
+
+    def fake_roi(image, _roi):
+        return image, (0, 0, image.shape[1], image.shape[0])
+
+    def fake_resize(image, _resize):
+        return image, {"mode": "native"}
+
+    def fake_sam2(state, _params, image, **_kwargs):
+        assert state["model"].device == "cuda:0"
+        calls.append("sam2_gpu")
+        return state, [{"segmentation": np.ones(image.shape[:2], dtype=bool)}], {}
+
+    def fake_filter(masks, *_args, **_kwargs):
+        return masks
+
+    def fake_clip(state, params, _image, **_kwargs):
+        assert state["model"].device == "cuda:0"
+        calls.append("clip_gpu")
+        for mask in params["masks"]:
+            mask["clip_label"] = "goat"
+            mask["clip_score"] = 0.9
+        return state, params["masks"], {}
+
+    def fake_blip3(state, params, _image, **_kwargs):
+        assert registry.states()["segmenter"]["model"].device == "cpu"
+        assert registry.states()["clip"]["model"].device == "cpu"
+        assert state["model"].device == "cuda:0"
+        calls.append("blip3_gpu")
+        return state, params["masks"], {"answers": ["yes"]}
+
+    stages = StageFunctions(
+        apply_roi=fake_roi,
+        resize_image=fake_resize,
+        run_sam2=fake_sam2,
+        filter_by_area_bbox=fake_filter,
+        run_clip=fake_clip,
+        run_blip3=fake_blip3,
+    )
+
+    def runner(image, cfg, **kwargs):
+        return run_single_image(image, cfg, stages=stages, **kwargs)
+
+    outcome = registry.execute(
+        runner,
+        np.zeros((2, 2, 3), dtype=np.uint8),
+        config,
+        runner_kwargs={"artifact_sink": MemoryArtifactSink(), "verbosity": 0},
+    )
+    assert len(outcome.result.objects) == 1
+    assert calls == (
+        ["sam2_gpu", "blip3_gpu"] if not clip_enabled else ["sam2_gpu", "clip_gpu", "blip3_gpu"]
+    )
+    assert registry.states()["segmenter"]["model"].device == "cuda:0"
+    assert registry.states()["clip"]["model"].device == "cuda:0"
+    assert registry.states()["blip3"]["model"].device == "cpu"
 
 
 def test_no_blip_request_and_all_resident_request_do_not_swap() -> None:
@@ -163,6 +295,36 @@ def test_no_blip_request_and_all_resident_request_do_not_swap() -> None:
             lambda *_args, **kwargs: kwargs.get("blip3_state"), None, config, runner_kwargs={}
         )
         assert registry.transition_events == []
+
+
+def test_pre_transition_failure_does_not_invent_blip3_move() -> None:
+    registry, _events = _registry()
+    registry.load()
+
+    def fail_before_blip(_image, _config, **_kwargs):
+        raise RuntimeError("SAM2 failed before the BLIP3 boundary")
+
+    with pytest.raises(RuntimeError, match="SAM2"):
+        registry.execute(fail_before_blip, None, _config(), runner_kwargs={})
+    assert registry.transition_events == []
+    assert registry.verdict().ready
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("BLIP3 failed"), TimeoutError("deadline")])
+def test_blip3_failure_or_timeout_restores_baseline(failure: Exception) -> None:
+    registry, _events = _registry()
+    registry.load()
+
+    def fail_in_blip(_image, _config, *, blip3_stage_context, **_kwargs):
+        with blip3_stage_context():
+            raise failure
+
+    with pytest.raises(type(failure), match=str(failure)):
+        registry.execute(fail_in_blip, None, _config(), runner_kwargs={})
+    assert registry.states()["segmenter"]["model"].device == "cuda:0"
+    assert registry.states()["clip"]["model"].device == "cuda:0"
+    assert registry.states()["blip3"]["model"].device == "cpu"
+    assert registry.verdict().ready
 
 
 def test_restore_failure_is_terminal_and_not_ready() -> None:
@@ -180,8 +342,13 @@ def test_restore_failure_is_terminal_and_not_ready() -> None:
         return original_to(device)
 
     clip.to = fail_on_restore
+
+    def run_and_enter(_image, _config, *, blip3_stage_context, **_kwargs):
+        with blip3_stage_context():
+            return "ok"
+
     with pytest.raises(LiveServiceError, match="restart"):
-        registry.execute(lambda *_args, **_kwargs: "ok", None, _config(), runner_kwargs={})
+        registry.execute(run_and_enter, None, _config(), runner_kwargs={})
     assert not registry.verdict().ready
     assert registry.error_type == "restoration_failure"
 
@@ -214,3 +381,83 @@ def test_blip3_rules_are_request_local_and_question_budget_is_preflighted() -> N
         filter_one.filter_masks(
             [dict(mask) for _ in range(33)], np.zeros((2, 2, 3), dtype=np.uint8), None, "image"
         )
+
+
+def test_blip3_loader_uses_torch_dtype_and_local_snapshots(monkeypatch) -> None:
+    calls: dict[str, list[dict]] = {"model": [], "tokenizer": [], "processor": []}
+
+    class FakeDevice:
+        type = "cpu"
+
+        def __str__(self) -> str:
+            return "cpu"
+
+    class FakeTorch:
+        float16 = "float16"
+        float32 = "float32"
+        bfloat16 = "bfloat16"
+        cuda = SimpleNamespace(is_available=lambda: False)
+
+        @staticmethod
+        def device(_name):
+            return FakeDevice()
+
+    class FakeModel:
+        def parameters(self):
+            return []
+
+        def to(self, **_kwargs):
+            return self
+
+        def eval(self):
+            return self
+
+    class FakeModelLoader:
+        @classmethod
+        def from_pretrained(cls, _model_name, **kwargs):
+            calls["model"].append(kwargs)
+            return FakeModel()
+
+    class FakeTokenizer:
+        pad_token_id = 0
+
+    class FakeTokenizerLoader:
+        @classmethod
+        def from_pretrained(cls, _model_name, **kwargs):
+            calls["tokenizer"].append(kwargs)
+            return FakeTokenizer()
+
+    class FakeProcessorLoader:
+        @classmethod
+        def from_pretrained(cls, _model_name, **kwargs):
+            calls["processor"].append(kwargs)
+            return object()
+
+    class FakeStoppingCriteria:
+        pass
+
+    fake_transformers = types.ModuleType("transformers")
+    fake_transformers.AutoImageProcessor = FakeProcessorLoader
+    fake_transformers.AutoModelForVision2Seq = FakeModelLoader
+    fake_transformers.AutoTokenizer = FakeTokenizerLoader
+    fake_transformers.StoppingCriteria = FakeStoppingCriteria
+    monkeypatch.setitem(sys.modules, "torch", FakeTorch)
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+    monkeypatch.setattr("modules.verifier.blip3._install_safe_to_for_meta", lambda: None)
+
+    _Blip3QA(
+        {
+            "model_name": "pinned-model",
+            "revision": "pinned-revision",
+            "dtype": "float16",
+        },
+        device="cpu",
+        local_files_only=True,
+    )
+
+    model_kwargs = calls["model"][0]
+    assert model_kwargs["torch_dtype"] == "float16"
+    assert "dtype" not in model_kwargs
+    assert model_kwargs["local_files_only"] is True
+    assert calls["tokenizer"][0]["local_files_only"] is True
+    assert calls["processor"][0]["local_files_only"] is True

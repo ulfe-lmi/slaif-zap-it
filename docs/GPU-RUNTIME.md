@@ -54,8 +54,8 @@ only processes/workspaces they created.
 ## Objective 003 qualification
 
 The live qualification record, pinned environment, model revisions and measured
-tables are in [runtime.md](runtime.md) and the immutable 007-a report. The
-11-GB sequential profile is the only live-qualified BLIP3 mode in 007-a; the
-all-resident implementation is present but remains unqualified until 007-b on
+tables are in [runtime.md](runtime.md) and the immutable 007-b report. The
+11-GB sequential profile is the only live-qualified BLIP3 mode in 007-b; the
+all-resident implementation is present but remains unqualified until 007-c on
 an exclusive >=24-GB GPU. This document remains the short launch/isolation law;
 it does not claim that a service is running.

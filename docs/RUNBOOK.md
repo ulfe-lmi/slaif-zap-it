@@ -5,7 +5,7 @@ It binds only to `127.0.0.1`, exposes physical GPU1 as logical `cuda:0`, and
 automatically selects the capacity-based residency profile. On the observed
 11-GB card BLIP3 is host-resident and swaps with SAM2+CLIP for each BLIP3
 request. The >=24-GB all-resident implementation is not live-qualified until
-007-b. This is not a LAN, public, customer-data, or release procedure.
+007-c. This is not a LAN, public, customer-data, or release procedure.
 
 ## Before every activation
 
@@ -224,6 +224,8 @@ operator/model controls, independently crops both goat images to exactly the
 middle 50 percent in memory, and emits only sanitized aliases/digests/
 dimensions/statuses/timings/counts. Its `--benchmark` mode sends exactly ten
 BLIP3-enabled L3 JSON requests in A,B,A,B,A,B,A,B,A,B order and reports
-first/minimum/median/nearest-rank-p95/maximum latency statistics. It never
+stage execution, transition/restore timings, GPU peak/free memory, host RSS,
+repeatability and first/minimum/median/nearest-rank-p95/maximum latency statistics.
+It never
 prints or persists the source YAML, crop, prompts, labels, answers, response
 bodies or bearer key.

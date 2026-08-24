@@ -17,7 +17,7 @@ module or helper is not evidence that the live service produces its output.
 | SAM2 candidate masks and quality fields | Candidate masks are filtered and ordered | Public L2 fields when produced; bounded L3 counts/status |
 | Post-SAM2 area/bbox filter | Removes candidates before optional classification | Public L3 candidate counts/status |
 | CLIP labels, scores and class map | Request labels refresh resident CLIP prompts | Public L0 class mapping, L2 label/score, L3 provenance |
-| BLIP3 verification | Pinned FP16 holder; low-card service path swaps SAM2+CLIP and BLIP3, while >=24-GB path keeps all three resident | Public L2/L3 fields when executed; >=24-GB qualification deferred to 007-b |
+| BLIP3 verification | Pinned FP16 holder; low-card service path swaps SAM2+CLIP and BLIP3, while >=24-GB path keeps all three resident | Public L2/L3 fields when executed; >=24-GB qualification deferred to 007-c |
 | Geometry Canny/Hough helpers | Helpers and tests exist, but canonical core does not call them; helpers may write TSV/debug files | Unsupported/dead for service; legacy compatibility only where explicitly wired |
 | `annotated`/`alpha-overlay` in-memory streams | Bounded RGB overlays; service executes them only at L3 | Bounded operator/service diagnostic |
 | Panoptic/Detectron2 renderer | Detectron2 is absent and renderer is not a live capability | Unsupported for service; legacy helper only |

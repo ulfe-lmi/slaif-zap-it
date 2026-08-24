@@ -12,7 +12,7 @@ The CPU contract is tested with `FakeEngine`; the operator launcher additionally
 selects the adaptive pinned SAM2/CLIP/BLIP3 residency profile on freshly
 verified physical GPU1. Cards below 24576 MiB use serialized host-RAM swapping;
 cards at or above the boundary use the implemented all-resident path, which is
-not live-qualified until 007-b. No persistent listener is started by the package
+not live-qualified until 007-c. No persistent listener is started by the package
 factory.
 
 ## Endpoints
