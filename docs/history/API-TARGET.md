@@ -1,8 +1,11 @@
-# API target
+# Historical record: original API target
+
+> The target is implemented. This file is preserved for design provenance, not
+> as binding API documentation. Use [docs/API.md](../API.md).
 
 > Status (objective 005-a): the v1 contract below is implemented, bounded and
 > CPU-tested with a fake engine; see
-> [docs/API.md](API.md) for the binding wire documentation. This file remains
+> [docs/API.md](../API.md) for the binding wire documentation. This file remains
 > as the original target statement.
 
 ```text

@@ -1,9 +1,8 @@
 # ZAP-IT local service datasheet
 
-Status: bounded unpublished 0.1.0 release-candidate evidence for Objective
-006-a. This is
-not a production SLA, public deployment approval, or claim of leak-proof
-operation.
+Status: bounded evidence for the unpublished `0.1.0` local research candidate.
+This is not a production SLA, public-deployment approval, accuracy guarantee,
+or claim of leak-proof operation.
 
 ## Purpose and non-goals
 
@@ -34,10 +33,9 @@ overlap. The identity PNG remains a documented single-valued projection.
 
 ROI/resize, SAM2 candidate filtering, CLIP label refresh, deterministic ordering,
 YOLO, identity PNG, annotated overlays and L3 RLE are supported. BLIP3 rules are
-supported with a pinned FP16 holder: on cards below 24576 MiB the service swaps
-SAM2+CLIP and BLIP3, while cards at or above the boundary select all-resident.
-The 11-GB sequential path is the only live-qualified BLIP3 path in 007-b;
-all-resident qualification is deferred to 007-c. Geometry and panoptic remain
+supported with a pinned FP16 holder. The live-qualified service swaps SAM2+CLIP
+and BLIP3 at the BLIP3 stage boundary. The 11 GB sequential path is the only
+live-qualified BLIP3 residency; all-resident qualification is separate. Geometry and panoptic remain
 unsupported as documented in [OUTPUT-PARITY.md](OUTPUT-PARITY.md).
 
 ## Limits (operator startup settings)
@@ -85,31 +83,31 @@ prepared raw bytes directly. RLE and every serialization loop check the absolute
 
 ## Measured evidence
 
-The accepted Objective-004 128×128 synthetic baseline measured approximately
+The initial 128×128 synthetic service baseline measured approximately
 434–437 ms steady request latency, approximately 0.9 s first request,
 approximately 1,984,604 KiB process RSS, approximately 1,849 MiB GPU1 ready and
 5,749 MiB during inference, returning to approximately 6 MiB after stop. The
-Objective-005 bounded 32-request table, live RLE/metrics/recovery evidence and
+The bounded 32-request table, live RLE/metrics/recovery evidence, and
 final GPU/process snapshots are published in `oap/reports/005-a-report.md`.
 These measurements are bounded fixture evidence, not an SLA or soak test.
 
-Objective 007-b adds a real low-card BLIP3 qualification table and ten-request
+The sequential qualification adds a real BLIP3 gate and ten-request
 central-crop benchmark to its immutable report. It records startup, transition,
 restore, latency and memory evidence without committing goat bytes or response
 content. The >=24-GB all-resident path is implemented and CPU/fake-tested but
-is intentionally not claimed as live-qualified until 007-c.
+is intentionally not claimed as live-qualified.
 
-## Objective 006-a fixture and release constraint
+## Academic fixture policy
 
-**NONREDISTRIBUTABLE — local academic E2E only; excluded from packages/release
-fixtures.** The existing goat academic image/config assets are exercised only as
-in-memory central-50% crops under sanitized aliases. Their source bytes, crop
-bytes, prompts, labels and raw responses are not copied into CI, packages,
-reports or generated evidence. This is semantic/state-isolation regression
-evidence, not an accuracy benchmark. The opt-in
-scripts/smoke_local_goats.py harness accepts only ignored local files and
-performs A/B/A L2 JSON, L3 JSON and L3 ZIP calls. Public history remains a
-human-gated CRIT-0001 release blocker.
+The repository owner confirmed redistribution rights for the two goat images
+and two YAML files; CRIT-0001 is accepted. The files nevertheless remain
+ignored, operator-supplied academic inputs and are excluded from packages and
+release artifacts as defense in depth.
+
+The harness uses in-memory central-50% crops under sanitized aliases. Source
+bytes, crop bytes, prompts, labels, and raw responses are not copied into CI,
+packages, reports, or generated evidence. This is semantic/state-isolation and
+resource evidence, not an accuracy benchmark.
 
 ## Metrics and privacy
 
@@ -129,8 +127,8 @@ cleanup. The current resident service has no request persistence.
 
 ## Deployment prerequisites and limitations
 
-Use the pinned GPU lock, freshly verify physical GPU1 UUID/process/memory state,
-set `CUDA_DEVICE_ORDER=PCI_BUS_ID` and `CUDA_VISIBLE_DEVICES=1`, select a
-verified-unused loopback port, and keep the service stopped after evidence
-collection. Confirm GPU0 is unchanged. Objective 006 governs packaging,
-gateway/auth integration and release readiness.
+Use the pinned GPU lock, freshly verify the selected physical GPU's
+UUID/process/memory state, set `CUDA_DEVICE_ORDER=PCI_BUS_ID` and the matching
+`CUDA_VISIBLE_DEVICES`, and select a verified-unused loopback port. Protected
+GPUs must remain unchanged. Gateway integration, LAN exposure, and final release
+remain separately governed.

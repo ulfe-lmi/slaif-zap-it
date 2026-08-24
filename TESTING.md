@@ -1,8 +1,19 @@
-# Verification law
+# Testing and verification
 
-Exact statuses only: `PASSED|FAILED|SKIPPED|NOT RUN|BLOCKED|PENDING|MISSING`.
-Skipped/pending/unavailable is never pass. Never weaken/delete tests or over-mock
-the behavior under test to finish an order.
+Use exact evidence statuses: `PASSED`, `FAILED`, `SKIPPED`, `NOT RUN`,
+`BLOCKED`, `PENDING`, or `MISSING`. A skipped or unavailable check is not a
+pass. Tests must exercise the behavior they claim rather than replacing it with
+an unrelated mock.
+
+## Canonical CPU checks
+
+```bash
+.venv/bin/pytest -q --cov=src --cov=modules --cov-report=term-missing
+.venv/bin/ruff format --check .
+.venv/bin/ruff check .
+.venv/bin/python -m compileall -q src modules scripts tests
+.venv/bin/python -m build --wheel --sdist
+```
 
 ## Tiers
 
@@ -35,7 +46,7 @@ an explicit operational order creates and secures it.
 - one-image-only and config-only multipart cardinality;
 - no persistent files after success/error/cancel;
 - model/request state isolation across repeated/concurrent calls;
-- physical GPU1 visibility and no GPU0 allocation in live tier.
+- selected physical GPU visibility and no protected-GPU allocation in live tier;
 - bounded artifact count/per-item/total/base64/ZIP budget and no-truncation checks;
 - visualization execution policy, geometry pre-inference rejection, metrics
   privacy/cardinality and A/B/A state-isolation checks;

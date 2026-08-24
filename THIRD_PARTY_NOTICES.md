@@ -3,7 +3,7 @@
 ZAP-IT 0.1.0 is an unpublished release candidate and is licensed under the MIT
 License (see [LICENSE](LICENSE)). It builds on
 the following third-party software and models. This file records pointers for
-license review; it is not legal advice. Objective 003-a uses the pinned
+license review; it is not legal advice. The qualified runtime uses the pinned
 repo-owned pip lock in `requirements-gpu-cu124.lock`; model weights remain
 operator cache assets and are never committed or redistributed.
 
@@ -20,7 +20,7 @@ operator cache assets and are never committed or redistributed.
 | prometheus-client 0.21.1 | metrics | Apache-2.0 |
 | pytest, pytest-cov, coverage, ruff, build, detect-secrets | CPU/release tooling | MIT / MIT / Apache-2.0 / MIT / MIT / Apache-2.0 |
 
-### GPU/runtime stack (Objective 003-a pip lock, operator-managed)
+### GPU/runtime stack (operator-managed lock)
 
 | Package | Role | License pointer |
 | --- | --- | --- |
@@ -44,11 +44,12 @@ never committed to this repository.
 | `openai/clip-vit-base-patch32` @ `3d74acf9…` | `modules/classifier/clip.py` | Pinned OpenAI research model card has no SPDX field and marks deployed use out of scope; do not treat it as a commercial/deployment license. |
 | `Salesforce/xgen-mm-phi3-mini-instruct-r-v1` @ `1d91d356…` | `modules/verifier/blip3.py` | HF model card and `LICENSE.txt` identify CC-BY-NC-4.0; `trust_remote_code` audit is in [runtime.md](docs/runtime.md). |
 
-Model revisions and the remote-code file hashes are pinned for Objective 003-a.
-The BLIP3 profile remains rejected on the verified 11 GiB GPU; pinning does not
-authorize client-selected model loading or commercial redistribution.
+Model revisions and the reviewed remote-code files are pinned. BLIP3 is
+live-qualified on the 11 GB host through sequential host-RAM/GPU residency;
+pinning and successful execution do not authorize client-selected model loading
+or commercial redistribution.
 
-## Distribution and unresolved rights
+## Distribution and rights status
 
 demos/LICENSE.txt records a license pointer for demo imagery, but the release
 allowlist excludes every demo and repository media payload and does not infer
@@ -57,9 +58,12 @@ project-owned, yet they are also excluded from release artifacts pending
 independent inventory. The full path inventory and human gates are in
 docs/RELEASE-GATE-INVENTORY.md.
 
-The four goat YAML/image paths are nonredistributable local academic inputs.
-They are ignored and removed from the current tracked tip by Objective 006-a,
-but their public history is not remediated; CRIT-0001 is OPEN/BLOCKING. No model
-license or this notice authorizes commercial/deployed model use or weight
-redistribution. Human/legal clearance is required before a final package or
-source release.
+The repository owner has explicitly confirmed redistribution rights for
+`configs/goats.yaml`, `configs/goats2.yaml`, `demos/goats/goats1.jpg`, and
+`demos/goats/goats2.jpg`; CRIT-0001 is human `ACCEPTED`. The files remain absent
+from the current tracked tip and release artifacts as defense in depth, while
+the local academic harness may use operator-held copies.
+
+No model license or this notice authorizes commercial/deployed model use or
+weight redistribution. Model-use and remaining media/release review are
+separate from the cleared goat-fixture adjudication.

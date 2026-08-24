@@ -1,4 +1,9 @@
-# ZAP-IT baseline characterization (objective 000-a)
+# Historical record: ZAP-IT baseline characterization
+
+> Recorded for Objective 000-a on 2026-08-23. This document describes the
+> starting test/package state and is not current product guidance. See the
+> [documentation index](../README.md) and [TESTING.md](../../TESTING.md) for
+> current instructions.
 
 Status: recorded 2026-08-23 from the live tree at `main` @
 `12257a6c31ad654d1b7114e50cf9679fcc2fb260`. This file documents what the CPU
@@ -70,7 +75,7 @@ CUDA stays unavailable, proving the suite never reaches GPU or network code.
 
 - `pyproject.toml` (setuptools) packages `src`, `modules.*`; dev extra installs
   pytest/ruff/coverage/build only — never torch/SAM2/detectron2/transformers.
-- Canonical commands are documented in [CONTRIBUTING.md](../CONTRIBUTING.md).
+- Canonical commands are documented in [CONTRIBUTING.md](../../CONTRIBUTING.md).
 - Branch coverage on `src` + `modules` measured 67% (CPython 3.12); gate set to
   64% as a non-regressive ratchet (see `pyproject.toml`).
 
@@ -81,5 +86,5 @@ semantics are future objectives tracked by the modernization plan
 (see [MODERNIZATION-TARGET.md](MODERNIZATION-TARGET.md)).
 
 Objective 003-a runtime qualification is recorded separately in
-[runtime.md](runtime.md); it does not alter the CPU-only baseline or make GPU
+[runtime.md](../runtime.md); it does not alter the CPU-only baseline or make GPU
 behavior part of public CI.

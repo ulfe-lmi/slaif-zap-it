@@ -1,4 +1,7 @@
-# Bootstrap sources and adaptation
+# Historical record: bootstrap sources and adaptation
+
+> Prepared before modernization began. Repository and tool descriptions below
+> are historical and must not be used as current operational instructions.
 
 Prepared 2026-08-22 from:
 
