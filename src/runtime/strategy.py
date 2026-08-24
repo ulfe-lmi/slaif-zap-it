@@ -7,9 +7,12 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 __all__ = [
+    "ALL_RESIDENT_RESIDENCY_MODE",
     "PROFILE_NAMES",
+    "SEQUENTIAL_RESIDENCY_MODE",
     "SUPPORTED_RESIDENT_PROFILES",
     "SUPPORTED_RESIDENT_STRATEGY",
+    "select_residency_mode",
     "RuntimePolicy",
     "RuntimeReadiness",
     "UnsupportedProfileError",
@@ -17,18 +20,18 @@ __all__ = [
 
 PROFILE_NAMES = (
     "sam2",
-    "clip",
-    "blip3",
     "sam2_clip",
     "sam2_blip3",
     "sam2_clip_blip3",
 )
 
-# Objective 003 measured this exact resident combination on the target card.
-# Keep it as an explicit operator invariant for the live launcher; a request
-# cannot select a different strategy or model residency policy.
-SUPPORTED_RESIDENT_STRATEGY = "sam2_clip_resident_blip3_rejected"
-SUPPORTED_RESIDENT_PROFILES = ("sam2", "clip", "sam2_clip")
+SEQUENTIAL_RESIDENCY_MODE = "sam2_clip_gpu_blip3_cpu_swap"
+ALL_RESIDENT_RESIDENCY_MODE = "sam2_clip_blip3_gpu_resident"
+# Compatibility name retained for callers that import the old constant.  It
+# now describes the selected operator mode, never a BLIP3 rejection policy.
+SUPPORTED_RESIDENT_STRATEGY = SEQUENTIAL_RESIDENCY_MODE
+SUPPORTED_RESIDENT_PROFILES = ("sam2", "sam2_clip", "sam2_blip3", "sam2_clip_blip3")
+RESIDENCY_BOUNDARY_MIB = 24 * 1024
 
 
 class UnsupportedProfileError(ValueError):
@@ -45,6 +48,16 @@ class RuntimeReadiness:
 
 def _csv(value: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
+def select_residency_mode(total_memory_mib: int) -> str:
+    """Select residency from physical total capacity, not current free memory."""
+    total = int(total_memory_mib)
+    if total <= 0:
+        raise ValueError("physical GPU total memory must be positive")
+    return (
+        SEQUENTIAL_RESIDENCY_MODE if total < RESIDENCY_BOUNDARY_MIB else ALL_RESIDENT_RESIDENCY_MODE
+    )
 
 
 @dataclass(frozen=True)
@@ -78,11 +91,11 @@ class RuntimePolicy:
         model_registry_ready: bool = False,
     ) -> "RuntimePolicy":
         env = os.environ if environ is None else environ
-        strategy = env.get(
-            "SLAIF_ZAP_IT_RESOURCE_STRATEGY",
-            "sam2_clip_resident_blip3_rejected",
-        )
-        profiles_raw = env.get("SLAIF_ZAP_IT_SUPPORTED_PROFILES", "sam2,clip,sam2_clip")
+        # Residency is derived from live physical capacity.  Deliberately do
+        # not read the legacy resource-strategy/profile override variables:
+        # they are operator policy, not a client or environment selector.
+        strategy = SEQUENTIAL_RESIDENCY_MODE
+        profiles_raw = ",".join(SUPPORTED_RESIDENT_PROFILES)
         strict_raw = env.get("SLAIF_ZAP_IT_STRICT_GPU", "1").strip().lower()
         strict = strict_raw not in {"0", "false", "no", "off"}
         uuid = expected_gpu_uuid or env.get("SLAIF_ZAP_IT_EXPECTED_GPU_UUID") or None
@@ -93,6 +106,26 @@ class RuntimePolicy:
             expected_gpu_uuid=uuid,
             physical_gpu_index=physical,
             strict_gpu=strict,
+            model_registry_ready=model_registry_ready,
+        )
+
+    @classmethod
+    def for_capacity(
+        cls,
+        total_memory_mib: int,
+        *,
+        expected_gpu_uuid: str | None,
+        physical_gpu_index: int = 1,
+        strict_gpu: bool = True,
+        model_registry_ready: bool = False,
+    ) -> "RuntimePolicy":
+        """Build the immutable policy from fresh physical-device evidence."""
+        return cls(
+            strategy=select_residency_mode(total_memory_mib),
+            supported_profiles=SUPPORTED_RESIDENT_PROFILES,
+            expected_gpu_uuid=expected_gpu_uuid,
+            physical_gpu_index=physical_gpu_index,
+            strict_gpu=strict_gpu,
             model_registry_ready=model_registry_ready,
         )
 

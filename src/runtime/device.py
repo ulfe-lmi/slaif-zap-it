@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 __all__ = [
     "DeviceGuardError",
     "DeviceReport",
+    "PhysicalGpuEvidence",
+    "inspect_physical_gpu",
+    "require_physical_gpu_match",
     "inspect_visible_device",
     "launch_environment",
     "require_launch_environment",
@@ -30,6 +34,114 @@ class DeviceReport:
     name: str | None
     uuid: str | None
     total_memory_mib: int | None
+
+
+@dataclass(frozen=True)
+class PhysicalGpuEvidence:
+    """Sanitized physical-card observation from a targeted nvidia-smi query."""
+
+    physical_index: int
+    uuid: str
+    pci_bus_id: str
+    name: str
+    total_memory_mib: int
+    used_memory_mib: int
+    free_memory_mib: int
+    compute_pids: tuple[int, ...] = ()
+
+
+def _csv_fields(stdout: str) -> list[str]:
+    line = next((item.strip() for item in stdout.splitlines() if item.strip()), "")
+    return [item.strip() for item in line.split(",")]
+
+
+def _run_smi(command: list[str], nvidia_smi: str) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run([nvidia_smi, *command], check=False, capture_output=True, text=True)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise DeviceGuardError("nvidia-smi device evidence is unavailable") from exc
+
+
+def inspect_physical_gpu(
+    physical_index: int = 1,
+    *,
+    expected_uuid: str | None,
+    nvidia_smi: str = "nvidia-smi",
+    require_idle: bool = True,
+) -> PhysicalGpuEvidence:
+    """Observe exactly one physical GPU and fail closed on ambiguity/occupancy."""
+    if physical_index < 0:
+        raise ValueError("physical GPU index must be non-negative")
+    result = _run_smi(
+        [
+            "--id",
+            str(physical_index),
+            "--query-gpu=index,uuid,pci.bus_id,name,memory.total,memory.used,memory.free",
+            "--format=csv,noheader,nounits",
+        ],
+        nvidia_smi,
+    )
+    if result.returncode != 0:
+        raise DeviceGuardError("targeted physical GPU capacity evidence failed")
+    fields = _csv_fields(result.stdout)
+    if len(fields) != 7:
+        raise DeviceGuardError("targeted physical GPU capacity evidence was ambiguous")
+    try:
+        index = int(fields[0])
+        total = int(float(fields[4]))
+        used = int(float(fields[5]))
+        free = int(float(fields[6]))
+    except (TypeError, ValueError) as exc:
+        raise DeviceGuardError("targeted physical GPU capacity evidence was invalid") from exc
+    uuid = _normalize_uuid(fields[1])
+    if uuid is None or index != physical_index:
+        raise DeviceGuardError("targeted physical GPU index/UUID evidence disagrees")
+    normalized_expected = _normalize_uuid(expected_uuid)
+    if normalized_expected and uuid != normalized_expected:
+        raise DeviceGuardError("physical GPU UUID does not match the operator pin")
+    if total <= 0 or used < 0 or free < 0:
+        raise DeviceGuardError("targeted physical GPU memory evidence was invalid")
+
+    processes = _run_smi(
+        [
+            "--id",
+            str(physical_index),
+            "--query-compute-apps=pid",
+            "--format=csv,noheader,nounits",
+        ],
+        nvidia_smi,
+    )
+    if processes.returncode != 0:
+        raise DeviceGuardError("targeted physical GPU process evidence failed")
+    pids: list[int] = []
+    for raw in processes.stdout.splitlines():
+        raw = raw.strip()
+        if not raw or raw.lower().startswith("no running"):
+            continue
+        try:
+            pids.append(int(raw.split(")[", 1)[0].strip()))
+        except ValueError as exc:
+            raise DeviceGuardError("targeted physical GPU process evidence was invalid") from exc
+    if require_idle and pids:
+        raise DeviceGuardError("target physical GPU has an unrelated compute process")
+    return PhysicalGpuEvidence(
+        physical_index=index,
+        uuid=uuid,
+        pci_bus_id=fields[2],
+        name=fields[3],
+        total_memory_mib=total,
+        used_memory_mib=used,
+        free_memory_mib=free,
+        compute_pids=tuple(sorted(set(pids))),
+    )
+
+
+def require_physical_gpu_match(visible: DeviceReport, physical: PhysicalGpuEvidence) -> None:
+    """Cross-check masked Torch facts against the targeted physical observation."""
+    if visible.mode != "gpu" or visible.uuid != physical.uuid:
+        raise DeviceGuardError("masked CUDA UUID does not match physical GPU evidence")
+    if visible.total_memory_mib is None or visible.total_memory_mib != physical.total_memory_mib:
+        raise DeviceGuardError("masked CUDA capacity does not match physical GPU evidence")
 
 
 def launch_environment(physical_gpu_index: int = 1) -> dict[str, str]:

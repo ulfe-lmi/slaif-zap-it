@@ -40,6 +40,7 @@ __all__ = [
     "MAX_COLLECTION_ITEMS",
     "MAX_SCALAR_CHARS",
     "DEFAULT_ALPHA",
+    "MAX_BLIP3_QUESTIONS",
     "ValidatedConfig",
     "parse_hostile_config",
 ]
@@ -49,6 +50,7 @@ MAX_CONFIG_NODES = 10_000
 MAX_COLLECTION_ITEMS = 512
 MAX_SCALAR_CHARS = 16_384
 DEFAULT_ALPHA = 0.6
+MAX_BLIP3_QUESTIONS = 32
 
 _FORBIDDEN_KEYS = frozenset(
     {
@@ -334,6 +336,45 @@ def _validate_visualization_policy(mapping: Mapping[str, Any], *, max_streams: i
                     )
 
 
+def _validate_blip3_policy(value: Any) -> None:
+    """Allow only request rules; model/runtime controls are operator-owned."""
+    if value in (None, {}):
+        return
+    if not isinstance(value, Mapping):
+        raise ServiceError("blip3 must be a mapping of verification rules", code="invalid_config")
+    if len(value) > MAX_BLIP3_QUESTIONS:
+        raise ServiceError("BLIP3 question rule limit exceeded", code="response_too_large")
+    allowed = {"question", "trueresult", "falseresult", "newcategory", "debug"}
+    for rule_name, rule in value.items():
+        if not isinstance(rule_name, str):
+            raise ServiceError("BLIP3 rule names must be strings", code="invalid_config")
+        if rule_name.startswith("any,"):
+            try:
+                float(rule_name.split(",", 1)[1])
+            except ValueError as exc:
+                raise ServiceError(
+                    "BLIP3 any rule threshold is invalid", code="invalid_config"
+                ) from exc
+        if not isinstance(rule, Mapping):
+            raise ServiceError(
+                "BLIP3 rules must contain only nested mappings", code="invalid_config"
+            )
+        unknown = sorted(set(rule).difference(allowed))
+        if unknown:
+            raise ServiceError(
+                "unsupported BLIP3 rule field(s): " + ", ".join(map(str, unknown)),
+                code="unsupported_field",
+            )
+        question = rule.get("question")
+        if not isinstance(question, str) or not question.strip():
+            raise ServiceError("BLIP3 rules require a question", code="invalid_config")
+        for field_name in ("trueresult", "falseresult", "newcategory"):
+            if field_name in rule and not isinstance(rule[field_name], str):
+                raise ServiceError(f"BLIP3 {field_name} must be a string", code="invalid_config")
+        if "debug" in rule and not isinstance(rule["debug"], bool):
+            raise ServiceError("BLIP3 debug must be a boolean", code="invalid_config")
+
+
 @dataclass(frozen=True)
 class ValidatedConfig:
     """Sanitized effective configuration plus honest provenance warnings."""
@@ -373,6 +414,7 @@ def parse_hostile_config(
     if vis_cfg is not None and not isinstance(vis_cfg, Mapping):
         raise ServiceError("visualization must be a mapping", code="invalid_config")
     _validate_visualization_policy(vis_cfg or {}, max_streams=max_visualization_streams)
+    _validate_blip3_policy(effective.get("blip3"))
 
     vis_alpha = vis_cfg.get("alpha") if isinstance(vis_cfg, Mapping) else None
     alpha = float(vis_alpha) if isinstance(vis_alpha, (int, float)) else DEFAULT_ALPHA

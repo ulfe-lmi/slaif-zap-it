@@ -122,5 +122,10 @@ def test_live_engine_uses_resident_states_and_logical_cuda0():
 
 
 def test_operator_profile_constants_are_the_qualified_strategy():
-    assert SUPPORTED_RESIDENT_STRATEGY == "sam2_clip_resident_blip3_rejected"
-    assert SUPPORTED_RESIDENT_PROFILES == ("sam2", "clip", "sam2_clip")
+    assert SUPPORTED_RESIDENT_STRATEGY == "sam2_clip_gpu_blip3_cpu_swap"
+    assert SUPPORTED_RESIDENT_PROFILES == (
+        "sam2",
+        "sam2_clip",
+        "sam2_blip3",
+        "sam2_clip_blip3",
+    )

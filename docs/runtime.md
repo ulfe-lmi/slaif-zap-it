@@ -19,8 +19,7 @@ export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export CUDA_VISIBLE_DEVICES=1
 export SLAIF_ZAP_IT_EXPECTED_GPU_UUID=GPU-c457dbaf-991c-dc23-c781-0dc030776dd8
 export SLAIF_ZAP_IT_STRICT_GPU=1
-export SLAIF_ZAP_IT_RESOURCE_STRATEGY=sam2_clip_resident_blip3_rejected
-export SLAIF_ZAP_IT_SUPPORTED_PROFILES=sam2,clip,sam2_clip
+# Residency is selected automatically from fresh physical total-memory evidence.
 
 .venv-gpu/bin/python scripts/qualify_gpu_runtime.py --download
 .venv-gpu/bin/python scripts/qualify_gpu_runtime.py
@@ -105,7 +104,8 @@ language modules and tensor utilities; it found no client-controlled import,
 URL, command or device selection in the service boundary. The service YAML
 validator rejects model IDs, revisions, paths, cache roots, devices,
 `trust_remote_code`, commands and environment settings. The operator policy
-rejects BLIP3 profiles before engine invocation. Thus remote code is pinned and
+loads the pinned BLIP3 holder locally at startup and keeps its model/runtime
+controls outside the request boundary. Thus remote code is pinned and
 operator-only; it is not loadable or selectable by a request.
 
 ## Measurements
@@ -135,21 +135,29 @@ These are stability-shape checks, not an accuracy claim.
 
 ## Selected resource strategy and readiness
 
-The measured strategy is `sam2_clip_resident_blip3_rejected`:
+The Objective 007-a policy is automatic and capacity-based:
 
-- supported operator profiles: `sam2`, `clip`, and resident `sam2_clip`;
-- BLIP3-only and SAM2+CLIP+BLIP3 profiles are unsupported and rejected before
-  inference;
+- `<24576 MiB`: `sam2_clip_gpu_blip3_cpu_swap`, with host-resident pinned FP16
+  BLIP3 and serialized SAM2+CLIP/BLIP3 transitions;
+- `>=24576 MiB`: `sam2_clip_blip3_gpu_resident`, implemented and fake-tested but
+  not live-qualified until 007-b;
+- supported profiles are `sam2`, `sam2_clip`, `sam2_blip3` and
+  `sam2_clip_blip3`; there is no standalone service profile that skips SAM2;
 - one process, one worker and one active GPU request remain the service law;
-- no CPU spill or GPU0 fallback is permitted;
-- BLIP3 may not be enabled by a later request without a new measured order.
+- request YAML may provide only bounded nested BLIP3 rules (32 questions and 32
+  generated tokens per question are fixed service limits).
 
-`src.runtime.RuntimePolicy.from_environment()` is operator-only startup state;
-`src.runtime.make_readiness_provider()` joins it to the strict device guard.
-`src.service.create_app(..., runtime_policy=policy)` validates the normalized
-request configuration before readiness/engine execution and returns stable
-`unsupported_profile` for rejected combinations. The request YAML cannot set
-the strategy, supported profiles, model revision, device or readiness state.
+`src.runtime.RuntimePolicy.for_capacity()` consumes the UUID-matched physical
+total-memory observation. `src.runtime.make_readiness_provider()` joins it to
+the strict device guard, and restoration failure leaves readiness false until
+operator restart. The request YAML cannot set the strategy, model revision,
+dtype, device or readiness state.
+
+The 007-a live evidence is recorded in its immutable OAP report: BLIP3-alone
+FP16 load/inference, startup residency, no-BLIP smoke, ten alternating
+central-crop requests, transition/restore timings, memory stability, host-RAM
+cost, cleanup and protected-GPU evidence. This document does not claim the
+>=24-GB profile is qualified.
 
 ## Shared memory and port qualification
 

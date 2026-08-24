@@ -17,7 +17,7 @@ module or helper is not evidence that the live service produces its output.
 | SAM2 candidate masks and quality fields | Candidate masks are filtered and ordered | Public L2 fields when produced; bounded L3 counts/status |
 | Post-SAM2 area/bbox filter | Removes candidates before optional classification | Public L3 candidate counts/status |
 | CLIP labels, scores and class map | Request labels refresh resident CLIP prompts | Public L0 class mapping, L2 label/score, L3 provenance |
-| BLIP3 verification | Legacy module exists; qualified live profile rejects it before load/inference | Unsupported live capability; legacy CLI-only |
+| BLIP3 verification | Pinned FP16 holder; low-card service path swaps SAM2+CLIP and BLIP3, while >=24-GB path keeps all three resident | Public L2/L3 fields when executed; >=24-GB qualification deferred to 007-b |
 | Geometry Canny/Hough helpers | Helpers and tests exist, but canonical core does not call them; helpers may write TSV/debug files | Unsupported/dead for service; legacy compatibility only where explicitly wired |
 | `annotated`/`alpha-overlay` in-memory streams | Bounded RGB overlays; service executes them only at L3 | Bounded operator/service diagnostic |
 | Panoptic/Detectron2 renderer | Detectron2 is absent and renderer is not a live capability | Unsupported for service; legacy helper only |
@@ -30,7 +30,7 @@ module or helper is not evidence that the live service produces its output.
 | JSON envelope and artifact descriptors | Level-gated, base64 binary artifacts with hashes and sizes | Public L0-L3 |
 | ZIP manifest and raw artifacts | Data-free manifest plus the same raw artifacts and YOLO text | Public L0-L3 `zip` response |
 | ROI/SAM2/post-filter/CLIP debug patches | In-memory only at L3, opaque names, bounded sink | Bounded operator/service diagnostic |
-| BLIP3 debug answers | Legacy filesystem/debug path only; live BLIP3 is rejected | Legacy CLI-only; unsafe for current service |
+| BLIP3 debug answers | Bounded in-memory artifacts only at L3; answers are not metric labels or logs | Public L2/L3 fields when produced; request rules only |
 | Legacy image writer | Writes configured image sequences through the trusted batch adapter | Legacy CLI-only |
 | Legacy video/MJPEG writer | Writes configured video streams through the trusted batch adapter | Legacy CLI-only |
 | `images` and `video` batch output mappings | API parser ignores them with a warning | Legacy CLI-only; unsafe/inappropriate for service |

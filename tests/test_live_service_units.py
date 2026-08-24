@@ -263,7 +263,7 @@ def test_registry_transitions_loading_ready_and_reuses_states():
     assert first is second
     assert len(calls) == 1
     verdict = registry.verdict()
-    assert verdict.ready is True and "sam2_clip_resident" in verdict.detail
+    assert verdict.ready is True and "sam2_clip_gpu_blip3_cpu_swap" in verdict.detail
 
 
 def test_registry_records_sanitized_failure_only():
