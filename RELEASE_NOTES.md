@@ -1,6 +1,7 @@
 # 0.1.0 release-candidate notes
 
-Status: unpublished, untagged and not approved for package/source release.
+Status: unpublished and untagged. This is a qualified local research candidate,
+not a production or commercial-model-use approval.
 
 This candidate is the reproducible development handoff for the ZAP-IT native
 loopback service. It is tested as a bounded local service on the qualified
@@ -10,12 +11,13 @@ Those facts are evidence for this candidate, not an SLA, accuracy claim,
 production approval or rights clearance.
 
 The candidate contains the legacy YAML-driven CLI, typed in-memory core,
-deterministic YOLO/identity-mask/RLE renderers, and the fixed zap-it-1 /
-zap-it.v1 API contract. It does not activate BLIP3, geometry or panoptic
-stages on the qualified host. Model weights are downloaded by an operator at
-runtime and are never packaged.
+deterministic YOLO/identity-mask/RLE renderers, and the fixed `zap-it-1` /
+`zap-it.v1` API contract. SAM2, CLIP, and sequential BLIP3 are qualified on the
+11 GB host. Geometry and panoptic rendering remain outside the service. Model
+weights are downloaded by an operator and are never packaged.
 
-Before any final tag, package/source release or rights-cleared claim, a human
-must resolve the open CRIT-0001 public-history gate, review model and media
-rights, and confirm repository security settings. Gateway integration and
-container deployment are separate work and are not included.
+CRIT-0001 is accepted: the repository owner confirmed redistribution rights for
+the goat image/YAML fixtures and did not require a history rewrite. Before a
+final release, reviewers must still assess model/commercial-use terms, remaining
+media inventory, repository security settings, and intended deployment scope.
+Gateway integration and container deployment remain separate work.

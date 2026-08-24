@@ -1,9 +1,8 @@
-# Configuration Files
+# Configuration reference
 
-ZAP-IT pipelines are driven by YAML configuration files. Examples live in
-`configs/` and can be used as a starting point. Unknown keys are ignored so you
-can keep notes in the file, but the sections below document the entries that
-are consumed by the current codebase.
+ZAP-IT pipelines are driven by YAML configuration files. Tracked examples live
+in `configs/`. The trusted batch loader preserves legacy flexibility; the HTTP
+service applies a strict allowlist and rejects unknown or unsafe fields.
 
 At a glance the batch runner understands these top-level sections:
 
@@ -83,9 +82,9 @@ Configures the BLIP-3 VQA verifier that refines CLIP labels. Legacy CLI configs
 may still contain model-level options, but the service accepts only nested
 request rules. The operator pins the model, revision and FP16 dtype, loads it
 from the local cache, and selects residency automatically from physical total
-GPU memory. Cards below 24576 MiB swap SAM2+CLIP and BLIP3; cards at or above
-the boundary use the all-resident implementation pending 007-c. Nested mappings
-define rules:
+GPU memory. The live-qualified service swaps SAM2+CLIP and BLIP3 at the BLIP3
+stage boundary. The >=24 GB all-resident implementation remains pending a
+separate live qualification. Nested mappings define rules:
 
 - Nested mappings define rules. Keys that match existing CLIP labels trigger the
   associated question whenever that label is assigned. Keys that start with

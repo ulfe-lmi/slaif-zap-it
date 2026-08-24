@@ -1,4 +1,11 @@
-# Security law
+# Security
+
+## Reporting a vulnerability
+
+Please report suspected vulnerabilities privately to
+`janez.pers@fe.uni-lj.si`. Do not open a public issue containing credentials,
+private data, exploit details, or raw request content. Preserve minimal safe
+evidence and avoid destructive cleanup before the maintainer responds.
 
 ## Inputs
 
@@ -26,8 +33,9 @@ request IDs, hashes/counts/status/timings in safe diagnostics.
 
 ## GPU and host
 
-Physical GPU1 only through `CUDA_VISIBLE_DEVICES=1`; logical application device
-`cuda:0`. Pin expected GPU UUID for deployment. Never touch GPU0 processes,
+Expose only the operator-selected physical GPU through `CUDA_VISIBLE_DEVICES`;
+the logical application device is `cuda:0`. Pin the expected GPU UUID for
+deployment. Never touch protected GPU processes,
 reset GPUs, modify system drivers/CUDA, firewall/VPN/network, unrelated systemd,
 ports or global OpenCode/provider credentials without exact human-approved order.
 

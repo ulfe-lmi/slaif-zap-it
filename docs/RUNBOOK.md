@@ -1,11 +1,11 @@
-# Local GPU1 service runbook
+# Local service runbook
 
 This runbook operates the tested local ZAP-IT service from one host process.
-It binds only to `127.0.0.1`, exposes physical GPU1 as logical `cuda:0`, and
-automatically selects the capacity-based residency profile. On the observed
-11-GB card BLIP3 is host-resident and swaps with SAM2+CLIP for each BLIP3
-request. The >=24-GB all-resident implementation is not live-qualified until
-007-c. This is not a LAN, public, customer-data, or release procedure.
+It binds only to `127.0.0.1` and exposes one operator-selected physical GPU as
+logical `cuda:0`. On the qualified 11 GB host, BLIP3 is host-resident and swaps
+with SAM2+CLIP for each BLIP3 request. The >=24 GB all-resident implementation
+is not yet a live-qualified procedure. This is not a LAN, public,
+customer-data, or production-release runbook.
 
 ## Before every activation
 
@@ -43,8 +43,9 @@ Replace the UUID with the fresh physical GPU1 value and set
 `SLAIF_ZAP_IT_MODEL_CACHE_ROOT` to the operator cache containing the pinned
 SAM2, CLIP and BLIP3 snapshots. Do not add model IDs, revisions, devices,
 URLs, paths, dtypes, or credentials to request YAML; those are startup policy. Keep the
-port empty for live candidate selection unless a fresh, read-only check has
-selected a specific free port.
+port to a freshly verified free value when the commands below need to reference
+`$SLAIF_ZAP_IT_PORT`. If automatic selection is used instead, capture the port
+reported by `start` and export it before issuing curl/smoke commands.
 
 ## Start, inspect, and stop
 
@@ -187,7 +188,7 @@ find /dev/shm/slaif-zap-it -mindepth 1 -maxdepth 2 -print
 ```
 
 Remove only this checkout's optional user configuration and, if explicitly
-desired, the Objective 004 repo-owned launcher/unit files. Do not remove shared
+desired, its repo-owned launcher/unit files. Do not remove shared
 model-cache entries, stop unrelated GPU0 work, alter NVIDIA/CUDA, firewall/VPN,
 global credentials, or delete persistent user data. The end-of-round state is a
 free loopback port, no ZAP-IT process, GPU1 near its pre-round baseline, GPU0
@@ -206,8 +207,8 @@ deliberate uninstall stops the service and removes only the unit, private
 config and candidate venv; it never changes system CUDA, shared caches or
 unrelated services.
 
-After building/installing the candidate, the real local academic regression is
-explicit and GPU1-only:
+After building/installing the candidate, the optional local academic regression
+is explicit and restricted to the selected GPU:
 
 ~~~bash
 .venv-gpu/bin/python scripts/smoke_local_goats.py \
@@ -218,7 +219,10 @@ explicit and GPU1-only:
   --api-key "$SLAIF_ZAP_IT_API_KEY"
 ~~~
 
-The harness is local-only and refuses missing, symlinked or out-of-root files,
+The repository owner has confirmed redistribution rights for these four
+fixture/config paths. They nevertheless remain ignored operator inputs and are
+excluded from packages and release artifacts as defense in depth. The harness
+refuses missing, symlinked or out-of-root files,
 safe-loads and allowlists the legacy YAML including nested BLIP3 rules, strips
 operator/model controls, independently crops both goat images to exactly the
 middle 50 percent in memory, and emits only sanitized aliases/digests/
