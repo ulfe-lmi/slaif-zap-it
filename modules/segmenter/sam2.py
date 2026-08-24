@@ -106,6 +106,10 @@ def initialize(
     else:
         model = build_sam2_hf(model_name, device=target_device)
     model.eval().to(target_device)
+    if str(config.get("dtype", "auto")).lower() == "float16" and str(target_device).startswith(
+        "cuda"
+    ):
+        model.half()
 
     # Passing explicit ``None`` overrides SAM2's constructor defaults and, for
     # example, makes ``crop_n_points_downscale_factor ** layer`` fail.  Only
@@ -146,16 +150,44 @@ def run(
     # Support callers passing a list/tuple of images by taking the first item.
     image_np = images[0] if isinstance(images, (list, tuple)) else images
 
+    def generate_masks():
+        if dryrun_mode:
+            log("[segmenter.sam2] Generating dry-run masks...", 2, verbosity)
+            if not isinstance(mask_generator, _DryRunMaskGenerator):
+                state["mask_generator"] = _DryRunMaskGenerator()
+                return state["mask_generator"].generate(image_np)
+            return mask_generator.generate(image_np)
+
+        # SAM2's image transform returns float32 tensors.  The operator's
+        # all-resident profile deliberately pins the model to FP16, so use the
+        # framework autocast boundary to make those activations compatible
+        # without mutating request data or model residency.
+        model = getattr(getattr(mask_generator, "predictor", None), "model", None)
+        parameters = getattr(model, "parameters", None)
+        if callable(parameters):
+            try:
+                parameter = next(iter(parameters()))
+            except (StopIteration, TypeError, RuntimeError):
+                parameter = None
+            dtype = getattr(parameter, "dtype", None)
+            device = getattr(parameter, "device", None)
+            if str(dtype) == "torch.float16" and str(device).startswith("cuda"):
+                import torch
+
+                with torch.autocast(device_type="cuda", dtype=torch.float16):
+                    return mask_generator.generate(image_np)
+        log("[segmenter.sam2] Generating masks...", 2, verbosity)
+        return mask_generator.generate(image_np)
+
     if dryrun_mode:
         log("[segmenter.sam2] Generating dry-run masks...", 2, verbosity)
         # Ensure we are using the lightweight generator.
         if not isinstance(mask_generator, _DryRunMaskGenerator):
             mask_generator = _DryRunMaskGenerator()
             state["mask_generator"] = mask_generator
-        masks = mask_generator.generate(image_np)
+        masks = generate_masks()
     else:
-        log("[segmenter.sam2] Generating masks...", 2, verbosity)
-        masks = mask_generator.generate(image_np)
+        masks = generate_masks()
 
     log(f"[segmenter.sam2] => produced {len(masks)} masks", 2, verbosity)
 

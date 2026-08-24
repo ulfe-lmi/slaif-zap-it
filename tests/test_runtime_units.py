@@ -11,6 +11,7 @@ from src.runtime.device import (
     DeviceGuardError,
     inspect_visible_device,
     launch_environment,
+    parse_physical_gpu_index,
     require_launch_environment,
 )
 from src.runtime.ports import PortCheck
@@ -53,15 +54,37 @@ def shm_test_root():
         shutil.rmtree(root, ignore_errors=True)
 
 
-def test_launch_environment_is_the_physical_gpu1_contract():
+def test_launch_environment_binds_each_explicit_operator_index():
     expected = {"CUDA_DEVICE_ORDER": "PCI_BUS_ID", "CUDA_VISIBLE_DEVICES": "1"}
     assert launch_environment() == expected
     require_launch_environment(expected)
+    zero = {"CUDA_DEVICE_ORDER": "PCI_BUS_ID", "CUDA_VISIBLE_DEVICES": "0"}
+    assert launch_environment(0) == zero
+    require_launch_environment(zero, physical_gpu_index=0)
+
+
+@pytest.mark.parametrize("raw", ["", "-1", "+1", "1.0", "gpu0"])
+def test_physical_gpu_index_requires_ascii_decimal(raw):
+    with pytest.raises(ValueError, match="non-negative decimal"):
+        parse_physical_gpu_index(raw)
+
+
+def test_physical_gpu_index_accepts_decimal_zero_and_leading_zero():
+    assert parse_physical_gpu_index("0") == 0
+    assert parse_physical_gpu_index("01") == 1
 
 
 def test_launch_environment_rejects_missing_mask():
     with pytest.raises(DeviceGuardError):
         require_launch_environment({"CUDA_DEVICE_ORDER": "PCI_BUS_ID"})
+
+
+def test_launch_environment_rejects_inconsistent_operator_mask():
+    with pytest.raises(DeviceGuardError, match="CUDA_VISIBLE_DEVICES"):
+        require_launch_environment(
+            {"CUDA_DEVICE_ORDER": "PCI_BUS_ID", "CUDA_VISIBLE_DEVICES": "1"},
+            physical_gpu_index=0,
+        )
 
 
 def test_device_guard_reports_one_pinned_visible_gpu():
@@ -103,6 +126,24 @@ def test_runtime_policy_readiness_is_not_ready_until_device_and_registry_are_rea
     assert not policy.readiness(report).ready
     ready = policy.with_model_registry_ready().readiness(report)
     assert ready.ready
+
+
+def test_runtime_policy_readiness_rechecks_capacity_selected_for_strategy():
+    policy = RuntimePolicy.for_capacity(24_576, expected_gpu_uuid="GPU-target")
+    report = inspect_visible_device(_fake_torch(), expected_uuid="GPU-target")
+    not_ready = policy.with_model_registry_ready().readiness(report)
+    assert not not_ready.ready
+    assert "capacity" in not_ready.detail
+    compatible = report.__class__(
+        mode="gpu",
+        available=True,
+        visible_count=1,
+        logical_index=0,
+        name=report.name,
+        uuid=report.uuid,
+        total_memory_mib=24_123,
+    )
+    assert policy.with_model_registry_ready().readiness(compatible).ready
 
 
 def test_readiness_provider_joins_device_guard_and_operator_registry_state():

@@ -35,7 +35,7 @@ outputs absent from actual modules.
 FastAPI app
   request guard (size/media/auth/concurrency)
   YAML safe parser + API policy validator
-  device guard (physical GPU1 -> visible cuda:0)
+  device guard (operator-assigned physical GPU -> visible cuda:0)
   persistent model registry/state
   in-memory pipeline engine
   deterministic object/result model
@@ -110,25 +110,27 @@ be new per call.
 
 ## GPU and process
 
-Physical target is GPU index 1. Human/operator preflight on 2026-08-23 observed:
+The physical target is the exact operator-assigned index in the active order.
+Historical maelstrom1 preflight on 2026-08-23 observed:
 
 ```text
 GPU1: NVIDIA GeForce RTX 2080 Ti, 11264 MiB
 UUID: GPU-c457dbaf-991c-dc23-c781-0dc030776dd8
-GPU0: separate RTX 2080 Ti with an unrelated workload at that time
+008-a separately assigns hinton2 GPU0: NVIDIA GeForce RTX 3090, 24576 MiB,
+UUID: GPU-a91444df-4e87-011e-3347-9b3a4b9f9575
 ```
 
-Re-verify index/UUID/PCI/name/VRAM/processes before every live GPU objective; this
-snapshot is planning evidence, not a permanent guarantee. GPU0 remains protected
-even if later idle. Launch with:
+Re-verify the assigned index/UUID/PCI/name/VRAM/processes before every live GPU
+phase; these snapshots are planning evidence, not permanent guarantees. All
+other devices remain protected. Launch with:
 
 ```text
 CUDA_DEVICE_ORDER=PCI_BUS_ID
-CUDA_VISIBLE_DEVICES=1
+CUDA_VISIBLE_DEVICES=<SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX>
 ```
 
-Inside process only `cuda:0` exists. Never use physical GPU0. Startup verifies
-visible count/device and expected UUID when configured. One service process,
+Inside process only `cuda:0` exists. Startup verifies visible count/device and
+expected UUID when configured. One service process,
 one GPU request, bounded queue. No multiple Uvicorn workers; no fork after CUDA.
 With ~11 GB GPU1 VRAM, never assume SAM2+CLIP+BLIP3 co-residency. Objective 003
 must measure individual/combined profiles and select an explicit safe strategy;
@@ -205,5 +207,6 @@ stated production/public/destructive/release gate pending latest human
 
 CPU CI must run without CUDA/model downloads. Use dependency injection/fakes and
 small redistributable fixtures. Live tests are explicit `gpu` markers, force
-physical GPU1 visibility, snapshot all GPU processes before/after, serialize, and
-skip honestly when unavailable. CI green is necessary, not sufficient.
+the exact assigned-GPU visibility, snapshot all GPU processes before/after,
+serialize, and skip honestly when unavailable. CI green is necessary, not
+sufficient.

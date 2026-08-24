@@ -1,9 +1,11 @@
 # GPU runtime and measured evidence
 
-Status: qualified on `maelstrom1` during 2026-08-23–24 for bounded local testing. This
-record is not a service activation or a production-readiness claim. Model
-weights remain in the operator Hugging Face cache and are not part of the
-repository.
+Status: `PASSED` for Objective 008’s bounded all-resident qualification on
+`hinton2` at 2026-08-24, with the historical sequential qualification retained
+below for comparison. This record is local research evidence, not a service
+activation, production-readiness, accuracy, commercial-license, or release
+claim. Model weights remain in the operator Hugging Face cache and are not part
+of the repository.
 
 ## Reproduction
 
@@ -16,8 +18,9 @@ SAM2_BUILD_CUDA=0 uv pip install --python .venv-gpu/bin/python \
   -r requirements-gpu-cu124.lock
 
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
-export CUDA_VISIBLE_DEVICES=1
-export SLAIF_ZAP_IT_EXPECTED_GPU_UUID=GPU-c457dbaf-991c-dc23-c781-0dc030776dd8
+export SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX=0
+export CUDA_VISIBLE_DEVICES=0
+export SLAIF_ZAP_IT_EXPECTED_GPU_UUID=GPU-a91444df-4e87-011e-3347-9b3a4b9f9575
 export SLAIF_ZAP_IT_STRICT_GPU=1
 # Residency is selected automatically from fresh physical total-memory evidence.
 
@@ -26,8 +29,9 @@ export SLAIF_ZAP_IT_STRICT_GPU=1
 ```
 
 The first qualification command downloads only the pinned model snapshots. The
-second reuses the cache and performs the measurements. The fixture is generated
-in memory as a 128x128 RGB image; no request or customer data is used.
+second reuses the cache and performs the historical measurements. Objective
+008’s production-loader and loopback harness used the same offline cache and a
+generated 128x128 RGB image; no request or customer data was used.
 
 ## Host and device
 
@@ -38,13 +42,24 @@ in memory as a 128x128 RGB image; no request or customer data is used.
 | System `nvcc` | 13.3 (not used to build the optional SAM2 extension) |
 | Physical GPU0 | RTX 2080 Ti, UUID `GPU-4c129e25-8e59-eee4-b49c-56c40e294182`, PCI `00000000:00:08.0`, 11264 MiB; protected |
 | Physical GPU1 target | RTX 2080 Ti, UUID `GPU-c457dbaf-991c-dc23-c781-0dc030776dd8`, PCI `00000000:00:0C.0`, 11264 MiB |
-| Masked logical view | exactly one device, physical GPU1 as `cuda:0`; name matches target |
+| Historical masked logical view | exactly one device, historical physical GPU1 as `cuda:0`; name matches target |
 | Torch-reported usable total | 10820.9 MiB (device property rounded to 10821 MiB) |
 | Python | 3.12.3 |
 | `/dev/shm` | 27 GiB tmpfs; 26964.1 MiB free during qualification |
 
-Every live command inherited `CUDA_DEVICE_ORDER=PCI_BUS_ID` and
-`CUDA_VISIBLE_DEVICES=1`. The device guard normalizes the PyTorch UUID form,
+Objective 008’s assigned host snapshot was `hinton2`: physical index 0,
+`GPU-a91444df-4e87-011e-3347-9b3a4b9f9575`, PCI `00000000:0B:00.0`, NVIDIA
+GeForce RTX 3090, 24576 MiB physical capacity, 610.43.02 driver, Torch
+2.5.1+cu124, CUDA runtime 12.4, 15 MiB used and no compute processes before
+each live phase. The masked view reported one logical `cuda:0`, UUID matching
+the assignment and 24123.5 MiB usable. Host RAM was 22904 MiB total with
+approximately 21009 MiB available before Phase A; `/dev/shm` was a 12-GiB
+tmpfs with 12 GiB free. The older maelstrom1 GPU1 table above is historical
+evidence and is not a universal GPU0 prohibition.
+
+Every live command inherited `CUDA_DEVICE_ORDER=PCI_BUS_ID` and the
+`CUDA_VISIBLE_DEVICES` value derived from the explicit operator index. The
+device guard normalizes the PyTorch UUID form,
 requires one visible device, compares it to the operator pin and refuses
 readiness on any mismatch. It never falls back to CPU or another GPU in strict
 mode. CPU-only tests inject fake torch metadata for wrong UUID/count and
@@ -139,8 +154,9 @@ The implemented policy is capacity-based:
 
 - `<24576 MiB`: `sam2_clip_gpu_blip3_cpu_swap`, with host-resident pinned FP16
   BLIP3 and serialized SAM2+CLIP/BLIP3 transitions;
-- `>=24576 MiB`: `sam2_clip_blip3_gpu_resident`, implemented and fake-tested but
-  not yet live-qualified;
+- `>=24576 MiB`: `sam2_clip_blip3_gpu_resident`, with all three pinned FP16
+  holders required on logical `cuda:0` before readiness and no request-time
+  transitions;
 - supported profiles are `sam2`, `sam2_clip`, `sam2_blip3` and
   `sam2_clip_blip3`; there is no standalone service profile that skips SAM2;
 - one process, one worker and one active GPU request remain the service law;
@@ -153,13 +169,13 @@ the strict device guard, and restoration failure leaves readiness false until
 operator restart. The request YAML cannot set the strategy, model revision,
 dtype, device or readiness state.
 
-The sequential live evidence is recorded in its immutable OAP report: BLIP3-alone
+The historical sequential live evidence is recorded in its immutable OAP report: BLIP3-alone
 FP16 load/inference, startup residency, no-BLIP smoke, ten alternating
 central-crop requests, transition/restore timings, memory stability, host-RAM
-cost, cleanup and protected-GPU evidence. This document does not claim the
->=24-GB profile is qualified.
+cost, cleanup and protected-GPU evidence. Objective 008’s all-resident evidence
+is recorded separately below.
 
-## Measured sequential qualification
+## Measured sequential qualification (historical Objective 007-b)
 
 Status: `PASSED` for the physical 11,264-MiB GPU1 sequential profile on
 2026-08-24. This is bounded local evidence, not production readiness or a
@@ -203,7 +219,98 @@ unbounded growth. Object and answer counts were both zero for this academic
 configuration, while BLIP3 execution was independently present in every L3
 stage status. The harness reported zero request-workspace files/bytes before
 and after the sequence; after service stop the complete `/dev/shm` root was
-empty. The >=24 GB all-resident profile remains pending separate qualification.
+empty. The all-resident profile was qualified separately by Objective 008 below;
+these figures remain the low-card comparison baseline.
+
+## Objective 008 all-resident qualification
+
+Status: `PASSED` for bounded local research on hinton2, 2026-08-24. The
+operator-selected physical index was 0 with UUID
+`GPU-a91444df-4e87-011e-3347-9b3a4b9f9575`; the process exposed only that card
+as logical `cuda:0`. The pinned model identities were unchanged: SAM2 revision
+`e6a8e8809b8f1bfa2238b6d080f3d05cc76bd251`, CLIP revision
+`3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268`, and BLIP3/XGen-MM revision
+`1d91d356d3b6fbc141140edf490b39890417af44`. Offline mode was enabled for every
+live process.
+
+### Phase A — simultaneous residency hard gate
+
+The first loader/inference attempt was `FAILED` as a harness configuration
+attempt: the production loader reached all-resident readiness and stayed below
+the memory ceiling, but the generated rule did not match the CLIP labels, so
+the real BLIP3 stage produced zero answers. It cleaned up to the 15-MiB
+preflight GPU baseline. The corrected retry used a bounded `any,1.0` rule and
+was `PASSED`:
+
+| Measure | Result |
+| --- | ---: |
+| Loader time | 182.395 s |
+| 128x128 chain time | 10.979 s |
+| Physical capacity / 90% ceiling | 24576 / 22118.4 MiB |
+| Torch load allocated / reserved | 9627.5 / 9784.0 MiB |
+| Torch inference current allocated / reserved | 9635.6 / 11912.0 MiB |
+| Torch inference peak allocated / reserved | 11188.8 / 11912.0 MiB |
+| CUDA free after inference | 11864.8 MiB |
+| Host maximum RSS | 12793.5 MiB |
+| Objects / bounded BLIP3 answers | 7 / 7 |
+| Residency transitions/events | 0 / none |
+| All holders proven on logical device | `cuda:0` / `true` |
+
+The executed stage timings were SAM2 7123.782 ms, CLIP 509.204 ms and BLIP3
+1794.681 ms. The target snapshot was 15 MiB used with no compute rows before
+the phase, 12259 MiB used while the process held the models, and 15 MiB after
+cleanup. Peak reserved memory was 53.85% of marketed physical capacity and
+strictly below the 90% gate. No OOM, fallback, model reload, CPU migration or
+request-time residency event occurred.
+
+### Phase B — authenticated loopback service matrix
+
+The repository launcher started exactly one process and one Uvicorn worker on
+freshly rechecked `127.0.0.1:17891`. Readiness returned HTTP 200 with
+`sam2_clip_blip3_gpu_resident` and logical `cuda:0`; L3 runtime provenance
+listed exactly the three pinned model identities without paths. The one-shot
+operator failure returned HTTP 500 `inference_failure`; the next no-BLIP
+request returned HTTP 200. A corrected real-BLIP3 L3 request returned HTTP 200,
+`blip3=executed`, and eight bounded answers. A separately restarted one-shot
+client-close/drain attempt closed its authenticated socket, waited 8 seconds,
+and the next request returned HTTP 200 in 13583.1 ms.
+
+The final service metrics were content-free: model initialization success 1,
+residency transition count 0, current/peak CUDA allocation 9635.6/11188.8
+MiB, current/peak reservation 13200.0/13200.0 MiB, CUDA free 10576.8 MiB and
+maximum RSS 12752.2 MiB. The highest observed Phase-B reserved value was
+13200.0 MiB, still below 22118.4 MiB. Log scanning found no API key, prompt,
+answer, request content or host/cache path.
+
+### Phase C — exact local goat regression
+
+The safe harness used only the ignored operator fixtures, cropped each
+5568x4176 image in memory to 2784x2088, and sent exactly
+`A,B,A,B,A,B,A,B,A,B` as ten authenticated L3 JSON requests. The harness was
+`PASSED`: all ten HTTP 200, BLIP3 stage `executed` on all ten, zero transitions,
+all three runtime model identities on all ten, zero request-workspace files and
+bytes, and repeatable A/B semantic digests. Object and answer counts were 0/0
+for every call, matching the accepted 007-b academic baseline; no answer text
+or raw fixture/config content was retained.
+
+| Image | E2E first / min / median / nearest-rank p95 / max (ms) | SAM2 range (ms) | CLIP range (ms) | BLIP3 range (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| A | 4218.5 / 4170.0 / 4182.6 / 4218.5 / 4218.5 | 795.259–857.730 | 103.035–106.367 | 253.620–266.017 |
+| B | 3096.9 / 3096.9 / 3105.8 / 3318.7 / 3318.7 | 150.526–150.754 | 60.678–63.618 | 28.763–30.676 |
+| Aggregate | 4218.5 / 3096.9 / 4170.0 / 4218.5 / 4218.5 | — | — | — |
+
+Every sample stayed at 11189.0 MiB peak allocated, 13200.0 MiB peak reserved
+and 10576.8 MiB sampled free; maximum RSS was 12752.2 MiB. The stable YOLO
+digest prefix was `e3b0c44298fc1c14` for this zero-object configuration, and
+both A and B repeatability checks were true. No monotonic GPU/host growth,
+OOM, fallback, reload, residency movement or persistence was observed.
+
+### Cleanup
+
+After Phase B/C, the service was stopped gracefully. Port 17891 was free, no
+ZAP-IT process or compute-process row remained, the assigned GPU returned to
+15 MiB used / 24109 MiB free, host RAM reported 21116 MiB available, and
+`/dev/shm/slaif-zap-it` was empty. No unrelated device or process was changed.
 
 ## Shared memory and port qualification
 
@@ -231,7 +338,7 @@ not a reservation; every launch rechecks it.
 | `.venv-gpu/bin/python scripts/qualify_gpu_runtime.py --download` | `PASSED` | all three approved snapshots downloaded at pinned revisions |
 | `.venv-gpu/bin/python scripts/qualify_gpu_runtime.py` | `PASSED` | stage/combined tables, repeated runs, before/after GPU snapshots |
 | `.venv/bin/pytest -q tests/test_runtime_units.py tests/test_visualizer.py` | `PASSED` | 18 focused tests |
-| `ZAP_IT_RUN_GPU=1 CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 SLAIF_ZAP_IT_EXPECTED_GPU_UUID=GPU-c457dbaf-991c-dc23-c781-0dc030776dd8 SLAIF_ZAP_IT_TMP_ROOT=/dev/shm/slaif-zap-it .venv-gpu/bin/python -m pytest -q -m gpu tests/test_gpu_integration.py` | `PASSED` | 1 live serialized GPU1 test in 3.04 s; GPU0 compute-app lines unchanged |
+| `ZAP_IT_RUN_GPU=1 SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX=<assigned> CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=<assigned> SLAIF_ZAP_IT_EXPECTED_GPU_UUID=<matching-uuid> SLAIF_ZAP_IT_TMP_ROOT=/dev/shm/slaif-zap-it .venv-gpu/bin/python -m pytest -q -m gpu tests/test_gpu_integration.py` | `PASSED` when explicitly supplied | one visible logical `cuda:0`; unassigned-device process rows unchanged |
 | `.venv/bin/pytest -q --cov=src --cov=modules --cov-report=term-missing` | `PASSED` | 259 passed, 1 intentional module-level GPU skip; 74.98% total coverage |
 | `.venv/bin/ruff check .` and `.venv/bin/ruff format --check .` | `PASSED` | lint and format checks clean |
 | `.venv/bin/python -m build --wheel` | `PASSED` | isolated wheel build produced `zap_it-0.1.0-py3-none-any.whl` |
@@ -239,8 +346,9 @@ not a reservation; every launch rechecks it.
 The table includes the earlier baseline commands and counts recorded at their
 execution time; the current CPU totals are maintained by CI and
 [TESTING.md](../TESTING.md). The optional GPU test is never part of public CPU CI. It auto-skips without
-`ZAP_IT_RUN_GPU=1`, serializes on a RAM-backed lock, sets/checks the GPU1 mask
-inside the test process before importing Torch, and checks GPU0 process evidence.
+`ZAP_IT_RUN_GPU=1`, serializes on a RAM-backed lock, sets/checks the explicit
+assigned-card mask inside the test process before importing Torch, and checks
+unassigned-device process evidence.
 
 ## Cleanup and rollback
 

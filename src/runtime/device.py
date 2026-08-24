@@ -1,4 +1,4 @@
-"""Fail-closed device checks for the physically masked GPU1 runtime."""
+"""Fail-closed device checks for the operator-masked GPU runtime."""
 
 from __future__ import annotations
 
@@ -15,12 +15,26 @@ __all__ = [
     "require_physical_gpu_match",
     "inspect_visible_device",
     "launch_environment",
+    "parse_physical_gpu_index",
     "require_launch_environment",
 ]
 
 
 class DeviceGuardError(RuntimeError):
     """Raised when strict GPU invariants cannot be proven."""
+
+
+def parse_physical_gpu_index(value: str | None, *, default: int = 1) -> int:
+    """Parse an operator GPU index as an ASCII non-negative decimal integer.
+
+    The default is retained for Python compatibility with the historical
+    physical-GPU1 deployment.  The strict shell launcher requires the
+    environment variable explicitly before it invokes this module.
+    """
+    raw = str(default) if value is None else str(value).strip()
+    if not raw or any(char < "0" or char > "9" for char in raw):
+        raise ValueError("physical GPU index must be a non-negative decimal integer")
+    return int(raw, 10)
 
 
 @dataclass(frozen=True)
@@ -140,6 +154,9 @@ def require_physical_gpu_match(visible: DeviceReport, physical: PhysicalGpuEvide
     """Cross-check masked Torch facts against the targeted physical observation."""
     if visible.mode != "gpu" or visible.uuid != physical.uuid:
         raise DeviceGuardError("masked CUDA UUID does not match physical GPU evidence")
+    physical_name = getattr(physical, "name", None)
+    if visible.name and physical_name and visible.name != physical_name:
+        raise DeviceGuardError("masked CUDA model does not match physical GPU evidence")
     if visible.total_memory_mib is None:
         raise DeviceGuardError("masked CUDA capacity is unavailable")
     # CUDA reports usable device memory after reserving a small driver/runtime

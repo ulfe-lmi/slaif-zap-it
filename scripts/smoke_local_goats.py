@@ -31,6 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_IMAGE_A = REPO_ROOT / "demos/goats/goats1.jpg"
 DEFAULT_IMAGE_B = REPO_ROOT / "demos/goats/goats2.jpg"
 DEFAULT_CONFIG = REPO_ROOT / "configs/goats2.yaml"
+ALL_RESIDENT_RESERVED_CEILING_MIB = 24_576 * 0.90
 ALLOWED_TOP_LEVEL = frozenset(
     {
         "alpha",
@@ -201,6 +202,8 @@ def _metric_values(host: str, port: int, api_key: str | None) -> dict[str, float
             continue
         if name.startswith("zap_it_torch_gpu_") or name.startswith("zap_it_host_rss_"):
             values[name] = value
+        elif name == "zap_it_residency_transition_count":
+            values[name] = value
         elif name.startswith("zap_it_residency_transition_duration_seconds_sum"):
             try:
                 direction = name.split('direction="', 1)[1].split('"', 1)[0]
@@ -298,6 +301,9 @@ def run_request_summary(
         for item in (objects if isinstance(objects, list) else [])
         if isinstance(item, dict) and item.get("blip3_answer")
     ]
+    provenance = service.get("provenance") if isinstance(service, dict) else {}
+    runtime = provenance.get("runtime") if isinstance(provenance, dict) else {}
+    runtime = runtime if isinstance(runtime, dict) else {}
     return (
         status,
         len(objects) if isinstance(objects, list) else 0,
@@ -310,6 +316,12 @@ def run_request_summary(
             "answer_digest_prefix": _digest("\n".join(answers).encode())[:16] if answers else None,
             "yolo_digest_prefix": _digest(yolo_text.encode())[:16],
             "metrics": metrics_after,
+            "residency_transition_count": metrics_after.get(
+                "zap_it_residency_transition_count", 0.0
+            ),
+            "runtime_strategy": runtime.get("strategy"),
+            "runtime_logical_device": (runtime.get("device") or {}).get("logical"),
+            "runtime_model_count": len(runtime.get("models") or {}),
             "transition_to_blip3_seconds": round(
                 metrics_after.get("transition_to_blip3_seconds_sum", 0.0)
                 - metrics_before.get("transition_to_blip3_seconds_sum", 0.0),
@@ -359,6 +371,12 @@ def run_benchmark(
                 "yolo_digest_prefix": evidence.get("yolo_digest_prefix"),
                 "transition_to_blip3_seconds": evidence.get("transition_to_blip3_seconds", 0.0),
                 "restore_seconds": evidence.get("restore_seconds", 0.0),
+                "residency_transition_count": float(
+                    evidence.get("residency_transition_count", 0.0)
+                ),
+                "runtime_strategy": evidence.get("runtime_strategy"),
+                "runtime_logical_device": evidence.get("runtime_logical_device"),
+                "runtime_model_count": int(evidence.get("runtime_model_count", 0)),
                 "gpu_peak_allocated_mib": round(
                     float(
                         evidence.get("metrics", {}).get(
@@ -419,7 +437,16 @@ def run_benchmark(
 
     return {
         "status": "PASSED"
-        if all(item["status"] == 200 and item["blip3_executed"] for item in samples)
+        if all(
+            item["status"] == 200
+            and item["blip3_executed"]
+            and item["residency_transition_count"] == 0
+            and item["runtime_strategy"] == "sam2_clip_blip3_gpu_resident"
+            and item["runtime_logical_device"] == "cuda:0"
+            and item["runtime_model_count"] == 3
+            and item["gpu_peak_reserved_mib"] < ALL_RESIDENT_RESERVED_CEILING_MIB
+            for item in samples
+        )
         and all(repeatability.values())
         else "FAILED",
         "request_order": [item["image"] for item in samples],

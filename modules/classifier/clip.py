@@ -90,7 +90,15 @@ class _ClipFilter:
             load_kwargs["local_files_only"] = True
         self.processor = CLIPProcessor.from_pretrained(model_name, **load_kwargs)
         self.model = CLIPModel.from_pretrained(model_name, **load_kwargs).to(device)
+        if str(clip_config.get("dtype", "auto")).lower() == "float16" and str(device).startswith(
+            "cuda"
+        ):
+            self.model = self.model.half()
         self.model.eval()
+        try:
+            self.model_dtype = next(self.model.parameters()).dtype
+        except (AttributeError, StopIteration, TypeError):
+            self.model_dtype = None
 
         if self.all_prompts:
             self._encode_text_prompts()
@@ -109,11 +117,24 @@ class _ClipFilter:
     def _encode_text_prompts(self) -> None:
         torch = self._torch
         with torch.no_grad():
-            text_inputs = self.processor(
-                text=self.all_prompts, return_tensors="pt", padding=True
-            ).to(self.device)
+            text_inputs = self._move_inputs(
+                self.processor(text=self.all_prompts, return_tensors="pt", padding=True)
+            )
             text_emb = self.model.get_text_features(**text_inputs)
             self.text_embeds = text_emb / text_emb.norm(dim=-1, keepdim=True)
+
+    def _move_inputs(self, inputs):
+        """Move processor tensors and match the pinned model's float dtype."""
+        moved = {}
+        for key, value in inputs.items():
+            if self._torch.is_tensor(value):
+                if value.is_floating_point() and self.model_dtype is not None:
+                    moved[key] = value.to(self.device, dtype=self.model_dtype)
+                else:
+                    moved[key] = value.to(self.device)
+            else:
+                moved[key] = value
+        return moved
 
     def update_labels(self, clip_config: Dict[str, Any]) -> bool:
         """Re-encode prompts when a request supplies different labels.
@@ -144,7 +165,7 @@ class _ClipFilter:
             return (None, 0.0, "no prompt")
 
         with torch.no_grad():
-            inp = self.processor(images=patch, return_tensors="pt").to(self.device)
+            inp = self._move_inputs(self.processor(images=patch, return_tensors="pt"))
             emb = self.model.get_image_features(**inp)
             emb = emb / emb.norm(dim=-1, keepdim=True)
             sim = torch.matmul(emb, self.text_embeds.T)

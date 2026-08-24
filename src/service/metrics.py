@@ -125,6 +125,11 @@ class ServiceMetrics:
             ("direction", "outcome"),
             registry=self.registry,
         )
+        self.residency_transition_count = Gauge(
+            "zap_it_residency_transition_count",
+            "Completed model residency transitions since process start.",
+            registry=self.registry,
+        )
         self.residency_transition_duration = Histogram(
             "zap_it_residency_transition_duration_seconds",
             "Model residency transition duration.",
@@ -211,6 +216,8 @@ class ServiceMetrics:
         if outcome not in {"success", "failure"}:
             outcome = "failure"
         self.residency_transitions.labels(direction=direction, outcome=outcome).inc()
+        if outcome == "success":
+            self.residency_transition_count.inc()
         self.residency_transition_duration.labels(direction=direction).observe(
             max(float(duration_seconds), 0.0)
         )

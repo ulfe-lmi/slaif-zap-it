@@ -93,6 +93,18 @@ def test_config_rejects_bad_integers():
         )
 
 
+@pytest.mark.parametrize("raw_index", ["-1", "+1", "1.0", "gpu0"])
+def test_config_rejects_non_decimal_physical_index(raw_index):
+    with pytest.raises(LiveServiceError, match="non-negative decimal"):
+        LiveServiceConfig.from_environment(
+            {
+                "SLAIF_ZAP_IT_PORT": "17891",
+                "SLAIF_ZAP_IT_EXPECTED_GPU_UUID": "GPU-x",
+                "SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX": raw_index,
+            }
+        )
+
+
 # --------------------------------------------------------------------------- #
 # Preflight
 # --------------------------------------------------------------------------- #
@@ -203,6 +215,14 @@ def test_main_exit_code_2_when_mask_missing(monkeypatch, capsys):
     monkeypatch.delenv("CUDA_DEVICE_ORDER", raising=False)
     assert live_service.main() == 2
     assert "launch environment" in capsys.readouterr().err
+
+
+def test_operator_injection_can_fail_once_then_recover(monkeypatch):
+    monkeypatch.setenv("SLAIF_ZAP_IT_TEST_INJECT", "failure_once")
+    wrapped = live_service.wrap_test_injection(lambda: "ok")
+    with pytest.raises(RuntimeError, match="operator-injected"):
+        wrapped()
+    assert wrapped() == "ok"
 
 
 # --------------------------------------------------------------------------- #
@@ -410,6 +430,7 @@ def test_launcher_shm_rejection_is_sanitized_before_service_start():
         {
             "SLAIF_ZAP_IT_PYTHON": sys.executable,
             "SLAIF_ZAP_IT_EXPECTED_GPU_UUID": "GPU-test",
+            "SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX": "1",
             "SLAIF_ZAP_IT_PORT": "39006",
             "SLAIF_ZAP_IT_TMP_ROOT": "/dev/shm/../../tmp/zap-it-escape",
         }
@@ -434,6 +455,9 @@ def test_launcher_publishes_pid_only_after_exact_entrypoint_ownership():
     assert 'wait_healthy "$pid" "$SLAIF_ZAP_IT_PORT"' in launcher
     assert "nohup setsid" not in launcher
     assert "sed -n '2p'" in launcher
+    assert "SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX:?" in launcher
+    assert 'export CUDA_VISIBLE_DEVICES="$physical_index"' in launcher
+    assert "physical GPU index is fixed at 1" not in launcher
 
 
 def test_stop_wrapper_delegates_to_start_script():
