@@ -36,8 +36,8 @@ ROI/resize, SAM2 candidate filtering, CLIP label refresh, deterministic ordering
 YOLO, identity PNG, annotated overlays and L3 RLE are supported. BLIP3 rules are
 supported with a pinned FP16 holder: on cards below 24576 MiB the service swaps
 SAM2+CLIP and BLIP3, while cards at or above the boundary select all-resident.
-The 11-GB sequential path is the only live-qualified BLIP3 path in 007-a;
-all-resident qualification is deferred to 007-b. Geometry and panoptic remain
+The 11-GB sequential path is the only live-qualified BLIP3 path in 007-b;
+all-resident qualification is deferred to 007-c. Geometry and panoptic remain
 unsupported as documented in [OUTPUT-PARITY.md](OUTPUT-PARITY.md).
 
 ## Limits (operator startup settings)
@@ -93,11 +93,11 @@ Objective-005 bounded 32-request table, live RLE/metrics/recovery evidence and
 final GPU/process snapshots are published in `oap/reports/005-a-report.md`.
 These measurements are bounded fixture evidence, not an SLA or soak test.
 
-Objective 007-a adds a real low-card BLIP3 qualification table and ten-request
+Objective 007-b adds a real low-card BLIP3 qualification table and ten-request
 central-crop benchmark to its immutable report. It records startup, transition,
 restore, latency and memory evidence without committing goat bytes or response
 content. The >=24-GB all-resident path is implemented and CPU/fake-tested but
-is intentionally not claimed as live-qualified until 007-b.
+is intentionally not claimed as live-qualified until 007-c.
 
 ## Objective 006-a fixture and release constraint
 
@@ -118,8 +118,8 @@ default process collectors. Labels are limited to stable outcome code,
 verbosity, `json|zip`, fixed model component/outcome and fixed transition
 direction/outcome; duration/size/object/artifact histograms are otherwise
 unlabeled.
-Readiness, active inference and logical `cuda:0` allocated/reserved gauges are
-also exposed when available. Request IDs, labels, prompts, answers, filenames,
+Readiness, active inference, logical `cuda:0` allocated/reserved/peak/free and
+host RSS gauges are also exposed when available. Request IDs, labels, prompts, answers, filenames,
 paths, headers, credentials and raw content are never metric labels or logs.
 Metrics reset on process restart.
 

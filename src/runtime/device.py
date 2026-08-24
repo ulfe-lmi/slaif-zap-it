@@ -140,7 +140,16 @@ def require_physical_gpu_match(visible: DeviceReport, physical: PhysicalGpuEvide
     """Cross-check masked Torch facts against the targeted physical observation."""
     if visible.mode != "gpu" or visible.uuid != physical.uuid:
         raise DeviceGuardError("masked CUDA UUID does not match physical GPU evidence")
-    if visible.total_memory_mib is None or visible.total_memory_mib != physical.total_memory_mib:
+    if visible.total_memory_mib is None:
+        raise DeviceGuardError("masked CUDA capacity is unavailable")
+    # CUDA reports usable device memory after reserving a small driver/runtime
+    # region, while nvidia-smi reports the marketed physical capacity.  The
+    # strategy selector deliberately uses the latter, so allow only that
+    # bounded downward delta and still fail closed on over-capacity or a
+    # materially inconsistent device mapping.
+    capacity_delta = physical.total_memory_mib - visible.total_memory_mib
+    allowed_delta = max(1024, int(round(physical.total_memory_mib * 0.05)))
+    if capacity_delta < 0 or capacity_delta > allowed_delta:
         raise DeviceGuardError("masked CUDA capacity does not match physical GPU evidence")
 
 

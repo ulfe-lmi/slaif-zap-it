@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.request import Request, urlopen
 
 import yaml
 from PIL import Image
@@ -168,11 +169,45 @@ def _workspace_snapshot(root: Path) -> tuple[int, int]:
         return (0, 0)
     count = 0
     total = 0
+    operator_runtime = root / "runtime"
     for path in root.rglob("*"):
+        if path == operator_runtime or operator_runtime in path.parents:
+            continue
         if path.is_file():
             count += 1
             total += path.stat().st_size
     return count, total
+
+
+def _metric_values(host: str, port: int, api_key: str | None) -> dict[str, float]:
+    """Read fixed-label numeric runtime evidence from the metrics endpoint."""
+    request = Request(f"http://{host}:{port}/metrics")
+    if api_key:
+        request.add_header("Authorization", f"Bearer {api_key}")
+    try:
+        with urlopen(request, timeout=5) as response:
+            lines = response.read().decode("utf-8").splitlines()
+    except Exception:
+        return {}
+
+    values: dict[str, float] = {}
+    for line in lines:
+        if not line or line.startswith("#") or " " not in line:
+            continue
+        name, raw_value = line.rsplit(" ", 1)
+        try:
+            value = float(raw_value)
+        except ValueError:
+            continue
+        if name.startswith("zap_it_torch_gpu_") or name.startswith("zap_it_host_rss_"):
+            values[name] = value
+        elif name.startswith("zap_it_residency_transition_duration_seconds_sum"):
+            try:
+                direction = name.split('direction="', 1)[1].split('"', 1)[0]
+            except IndexError:
+                continue
+            values[f"transition_{direction}_seconds_sum"] = value
+    return values
 
 
 def _run_sequence(
@@ -225,8 +260,9 @@ def run_request_summary(
     image_bytes: bytes,
     config_bytes: bytes,
     api_key: str | None,
-) -> tuple[int, int, dict[str, Any], dict[str, str]]:
+) -> tuple[int, int, dict[str, Any], dict[str, str], dict[str, Any]]:
     """Send one L3 JSON request and retain only non-content numeric summaries."""
+    metrics_before = _metric_values(host, port, api_key)
     status, payload, meta = post_completion(
         host,
         port,
@@ -237,8 +273,9 @@ def run_request_summary(
         api_key=api_key,
         timeout_s=240.0,
     )
+    metrics_after = _metric_values(host, port, api_key)
     if status != 200 or not isinstance(payload, dict):
-        return status, 0, {}, meta
+        return status, 0, {}, meta, {"metrics": metrics_after}
     service = payload.get("service") if isinstance(payload.get("service"), dict) else {}
     timings = service.get("timings_ms") if isinstance(service.get("timings_ms"), dict) else {}
     safe_timings = {
@@ -247,7 +284,44 @@ def run_request_summary(
         if str(key).startswith("stage.") and isinstance(value, (int, float))
     }
     objects = service.get("objects")
-    return status, len(objects) if isinstance(objects, list) else 0, safe_timings, meta
+    yolo_text = str((payload.get("choices") or [{}])[0].get("text", ""))
+    stages = (
+        service.get("stage_statuses") if isinstance(service.get("stage_statuses"), list) else []
+    )
+    stage_statuses = {
+        str(item.get("name")): str(item.get("status"))
+        for item in stages
+        if isinstance(item, dict) and item.get("name")
+    }
+    answers = [
+        str(item.get("blip3_answer"))
+        for item in (objects if isinstance(objects, list) else [])
+        if isinstance(item, dict) and item.get("blip3_answer")
+    ]
+    return (
+        status,
+        len(objects) if isinstance(objects, list) else 0,
+        safe_timings,
+        meta,
+        {
+            "stage_statuses": stage_statuses,
+            "blip3_executed": stage_statuses.get("blip3") == "executed",
+            "answer_count": len(answers),
+            "answer_digest_prefix": _digest("\n".join(answers).encode())[:16] if answers else None,
+            "yolo_digest_prefix": _digest(yolo_text.encode())[:16],
+            "metrics": metrics_after,
+            "transition_to_blip3_seconds": round(
+                metrics_after.get("transition_to_blip3_seconds_sum", 0.0)
+                - metrics_before.get("transition_to_blip3_seconds_sum", 0.0),
+                3,
+            ),
+            "restore_seconds": round(
+                metrics_after.get("transition_restore_seconds_sum", 0.0)
+                - metrics_before.get("transition_restore_seconds_sum", 0.0),
+                3,
+            ),
+        },
+    )
 
 
 def run_benchmark(
@@ -263,7 +337,7 @@ def run_benchmark(
     for index in range(10):
         alias = "A" if index % 2 == 0 else "B"
         image_bytes = crop_a_bytes if alias == "A" else crop_b_bytes
-        status, object_count, timings, meta = run_request_summary(
+        status, object_count, timings, meta, evidence = run_request_summary(
             host,
             port,
             image_bytes=image_bytes,
@@ -278,12 +352,58 @@ def run_benchmark(
                 "latency_ms": float(meta.get("latency_ms", 0)),
                 "objects": object_count,
                 "stage_timings_ms": timings,
+                "stage_statuses": evidence.get("stage_statuses", {}),
+                "blip3_executed": bool(evidence.get("blip3_executed")),
+                "answer_count": int(evidence.get("answer_count", 0)),
+                "answer_digest_prefix": evidence.get("answer_digest_prefix"),
+                "yolo_digest_prefix": evidence.get("yolo_digest_prefix"),
+                "transition_to_blip3_seconds": evidence.get("transition_to_blip3_seconds", 0.0),
+                "restore_seconds": evidence.get("restore_seconds", 0.0),
+                "gpu_peak_allocated_mib": round(
+                    float(
+                        evidence.get("metrics", {}).get(
+                            "zap_it_torch_gpu_peak_allocated_bytes", 0.0
+                        )
+                    )
+                    / 2**20,
+                    1,
+                ),
+                "gpu_peak_reserved_mib": round(
+                    float(
+                        evidence.get("metrics", {}).get("zap_it_torch_gpu_peak_reserved_bytes", 0.0)
+                    )
+                    / 2**20,
+                    1,
+                ),
+                "gpu_free_mib": round(
+                    float(evidence.get("metrics", {}).get("zap_it_torch_gpu_free_bytes", 0.0))
+                    / 2**20,
+                    1,
+                ),
+                "host_rss_max_mib": round(
+                    float(evidence.get("metrics", {}).get("zap_it_host_rss_max_bytes", 0.0))
+                    / 2**20,
+                    1,
+                ),
             }
         )
     by_image: dict[str, list[float]] = {"A": [], "B": []}
+    repeatability: dict[str, bool] = {}
     for sample in samples:
         if sample["status"] == 200:
             by_image[sample["image"]].append(sample["latency_ms"])
+    for alias in ("A", "B"):
+        signatures = {
+            (
+                sample["objects"],
+                sample["answer_count"],
+                sample["answer_digest_prefix"],
+                sample["yolo_digest_prefix"],
+            )
+            for sample in samples
+            if sample["image"] == alias and sample["status"] == 200
+        }
+        repeatability[alias] = len(signatures) == 1
 
     def stats(values: list[float]) -> dict[str, float]:
         if not values:
@@ -298,11 +418,15 @@ def run_benchmark(
         }
 
     return {
-        "status": "PASSED" if all(item["status"] == 200 for item in samples) else "FAILED",
+        "status": "PASSED"
+        if all(item["status"] == 200 and item["blip3_executed"] for item in samples)
+        and all(repeatability.values())
+        else "FAILED",
         "request_order": [item["image"] for item in samples],
         "samples": samples,
         "statistics": {key: stats(value) for key, value in by_image.items()},
         "aggregate": stats([item["latency_ms"] for item in samples if item["status"] == 200]),
+        "repeatability": repeatability,
     }
 
 

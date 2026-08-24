@@ -24,9 +24,10 @@ import os
 import subprocess
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Iterator, Mapping, Optional
 
 from .device import (
     DeviceGuardError,
@@ -417,6 +418,52 @@ class ResidentRegistry:
         if self._metrics is not None:
             self._metrics.observe_residency_transition(direction, outcome, duration)
 
+    @contextmanager
+    def _blip3_stage(self) -> Iterator[None]:
+        """Temporarily make BLIP3 the GPU resident stage.
+
+        The engine enters this boundary only after SAM2 and CLIP have finished.
+        Keeping the swap in a context manager makes restoration happen before
+        the engine can perform post-BLIP filtering, rendering, or return an
+        error to the service.
+        """
+        baseline_move_started = False
+        blip3_move_started = False
+        blip3_on_gpu = False
+        to_started = time.perf_counter()
+        try:
+            baseline_move_started = True
+            self._move("segmenter", "cpu")
+            self._move("clip", "cpu")
+            self._synchronize_and_empty()
+            self._prove_blip3_memory()
+            blip3_move_started = True
+            self._move("blip3", self._device_name)
+            blip3_on_gpu = True
+            self._observe_transition("to_blip3", "success", to_started)
+            yield
+        except Exception:
+            if not blip3_on_gpu:
+                self._observe_transition("to_blip3", "failure", to_started)
+            raise
+        finally:
+            restore_started = time.perf_counter()
+            try:
+                if baseline_move_started:
+                    if blip3_move_started:
+                        self._move("blip3", "cpu")
+                    self._synchronize_and_empty()
+                    self._move("segmenter", self._device_name)
+                    self._move("clip", self._device_name)
+                    self._synchronize_and_empty()
+                    self._observe_transition("restore", "success", restore_started)
+            except Exception as exc:
+                self._observe_transition("restore", "failure", restore_started)
+                self.mark_failed("restoration_failure")
+                raise LiveServiceError(
+                    "model residency restoration failed; restart required"
+                ) from exc
+
     def execute(
         self,
         runner: Callable[..., Any],
@@ -425,7 +472,7 @@ class ResidentRegistry:
         *,
         runner_kwargs: Mapping[str, Any],
     ) -> Any:
-        """Run one request, restoring the baseline holders in every outcome."""
+        """Run one request with a stage-aware sequential residency boundary."""
         with self._transition_lock:
             states = self.states()
             wants_blip3 = bool(getattr(config, "blip3_cfg", None))
@@ -439,47 +486,16 @@ class ResidentRegistry:
                     blip3_state=states.get("blip3") if wants_blip3 else None,
                 )
 
-            baseline_moved = False
-            blip3_on_gpu = False
-            to_started = time.perf_counter()
-            try:
-                baseline_moved = True
-                self._move("segmenter", "cpu")
-                self._move("clip", "cpu")
-                self._synchronize_and_empty()
-                self._prove_blip3_memory()
-                self._move("blip3", self._device_name)
-                blip3_on_gpu = True
-                self._observe_transition("to_blip3", "success", to_started)
-                return runner(
-                    image_rgb,
-                    config,
-                    **dict(runner_kwargs),
-                    segmenter_state=states["segmenter"],
-                    clip_state=states["clip"],
-                    blip3_state=states.get("blip3"),
-                )
-            except Exception:
-                if not blip3_on_gpu:
-                    self._observe_transition("to_blip3", "failure", to_started)
-                raise
-            finally:
-                restore_started = time.perf_counter()
-                try:
-                    if baseline_moved:
-                        if blip3_on_gpu:
-                            self._move("blip3", "cpu")
-                        self._synchronize_and_empty()
-                        self._move("segmenter", self._device_name)
-                        self._move("clip", self._device_name)
-                        self._synchronize_and_empty()
-                        self._observe_transition("restore", "success", restore_started)
-                except Exception as exc:
-                    self._observe_transition("restore", "failure", restore_started)
-                    self.mark_failed("restoration_failure")
-                    raise LiveServiceError(
-                        "model residency restoration failed; restart required"
-                    ) from exc
+            call_kwargs = dict(runner_kwargs)
+            call_kwargs["blip3_stage_context"] = self._blip3_stage
+            return runner(
+                image_rgb,
+                config,
+                **call_kwargs,
+                segmenter_state=states["segmenter"],
+                clip_state=states["clip"],
+                blip3_state=states.get("blip3"),
+            )
 
 
 def default_resident_loader(

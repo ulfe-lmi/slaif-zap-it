@@ -1,4 +1,4 @@
-# Qualified GPU runtime (objective 003-a)
+# Qualified GPU runtime and Objective 007-b sequential evidence
 
 Status: qualified on `maelstrom1` on 2026-08-23 for bounded local testing. This
 record is not a service activation or a production-readiness claim. Model
@@ -120,7 +120,7 @@ dropped, garbage collection and `torch.cuda.empty_cache()`.
 | --- | --- | ---: | ---: | --- | ---: | ---: |
 | SAM2 only | `PASSED` | 1285 MiB | 2.798 s | 668.94, 375.86, 363.12 | 3079.2 / 4902.0 MiB | 8.1 / 20.0 MiB |
 | CLIP only | `PASSED` | 866 MiB | 1.432 s | 12.68, 10.28, 9.90 | 588.9 / 632.0 MiB | 8.1 / 20.0 MiB |
-| BLIP3 only | `BLOCKED` | 10505 MiB | not loaded | not run | hard stop before load | no model allocation |
+| BLIP3 only | `SUPERSEDED by 007-b` | 10505 MiB | not loaded | not run | conservative pre-007 hard stop | no model allocation |
 | SAM2 + CLIP resident | `PASSED` | 2151 MiB | 3.208 s | 434.73, 417.44, 434.17 | 3656.5 / 5530.0 MiB | 8.1 / 20.0 MiB |
 
 The Torch-reported 90% ceiling is approximately 9738.8 MiB. BLIP3's pinned
@@ -135,12 +135,12 @@ These are stability-shape checks, not an accuracy claim.
 
 ## Selected resource strategy and readiness
 
-The Objective 007-a policy is automatic and capacity-based:
+The Objective 007-b policy is automatic and capacity-based:
 
 - `<24576 MiB`: `sam2_clip_gpu_blip3_cpu_swap`, with host-resident pinned FP16
   BLIP3 and serialized SAM2+CLIP/BLIP3 transitions;
 - `>=24576 MiB`: `sam2_clip_blip3_gpu_resident`, implemented and fake-tested but
-  not live-qualified until 007-b;
+  not live-qualified until the exclusive 007-c warm-all gate;
 - supported profiles are `sam2`, `sam2_clip`, `sam2_blip3` and
   `sam2_clip_blip3`; there is no standalone service profile that skips SAM2;
 - one process, one worker and one active GPU request remain the service law;
@@ -153,11 +153,57 @@ the strict device guard, and restoration failure leaves readiness false until
 operator restart. The request YAML cannot set the strategy, model revision,
 dtype, device or readiness state.
 
-The 007-a live evidence is recorded in its immutable OAP report: BLIP3-alone
+The 007-b live evidence is recorded in its immutable OAP report: BLIP3-alone
 FP16 load/inference, startup residency, no-BLIP smoke, ten alternating
 central-crop requests, transition/restore timings, memory stability, host-RAM
 cost, cleanup and protected-GPU evidence. This document does not claim the
 >=24-GB profile is qualified.
+
+## Objective 007-b measured sequential qualification
+
+Status: `PASSED` for the physical 11,264-MiB GPU1 sequential profile on
+2026-08-24. This is bounded local evidence, not production readiness or a
+license/commercial-use decision. The service reported strategy
+`sam2_clip_gpu_blip3_cpu_swap`, one visible logical `cuda:0`, and readiness only
+after SAM2, CLIP and the host-resident BLIP3 holder initialized. Ready probes
+returned `200` within the observed 6.1-second startup window after launch.
+
+The corrected isolated BLIP3-only gate loaded the pinned FP16 holder from local
+files in 176.983 seconds, moved it to GPU1 in 2.176 seconds, and completed the
+128x128 yes/no inference in 2.286 seconds. The bounded answer was non-empty.
+Peak Torch memory was 9,327.9 MiB allocated and 9,532.0 MiB reserved out of
+10,820.9 MiB CUDA-visible total (88.09% reserved); free memory at the end of
+inference was 1,086.2 MiB. External post-process evidence returned GPU1 to
+6 MiB used and preserved GPU0's unrelated PID 66522.
+
+The authenticated loopback service completed one no-BLIP L3 control with no
+residency transitions, one real BLIP3 L3 request with eight bounded answers,
+and a client-aborted BLIP3 request whose worker completed restoration before a
+subsequent no-BLIP request returned `200`. An operator-only failure injection
+returned the sanitized `500 inference_failure` response. The service process
+was stopped after evidence, leaving port 17891 free and the shared-memory root
+empty.
+
+The final exact ten-request goat sequence used in-memory central 50% crops of
+the two 5568x4176 images (each crop 2784x2088), in order
+`A,B,A,B,A,B,A,B,A,B`. All ten requests returned HTTP 200 and reported
+`blip3=executed`; per-image semantic digests were repeatable and each request
+recorded a successful transition and restore. Sanitized latency statistics:
+
+| Image | First / minimum / median / nearest-rank p95 / maximum (ms) | BLIP3 stage range (ms) | To-BLIP3 range (s) | Restore range (s) |
+| --- | ---: | ---: | ---: | ---: |
+| A | 11412.7 / 11273.9 / 11345.6 / 11484.1 / 11484.1 | 6537.982–6726.721 | 2.303–2.330 | 3.949–4.109 |
+| B | 10193.8 / 10150.0 / 10193.8 / 10389.7 / 10389.7 | 6192.563–6341.419 | 2.305–2.329 | 3.856–4.072 |
+| Aggregate | 11412.7 / 10150.0 / 11273.9 / 11484.1 / 11484.1 | — | — | — |
+
+Across the ten calls, peak logical CUDA allocation was 8,902.5–9,465.8 MiB,
+peak reservation was 9,052.0–9,662.0 MiB, sampled post-request free memory was
+8,930.2 MiB, and the service high-water RSS settled at 16,003.6 MiB without
+unbounded growth. Object and answer counts were both zero for this academic
+configuration, while BLIP3 execution was independently present in every L3
+stage status. The harness reported zero request-workspace files/bytes before
+and after the sequence; after service stop the complete `/dev/shm` root was
+empty. The >=24-GB all-resident profile remains exclusively pending for 007-c.
 
 ## Shared memory and port qualification
 
