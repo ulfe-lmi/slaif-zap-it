@@ -82,9 +82,15 @@ Configures the BLIP-3 VQA verifier that refines CLIP labels. Legacy CLI configs
 may still contain model-level options, but the service accepts only nested
 request rules. The operator pins the model, revision and FP16 dtype, loads it
 from the local cache, and selects residency automatically from physical total
-GPU memory. The live-qualified service swaps SAM2+CLIP and BLIP3 at the BLIP3
-stage boundary. The >=24 GB all-resident implementation remains pending a
-separate live qualification. Nested mappings define rules:
+GPU memory. Below 24,576 MiB the live-qualified service swaps SAM2+CLIP and
+BLIP3 at the BLIP3 stage boundary on the historical 11 GB RTX 2080 Ti. At or
+above 24,576 MiB it keeps all three pinned holders resident on the assigned RTX
+3090. Objective 009 provides real all-resident matrix evidence for all four
+supported profiles. Both modes expose only logical `cuda:0` after an explicit
+operator index and UUID pin. This is bounded local research evidence, not an
+SLA, accuracy claim, commercial-license clearance, or external deployment;
+geometry/panoptic and deployment/release gates remain separate. Nested mappings
+define rules:
 
 - Nested mappings define rules. Keys that match existing CLIP labels trigger the
   associated question whenever that label is assigned. Keys that start with

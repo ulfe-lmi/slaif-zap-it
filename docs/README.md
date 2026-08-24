@@ -1,7 +1,13 @@
 # ZAP-IT documentation
 
 This index separates current product/operator documentation from dated
-qualification evidence and historical modernization records.
+qualification evidence and historical modernization records. Objectives 007–009
+close the GPU-memory deferrals: below 24,576 MiB the historical 11 GB card uses
+the live-qualified sequential lifecycle, while at or above 24,576 MiB the
+assigned RTX 3090 uses the live-qualified all-resident lifecycle. The real
+Objective 009 matrix covers all four supported profiles. Geometry/panoptic,
+deployment, licensing, media and final-release gates remain separate and are
+not represented as memory-blocked work.
 
 ## Start here
 

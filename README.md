@@ -42,17 +42,20 @@ guarantee, commercial model-use clearance, or public-deployment authorization.
 
 ### GPU residency
 
-The live-qualified service strategy keeps SAM2 and CLIP on the selected GPU and
-retains pinned FP16 BLIP3 in host RAM. A BLIP3 request runs SAM2 and CLIP first,
-swaps those holders to CPU for the BLIP3 stage, and restores the baseline before
-returning. On the qualified 11 GB RTX 2080 Ti, isolated BLIP3 peaked at
-9,532 MiB reserved (88.09% of CUDA-visible memory); ten repeated central-crop
-pipeline calls completed in approximately 10.2–11.5 seconds each.
+Residency is selected from fresh physical capacity after an explicit operator
+index/UUID pin, and the process exposes the selected card only as logical
+`cuda:0`. A card below 24,576 MiB uses the live-qualified sequential
+stage-boundary lifecycle on the historical 11 GB RTX 2080 Ti. A card at or
+above 24,576 MiB uses the live-qualified all-resident lifecycle on the assigned
+24,576-MiB RTX 3090. Objectives 007–009 provide real evidence for all four
+supported profiles (`sam2`, `sam2_clip`, `sam2_blip3`, and
+`sam2_clip_blip3`). These are bounded local research measurements, not an SLA,
+accuracy claim, commercial-license clearance, or external deployment.
 
-Cards with physical capacity at or above 24,576 MiB automatically use the
-all-three-model resident profile after strict index/UUID/capacity checks; the
-historical 11 GB profile retains the bounded BLIP3 swap. No request can select
-a model, revision, device, dtype, or residency policy.
+Geometry/panoptic behavior and gateway, deployment, licensing, media, and
+final-release gates remain separate unsupported or release-gated scope; none
+is represented as GPU-memory-blocked work. No request can select a model,
+revision, device, dtype, or residency policy.
 
 ## Quick start: development
 

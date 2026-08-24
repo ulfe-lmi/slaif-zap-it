@@ -22,23 +22,39 @@ ROOT_DOCUMENTS = (
     "THIRD_PARTY_NOTICES.md",
 )
 
-REQUIRED_DOCUMENTS = ROOT_DOCUMENTS + (
-    "docs/README.md",
-    "docs/API.md",
-    "docs/CONFIG.md",
-    "docs/ALGORITHMS.md",
-    "docs/CORE.md",
-    "docs/runtime.md",
-    "docs/RUNBOOK.md",
-    "docs/SERVICE-DATASHEET.md",
-    "docs/OUTPUT-PARITY.md",
-    "docs/GATEWAY-INTEGRATION.md",
-    "docs/RELEASE-GATE-INVENTORY.md",
-    "docs/history/README.md",
+CURRENT_LAW_DOCUMENTS = (
+    "AGENTS.md",
+    "OAP-COMMUNICATION-coding-agent.md",
+    "oap/strategic-instructions/AGENTS.md",
+    "oap/strategic-instructions/ARCHITECTURE-for-agents.md",
+    "oap/strategic-instructions/OAP-COMMUNICATION-strategic.md",
+    "oap/strategic-instructions/strategic_model_init_material.md",
+    "oap/strategic-instructions/INITIAL-ROADMAP.md",
 )
 
-CURRENT_DOCUMENTS = ROOT_DOCUMENTS + tuple(
-    str(path.relative_to(REPO_ROOT)) for path in sorted((REPO_ROOT / "docs").glob("*.md"))
+REQUIRED_DOCUMENTS = (
+    ROOT_DOCUMENTS
+    + CURRENT_LAW_DOCUMENTS
+    + (
+        "docs/README.md",
+        "docs/API.md",
+        "docs/CONFIG.md",
+        "docs/ALGORITHMS.md",
+        "docs/CORE.md",
+        "docs/runtime.md",
+        "docs/RUNBOOK.md",
+        "docs/SERVICE-DATASHEET.md",
+        "docs/OUTPUT-PARITY.md",
+        "docs/GATEWAY-INTEGRATION.md",
+        "docs/RELEASE-GATE-INVENTORY.md",
+        "docs/history/README.md",
+    )
+)
+
+CURRENT_DOCUMENTS = (
+    ROOT_DOCUMENTS
+    + CURRENT_LAW_DOCUMENTS
+    + tuple(str(path.relative_to(REPO_ROOT)) for path in sorted((REPO_ROOT / "docs").glob("*.md")))
 )
 
 FORBIDDEN_CURRENT_PATTERNS = {
@@ -51,6 +67,35 @@ FORBIDDEN_CURRENT_PATTERNS = {
     "deleted algorithm document": re.compile(r"ALGORITHMS-DETAILED\.md"),
     "deleted runtime document": re.compile(r"GPU-RUNTIME\.md"),
     "generated documentation dump": re.compile(r"everything\.txt"),
+    "obsolete all-resident qualification claim": re.compile(
+        r"all-resident qualification remains separate", re.IGNORECASE
+    ),
+    "obsolete pending all-resident qualification claim": re.compile(
+        r"pending a separate live qualification", re.IGNORECASE
+    ),
+    "obsolete low-card-only BLIP3 claim": re.compile(
+        r"only live-qualified BLIP3 residency", re.IGNORECASE
+    ),
+    "obsolete fake-tested all-resident claim": re.compile(
+        r"implemented and CPU/fake-tested.{0,100}not\s+(?:claimed as\s+)?live-qualified",
+        re.IGNORECASE,
+    ),
+    "obsolete physical-GPU1-only service claim": re.compile(
+        r"(?:service|launcher|local service).{0,100}physical[- ]GPU\s*1\s+only",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    "obsolete universal physical-GPU0 prohibition": re.compile(
+        r"(?:\b(?:never|must not|must never|cannot)\s+(?:use|touch|select|allocate on|"
+        r"be used)\s+(?:physical\s+)?GPU\s*0\b|"
+        r"\b(?:physical\s+)?GPU\s*0\b[^\n]{0,80}\b(?:never|must not|must never|"
+        r"unavailable|forbidden|prohibited)\b[^\n]{0,40}\b(?:use|used|touch|"
+        r"select|allocate|available)\b)",
+        re.IGNORECASE,
+    ),
+    "obsolete fixed physical-GPU1 launcher": re.compile(
+        r"\bCUDA_VISIBLE_DEVICES\s*=\s*1\b",
+        re.IGNORECASE,
+    ),
 }
 
 MARKDOWN_LINK = re.compile(r"!?(?:\[[^\]]*\])\(([^)]+)\)")

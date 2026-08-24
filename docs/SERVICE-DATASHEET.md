@@ -33,10 +33,16 @@ overlap. The identity PNG remains a documented single-valued projection.
 
 ROI/resize, SAM2 candidate filtering, CLIP label refresh, deterministic ordering,
 YOLO, identity PNG, annotated overlays and L3 RLE are supported. BLIP3 rules are
-supported with a pinned FP16 holder. The live-qualified service swaps SAM2+CLIP
-and BLIP3 at the BLIP3 stage boundary. The 11 GB sequential path is the only
-live-qualified BLIP3 residency; all-resident qualification is separate. Geometry and panoptic remain
-unsupported as documented in [OUTPUT-PARITY.md](OUTPUT-PARITY.md).
+supported with a pinned FP16 holder. Below 24,576 MiB the historical 11 GB
+RTX 2080 Ti uses the live-qualified sequential stage-boundary lifecycle; at or
+above 24,576 MiB the assigned RTX 3090 uses the live-qualified all-resident
+lifecycle. Objective 009's real matrix covers `sam2`, `sam2_clip`,
+`sam2_blip3`, and `sam2_clip_blip3`. Both modes expose only logical `cuda:0`
+after an explicit operator index and UUID pin. These are bounded local research
+measurements, not an SLA, accuracy claim, commercial-license clearance, or
+external deployment. Geometry/panoptic and deployment/release gates remain
+separate for reasons other than GPU memory, as documented in
+[OUTPUT-PARITY.md](OUTPUT-PARITY.md).
 
 ## Limits (operator startup settings)
 
@@ -73,13 +79,13 @@ prepared raw bytes directly. RLE and every serialization loop check the absolute
 
 | Item | Qualified value |
 |---|---|
-| Physical target | NVIDIA GeForce RTX 2080 Ti, 11,264 MiB, physical index 1 |
-| Target UUID | `GPU-c457dbaf-991c-dc23-c781-0dc030776dd8` |
-| Visible application device | `cuda:0` after `CUDA_VISIBLE_DEVICES=1` |
-| Driver / CUDA Torch | 580.178.04 / CUDA 12.4 / Torch 2.5.1+cu124 |
+| Historical sequential target | NVIDIA GeForce RTX 2080 Ti, 11,264 MiB, physical index 1; UUID `GPU-c457dbaf-991c-dc23-c781-0dc030776dd8` |
+| Assigned all-resident target | NVIDIA GeForce RTX 3090, 24,576 MiB, physical index 0; UUID `GPU-a91444df-4e87-011e-3347-9b3a4b9f9575` |
+| Visible application device | `cuda:0` after the explicit assigned index is masked and UUID-checked |
+| Driver / CUDA Torch | Historical 580.178.04 / CUDA 12.4; assigned 610.43.02 / CUDA 12.4 / Torch 2.5.1+cu124 |
 | Service stack | FastAPI 0.141.1, Uvicorn 0.52.4, python-multipart 0.0.32 |
 | Process model | One Uvicorn worker, one inference executor, one request in flight |
-| Protected device | Physical GPU0 and its unrelated workload are never used |
+| Protected devices | Every unassigned physical GPU and unrelated workload remain protected; only the active-order-assigned index+UUID is exposed as logical `cuda:0` |
 
 ## Measured evidence
 
@@ -94,8 +100,9 @@ These measurements are bounded fixture evidence, not an SLA or soak test.
 The sequential qualification adds a real BLIP3 gate and ten-request
 central-crop benchmark to its immutable report. It records startup, transition,
 restore, latency and memory evidence without committing goat bytes or response
-content. The >=24-GB all-resident path is implemented and CPU/fake-tested but
-is intentionally not claimed as live-qualified.
+content. Objectives 008–009 add assigned-RTX-3090 all-resident evidence and the
+exact eight-call four-profile matrix; all measurements are bounded local
+research evidence and do not authorize deployment, commercial use, or release.
 
 ## Academic fixture policy
 

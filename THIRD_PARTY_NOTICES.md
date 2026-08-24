@@ -45,9 +45,12 @@ never committed to this repository.
 | `Salesforce/xgen-mm-phi3-mini-instruct-r-v1` @ `1d91d356…` | `modules/verifier/blip3.py` | HF model card and `LICENSE.txt` identify CC-BY-NC-4.0; `trust_remote_code` audit is in [runtime.md](docs/runtime.md). |
 
 Model revisions and the reviewed remote-code files are pinned. BLIP3 is
-live-qualified on the 11 GB host through sequential host-RAM/GPU residency;
-pinning and successful execution do not authorize client-selected model loading
-or commercial redistribution.
+live-qualified through the sequential host-RAM/GPU lifecycle on the historical
+11 GB host and through the all-resident lifecycle on the assigned 24,576-MiB
+RTX 3090; Objectives 007–009 exercise all four supported service profiles.
+Pinning and successful execution do not authorize client-selected model loading
+or commercial redistribution. These are bounded local research measurements,
+not an SLA, accuracy claim, license clearance, or external deployment.
 
 ## Distribution and rights status
 

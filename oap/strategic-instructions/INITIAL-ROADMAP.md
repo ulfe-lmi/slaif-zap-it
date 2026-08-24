@@ -48,7 +48,7 @@ reluctance to decide.
 | 000 | Professional package/test/CI/CodeQL/docs/security/provenance baseline | Existing behavior characterized; CPU CI green |
 | 001 | Pure typed in-memory image pipeline, artifact sinks, deterministic YOLO/uint16 identity mask | Legacy CLI regression preserved; exhaustive CPU semantics |
 | 002 | Multipart `/v1/completions`, JSON/ZIP levels, limits/errors/auth/health using fake engine | No live GPU deployment; API contract tests green |
-| 003 | Actual host/physical-GPU1 environment and model qualification | UUID pin; GPU0 untouched; measured 11-GB-class memory fit and licenses documented |
+| 003 | Actual operator-assigned-GPU environment and model qualification | Assigned index+UUID pin; every unassigned device untouched; measured capacity and licenses documented |
 | 004 | Local loopback service on freshly verified unused port | One worker/request; real E2E levels; cleanup; restart/rollback |
 | 005 | Full-output parity, overlap masks, visualization/geometry, resource hardening/metrics/datasheet | Repeated load/failure/cancel/state-isolation tests |
 | 006 | Packaging, SLAIF integration and release readiness | Human adjudication, distribution/license/security/supply-chain review before applicable release/deployment gates |
@@ -63,10 +63,21 @@ The bootstrap originally carried an unverified assumption that physical GPU1
 might be an RTX 2080 Ti-class card with 22/24 GB. Human/operator preflight on
 2026-08-23 instead observed two ordinary RTX 2080 Ti devices with **11264 MiB**
 each; physical GPU1 was UUID `GPU-c457dbaf-991c-dc23-c781-0dc030776dd8` and was
-essentially idle at that moment, while GPU0 had an unrelated workload. Objective
-003 must re-verify these facts live because index/UUID/process/free-memory state
-can change. The 11-GB measurement is the planning reality until fresh evidence
-says otherwise; GPU0 remains protected regardless of apparent idleness.
+essentially idle at that moment, while GPU0 had an unrelated workload. This is
+host-specific historical evidence. Objective 003 had to re-verify the selected
+index/UUID/process/free-memory state live; the 11-GB measurement was its
+planning reality.
+
+## Current operator-assigned law after Objective 008
+
+Objective 008 separately qualified hinton2's explicitly assigned physical GPU0:
+an NVIDIA GeForce RTX 3090 with **24576 MiB**, UUID
+`GPU-a91444df-4e87-011e-3347-9b3a4b9f9575`. The maintained invariant is not a
+permanent GPU0 or GPU1 reservation: each active order names one exact physical
+index and UUID, the launcher exposes only that card as logical `cuda:0`, and
+startup fails closed on a mismatch. Automatic fallback and request-selected
+devices are forbidden; every unassigned device and unrelated workload remains
+protected.
 
 ## Human adjudication gate
 

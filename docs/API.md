@@ -12,8 +12,11 @@ The contract is tested with a CPU fake engine and qualified locally with pinned
 SAM2, CLIP, and BLIP3 models. Operational residency is capacity-selected: the
 historical 11-GB profile uses serialized host-RAM/GPU transitions for BLIP3,
 while a strictly qualified card at or above 24 GiB keeps all three pinned
-holders on logical `cuda:0`. No persistent listener is started by the package
-factory.
+holders on logical `cuda:0`. Objective 009's authenticated real matrix covers
+all four supported profiles on the assigned 24,576-MiB RTX 3090. This remains
+bounded local research evidence, not an SLA, accuracy claim, commercial-license
+clearance, or external deployment; geometry/panoptic and deployment/release
+gates remain separate. No persistent listener is started by the package factory.
 
 ## Endpoints
 

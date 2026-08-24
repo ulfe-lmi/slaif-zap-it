@@ -81,11 +81,16 @@ tokenizer, processor, device, cache, and residency strategy remain pinned. The
 service limits each request to 32 planned questions and 32 generated tokens per
 question.
 
-On the qualified 11 GB profile, BLIP3 lives in host RAM until its stage. SAM2
-and CLIP run on GPU first; the registry then swaps them out, executes BLIP3 on
-GPU, and restores the baseline. Per-mask image patches use the mask bounding box
-with a minimum 128-pixel extent; the pinned processor maps arbitrary aspect
-ratios to a finite 378-pixel tile grid.
+Below 24,576 MiB, BLIP3 lives in host RAM until its stage. SAM2 and CLIP run on
+GPU first; the registry then swaps them out, executes BLIP3 on GPU, and restores
+the baseline. At or above 24,576 MiB, all three pinned FP16 holders remain on
+the assigned GPU and no request-time movement occurs. Objective 009's real
+matrix covers all four supported profiles. Per-mask image patches use the mask
+bounding box with a minimum 128-pixel extent; the pinned processor maps
+arbitrary aspect ratios to a finite 378-pixel tile grid. Both modes expose only
+logical `cuda:0` after an explicit operator index and UUID pin; the evidence is
+bounded local research, not an SLA, accuracy claim, license clearance, or
+external deployment.
 
 ## Deterministic object results
 

@@ -80,6 +80,10 @@ scripts/verify_release_artifacts.py; all media, demos, caches, weights,
 outputs, OAP transcript material, credentials and private environment files
 are denied. SAM2 code and model assets are revision-pinned; its weights
 are downloaded only by the operator. CLIP's pinned model card has no SPDX
-deployment license. BLIP3/XGen-MM is exercised only through the 007-b low-card
-sequential qualification and remains CC-BY-NC/research-only. Commercial or deployed model use and any weight
+deployment license. BLIP3/XGen-MM is exercised through the 007-b low-card
+sequential qualification and the 008–009 assigned-card all-resident
+qualification, and remains CC-BY-NC/research-only. The GPU-memory deferrals
+from Objectives 003/007 are closed by Objectives 007–009; this matrix is not
+license clearance, an SLA, an accuracy claim, external deployment, or final
+release authority. Commercial or deployed model use and any weight
 redistribution require human/legal clearance.

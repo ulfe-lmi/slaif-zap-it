@@ -35,7 +35,7 @@ outputs absent from actual modules.
 FastAPI app
   request guard (size/media/auth/concurrency)
   YAML safe parser + API policy validator
-  device guard (physical GPU1 -> visible cuda:0)
+  device guard (operator-assigned physical index+UUID -> visible cuda:0)
   persistent model registry/state
   in-memory pipeline engine
   deterministic object/result model
@@ -110,16 +110,21 @@ be new per call.
 
 ## GPU and process
 
-Physical target GPU index 1; verify UUID/PCI/name/VRAM live. Launch with:
+The active order must name the exact operator-assigned physical GPU index and
+UUID. Verify that card's UUID/PCI/name/VRAM live, then launch with:
 
 ```text
 CUDA_DEVICE_ORDER=PCI_BUS_ID
-CUDA_VISIBLE_DEVICES=1
+CUDA_VISIBLE_DEVICES=<assigned-physical-index>
 ```
 
-Inside process only `cuda:0` exists. Never use physical GPU0. Startup verifies
-visible count/device and expected UUID when configured. One service process,
-one GPU request, bounded queue. No multiple Uvicorn workers; no fork after CUDA.
+The process exposes exactly that card as logical `cuda:0`; startup fails closed
+on visible-device or UUID mismatch. There is no automatic fallback, request
+selection, or free-device heuristic. Every unassigned device and unrelated
+process remains protected. Objective 008's hinton2 assignment of physical GPU0
+to RTX 3090 and the historical maelstrom1 physical GPU1 qualification are
+host-specific evidence, not a universal index rule. One service process, one
+GPU request, bounded queue. No multiple Uvicorn workers; no fork after CUDA.
 Optional BLIP3/full profile is enabled only after measured memory-fit/stability;
 otherwise reject honestly or implement explicit safe stage lifecycle.
 
@@ -143,7 +148,8 @@ response too large, and insufficient `/dev/shm`.
    documentation/security/provenance; no API/GPU mutation.
 2. Pure in-memory typed core and deterministic outputs/identity mask.
 3. API contract and fake-engine tests; local loopback only.
-4. GPU1 environment/model installation verification and bounded live tests.
+4. Operator-assigned-GPU environment/model installation verification and bounded
+   live tests.
 5. Full verbosity/artifact parity, resource hardening, observability.
 6. Packaging/systemd/container/gateway integration after prior gates; external
    deployment/final release only after latest human `ACCEPTED` disposition for
@@ -177,6 +183,7 @@ stated production/public/destructive/release gate pending latest human
 ## Tests
 
 CPU CI must run without CUDA/model downloads. Use dependency injection/fakes and
-small redistributable fixtures. Live tests are explicit `gpu` markers, force
-physical GPU1 visibility, snapshot all GPU processes before/after, serialize, and
-skip honestly when unavailable. CI green is necessary, not sufficient.
+small redistributable fixtures. Live tests are explicit `gpu` markers, force the
+active-order-assigned physical index visibility, snapshot all GPU processes
+before/after, serialize, and skip honestly when unavailable. CI green is
+necessary, not sufficient.
