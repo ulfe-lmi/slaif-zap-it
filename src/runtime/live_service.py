@@ -28,13 +28,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
-from .device import DeviceGuardError, inspect_visible_device, require_launch_environment
+from .device import (
+    DeviceGuardError,
+    inspect_physical_gpu,
+    inspect_visible_device,
+    require_launch_environment,
+    require_physical_gpu_match,
+)
 from .models import APPROVED_MODEL_SPECS
 from .ports import PortCheck, verify_port_unused
 from .shm import ShmError, ensure_shm_root, shm_free_bytes
 from .strategy import (
-    SUPPORTED_RESIDENT_PROFILES,
-    SUPPORTED_RESIDENT_STRATEGY,
+    ALL_RESIDENT_RESIDENCY_MODE,
+    SEQUENTIAL_RESIDENCY_MODE,
     RuntimePolicy,
     RuntimeReadiness,
 )
@@ -197,28 +203,38 @@ def masked_gpu_uuid(
 
 
 class ResidentRegistry:
-    """One-per-process home of the resident SAM2+CLIP model states.
-
-    The registry loads the supported profile once in a worker thread while
-    the HTTP surface already serves honest ``not_ready`` answers. It never
-    reloads after success and records only sanitized failure categories.
-    """
+    """Own pinned model holders and serialize low-card residency transitions."""
 
     def __init__(
         self,
         *,
         loader: Callable[[], dict[str, Any]],
-        strategy: str = "sam2_clip_resident_blip3_rejected",
+        strategy: str = SEQUENTIAL_RESIDENCY_MODE,
+        device_name: str = "cuda:0",
+        require_blip3: bool = False,
+        cuda_module: Any | None = None,
     ) -> None:
         self._loader = loader
         self._strategy = strategy
+        self._device_name = device_name
+        self._require_blip3 = require_blip3
+        self._cuda = cuda_module
         self._lock = threading.Lock()
+        self._transition_lock = threading.RLock()
         self._states: dict[str, Any] | None = None
         self._ready = False
         self._failed = False
         self._error_type: str | None = None
         self.load_seconds: float | None = None
         self._load_thread: threading.Thread | None = None
+        self._terminal_failure = False
+        self._metrics: Any | None = None
+        self.transition_events: list[str] = []
+        self.transition_seconds: dict[str, float] = {}
+
+    def bind_metrics(self, metrics: Any) -> None:
+        """Attach the service's fixed-label metrics before startup loading."""
+        self._metrics = metrics
 
     @property
     def ready(self) -> bool:
@@ -239,6 +255,10 @@ class ResidentRegistry:
         """Honest registry-only readiness verdict."""
         with self._lock:
             if self._ready:
+                if self._terminal_failure:
+                    return RuntimeReadiness(
+                        False, "model residency restoration failed; restart required"
+                    )
                 return RuntimeReadiness(True, f"resident {self._strategy} models are ready")
             if self._failed:
                 return RuntimeReadiness(
@@ -268,15 +288,26 @@ class ResidentRegistry:
             with self._lock:
                 self._failed = True
                 self._error_type = type(exc).__name__
+            if self._metrics is not None:
+                self._metrics.observe_model_initialization("registry", "failure")
             return
         with self._lock:
-            if not isinstance(states, dict) or "segmenter" not in states or "clip" not in states:
+            if (
+                not isinstance(states, dict)
+                or "segmenter" not in states
+                or "clip" not in states
+                or (self._require_blip3 and "blip3" not in states)
+            ):
                 self._failed = True
                 self._error_type = "ValueError"
+                if self._metrics is not None:
+                    self._metrics.observe_model_initialization("registry", "failure")
                 return
             self._states = states
             self._ready = True
             self.load_seconds = round(time.perf_counter() - started, 3)
+        if self._metrics is not None:
+            self._metrics.observe_model_initialization("registry", "success")
 
     def start_background_load(self) -> threading.Thread:
         with self._lock:
@@ -301,11 +332,163 @@ class ResidentRegistry:
                 raise LiveServiceError("resident model states are not loaded")
             return self._states
 
+    @staticmethod
+    def _move_value(value: Any, device: str, seen: set[int] | None = None) -> None:
+        """Move model/tensor holders without retaining request-derived values."""
+        if value is None:
+            return
+        seen = seen or set()
+        marker = id(value)
+        if marker in seen:
+            return
+        seen.add(marker)
+        if isinstance(value, dict):
+            for child in value.values():
+                ResidentRegistry._move_value(child, device, seen)
+            return
+        if isinstance(value, (list, tuple)):
+            for child in value:
+                ResidentRegistry._move_value(child, device, seen)
+            return
+        holder_mover = getattr(value, "move_to", None)
+        if callable(holder_mover):
+            holder_mover(device)
+            return
+        mover = getattr(value, "to", None)
+        if callable(mover):
+            mover(device)
+            return
+        for name in ("model", "predictor", "text_embeds", "qa"):
+            if hasattr(value, name):
+                ResidentRegistry._move_value(getattr(value, name), device, seen)
+
+    def _move(self, name: str, device: str) -> None:
+        self.transition_events.append(f"{name}_to_{'gpu' if device.startswith('cuda') else 'cpu'}")
+        self._move_value(self.states().get(name), device)
+
+    def _synchronize_and_empty(self) -> None:
+        self.transition_events.append("synchronize_empty_cache")
+        cuda = self._cuda
+        if cuda is None:
+            try:
+                import torch
+
+                cuda = torch.cuda
+            except (ImportError, AttributeError):
+                return
+        synchronize = getattr(cuda, "synchronize", None)
+        if callable(synchronize):
+            synchronize()
+        empty_cache = getattr(cuda, "empty_cache", None)
+        if callable(empty_cache):
+            empty_cache()
+
+    def _prove_blip3_memory(self) -> None:
+        """Use current free memory only as an admission check after swap."""
+        cuda = self._cuda
+        if cuda is None:
+            try:
+                import torch
+
+                cuda = torch.cuda
+            except (ImportError, AttributeError):
+                return
+        mem_get_info = getattr(cuda, "mem_get_info", None)
+        if not callable(mem_get_info):
+            return
+        free_bytes, _total_bytes = mem_get_info()
+        holder = self.states().get("blip3")
+        if isinstance(holder, dict):
+            holder = holder.get("blip3_qa") or holder.get("model")
+        estimated = int(getattr(holder, "estimated_gpu_bytes", 0) or 0)
+        if estimated and int(free_bytes) < estimated:
+            raise LiveServiceError("insufficient memory for the pinned BLIP3 holder")
+
+    def mark_failed(self, category: str) -> None:
+        with self._lock:
+            self._terminal_failure = True
+            self._failed = True
+            self._ready = False
+            self._error_type = category
+
+    def _observe_transition(self, direction: str, outcome: str, started: float) -> None:
+        duration = max(time.perf_counter() - started, 0.0)
+        self.transition_seconds[direction] = round(duration, 3)
+        if self._metrics is not None:
+            self._metrics.observe_residency_transition(direction, outcome, duration)
+
+    def execute(
+        self,
+        runner: Callable[..., Any],
+        image_rgb: Any,
+        config: Any,
+        *,
+        runner_kwargs: Mapping[str, Any],
+    ) -> Any:
+        """Run one request, restoring the baseline holders in every outcome."""
+        with self._transition_lock:
+            states = self.states()
+            wants_blip3 = bool(getattr(config, "blip3_cfg", None))
+            if not wants_blip3 or self._strategy == ALL_RESIDENT_RESIDENCY_MODE:
+                return runner(
+                    image_rgb,
+                    config,
+                    **dict(runner_kwargs),
+                    segmenter_state=states["segmenter"],
+                    clip_state=states["clip"],
+                    blip3_state=states.get("blip3") if wants_blip3 else None,
+                )
+
+            baseline_moved = False
+            blip3_on_gpu = False
+            to_started = time.perf_counter()
+            try:
+                baseline_moved = True
+                self._move("segmenter", "cpu")
+                self._move("clip", "cpu")
+                self._synchronize_and_empty()
+                self._prove_blip3_memory()
+                self._move("blip3", self._device_name)
+                blip3_on_gpu = True
+                self._observe_transition("to_blip3", "success", to_started)
+                return runner(
+                    image_rgb,
+                    config,
+                    **dict(runner_kwargs),
+                    segmenter_state=states["segmenter"],
+                    clip_state=states["clip"],
+                    blip3_state=states.get("blip3"),
+                )
+            except Exception:
+                if not blip3_on_gpu:
+                    self._observe_transition("to_blip3", "failure", to_started)
+                raise
+            finally:
+                restore_started = time.perf_counter()
+                try:
+                    if baseline_moved:
+                        if blip3_on_gpu:
+                            self._move("blip3", "cpu")
+                        self._synchronize_and_empty()
+                        self._move("segmenter", self._device_name)
+                        self._move("clip", self._device_name)
+                        self._synchronize_and_empty()
+                        self._observe_transition("restore", "success", restore_started)
+                except Exception as exc:
+                    self._observe_transition("restore", "failure", restore_started)
+                    self.mark_failed("restoration_failure")
+                    raise LiveServiceError(
+                        "model residency restoration failed; restart required"
+                    ) from exc
+
 
 def default_resident_loader(
-    *, device_name: str = "cuda:0", model_cache_root: str | None = None
+    *,
+    device_name: str = "cuda:0",
+    model_cache_root: str | None = None,
+    strategy: str = SEQUENTIAL_RESIDENCY_MODE,
 ) -> Callable[[], dict[str, Any]]:
-    """Build the pinned SAM2+CLIP loader for the supported resident profile."""
+    """Build all pinned holders, placing BLIP3 on CPU for the low-card mode."""
 
     def load() -> dict[str, Any]:
         # Approved Objective 003 snapshots are operator assets.  A live
@@ -317,6 +500,7 @@ def default_resident_loader(
         import torch
         from modules.classifier import initialize_clip
         from modules.segmenter import initialize_sam2
+        from modules.verifier.blip3 import initialize_holder
 
         device = torch.device(device_name)
         sam_spec = APPROVED_MODEL_SPECS["sam2"]
@@ -347,7 +531,14 @@ def default_resident_loader(
             verbosity=0,
             local_files_only=True,
         )
-        return {"segmenter": segmenter_state, "clip": clip_state}
+        blip3_state = initialize_holder(
+            device=(device_name if strategy == ALL_RESIDENT_RESIDENCY_MODE else "cpu"),
+            verbosity=0,
+            local_files_only=True,
+        )
+        blip3_state["max_questions"] = 32
+        blip3_state["max_new_tokens"] = 32
+        return {"segmenter": segmenter_state, "clip": clip_state, "blip3": blip3_state}
 
     return load
 
@@ -395,7 +586,6 @@ def live_engine_callable(
                 "runtime: " + ", ".join(mutable_generator_keys),
                 code="unsupported_field",
             )
-        states = registry.states()
         if stages is not None:
             raise ServiceError(
                 "custom stage sets are not accepted by the resident runtime",
@@ -406,23 +596,37 @@ def live_engine_callable(
         else:
             from src.core.engine import run_single_image as resolved_runner
 
-        return resolved_runner(
-            image_rgb,
-            config,
-            frame_id=frame_id,
-            segmenter_state=states["segmenter"],
-            clip_state=states["clip"],
-            blip3_state=None,
-            dryrun=dryrun,
-            verbosity=verbosity,
-            device=device_name,
-            log_print_func=log_print_func,
-            artifact_sink=artifact_sink,
-            stages=None,
-            class_labels=tuple(class_labels),
-            render_visualizations=render_visualizations,
-            service_safe_artifact_names=True,
-        )
+        runner_kwargs = {
+            "frame_id": frame_id,
+            "dryrun": dryrun,
+            "verbosity": verbosity,
+            "device": device_name,
+            "log_print_func": log_print_func,
+            "artifact_sink": artifact_sink,
+            "stages": None,
+            "class_labels": tuple(class_labels),
+            "render_visualizations": render_visualizations,
+            "service_safe_artifact_names": True,
+        }
+        try:
+            return registry.execute(
+                resolved_runner,
+                image_rgb,
+                config,
+                runner_kwargs=runner_kwargs,
+            )
+        except Exception as exc:
+            from modules.verifier.blip3 import Blip3ResourceLimitError
+
+            if isinstance(exc, Blip3ResourceLimitError):
+                raise ServiceError(
+                    "BLIP3 question resource limit exceeded", code="response_too_large"
+                ) from exc
+            if isinstance(exc, LiveServiceError) and registry.error_type == "restoration_failure":
+                raise ServiceError(
+                    "model residency failed; operator restart required", code="not_ready"
+                ) from exc
+            raise
 
     return engine
 
@@ -518,18 +722,14 @@ def main() -> int:
         return 3
 
     try:
-        policy = RuntimePolicy.from_environment(expected_gpu_uuid=config.expected_gpu_uuid)
-    except (TypeError, ValueError) as exc:
-        print(f"serve_local: invalid runtime policy: {exc}", file=sys.stderr)
-        return 2
-    if (
-        policy.strategy != SUPPORTED_RESIDENT_STRATEGY
-        or policy.supported_profiles != SUPPORTED_RESIDENT_PROFILES
-        or policy.physical_gpu_index != _PHYSICAL_GPU_INDEX
-        or not policy.strict_gpu
-    ):
-        print("serve_local: runtime policy is not the qualified resident profile", file=sys.stderr)
-        return 2
+        physical = inspect_physical_gpu(
+            config.physical_gpu_index,
+            expected_uuid=config.expected_gpu_uuid,
+            require_idle=True,
+        )
+    except (DeviceGuardError, OSError) as exc:
+        print(f"serve_local: physical GPU evidence failed: {exc}", file=sys.stderr)
+        return 3
 
     def uuid_provider() -> str | None:
         return masked_gpu_uuid(torch_module=torch)
@@ -544,13 +744,30 @@ def main() -> int:
     except DeviceGuardError as exc:
         print(f"serve_local: device guard failed: {exc}", file=sys.stderr)
         return 3
+    try:
+        require_physical_gpu_match(device_report, physical)
+        policy = RuntimePolicy.for_capacity(
+            physical.total_memory_mib,
+            expected_gpu_uuid=config.expected_gpu_uuid,
+            physical_gpu_index=config.physical_gpu_index,
+            strict_gpu=True,
+        )
+    except (DeviceGuardError, TypeError, ValueError) as exc:
+        print(f"serve_local: GPU capacity policy failed: {exc}", file=sys.stderr)
+        return 3
 
     from src.service.app import create_app
     from src.service.settings import ServiceSettings
 
     registry = ResidentRegistry(
-        loader=default_resident_loader(model_cache_root=config.model_cache_root),
+        loader=default_resident_loader(
+            model_cache_root=config.model_cache_root,
+            strategy=policy.strategy,
+        ),
         strategy=policy.strategy,
+        device_name="cuda:0",
+        require_blip3=True,
+        cuda_module=torch.cuda,
     )
     try:
         settings = ServiceSettings.from_environment()
@@ -571,7 +788,7 @@ def main() -> int:
         "models": {
             name: {"id": spec.model_id, "revision": spec.revision}
             for name, spec in APPROVED_MODEL_SPECS.items()
-            if name in {"sam2", "clip"}
+            if name in {"sam2", "clip", "blip3"}
         },
     }
     app = create_app(
@@ -585,6 +802,7 @@ def main() -> int:
         runtime_metadata=runtime_metadata,
         shutdown_callback=registry.shutdown,
     )
+    registry.bind_metrics(app.state.metrics)
 
     # Sanitized facts only: identifiers, counts, timings. Never secrets.
     print(_startup_log_line(config, report), flush=True)

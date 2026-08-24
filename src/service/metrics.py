@@ -91,6 +91,25 @@ class ServiceMetrics:
             "Logical cuda:0 reserved bytes.",
             registry=self.registry,
         )
+        self.model_initializations = Counter(
+            "zap_it_model_initializations_total",
+            "Pinned model-holder initialization outcomes.",
+            ("component", "outcome"),
+            registry=self.registry,
+        )
+        self.residency_transitions = Counter(
+            "zap_it_residency_transitions_total",
+            "Bounded model residency transition outcomes.",
+            ("direction", "outcome"),
+            registry=self.registry,
+        )
+        self.residency_transition_duration = Histogram(
+            "zap_it_residency_transition_duration_seconds",
+            "Model residency transition duration.",
+            ("direction",),
+            buckets=(0.01, 0.1, 0.5, 1, 2, 5, 10, 30, 60, 120),
+            registry=self.registry,
+        )
 
     def observe_error(self, code: str) -> None:
         self.requests.labels(outcome=code).inc()
@@ -132,6 +151,27 @@ class ServiceMetrics:
             # CPU installs and transient CUDA teardown do not make metrics
             # collection a request failure.
             return
+
+    def observe_model_initialization(self, component: str, outcome: str) -> None:
+        """Record only fixed operator component/outcome labels."""
+        if component not in {"sam2", "clip", "blip3", "registry"}:
+            component = "registry"
+        if outcome not in {"success", "failure"}:
+            outcome = "failure"
+        self.model_initializations.labels(component=component, outcome=outcome).inc()
+
+    def observe_residency_transition(
+        self, direction: str, outcome: str, duration_seconds: float
+    ) -> None:
+        """Record fixed-label swap/restore observations without request data."""
+        if direction not in {"to_blip3", "restore"}:
+            direction = "restore"
+        if outcome not in {"success", "failure"}:
+            outcome = "failure"
+        self.residency_transitions.labels(direction=direction, outcome=outcome).inc()
+        self.residency_transition_duration.labels(direction=direction).observe(
+            max(float(duration_seconds), 0.0)
+        )
 
     def scrape(self) -> bytes:
         return generate_latest(self.registry)

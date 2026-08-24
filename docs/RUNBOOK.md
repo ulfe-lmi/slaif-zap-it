@@ -2,9 +2,10 @@
 
 This runbook operates the tested local ZAP-IT service from one host process.
 It binds only to `127.0.0.1`, exposes physical GPU1 as logical `cuda:0`, and
-loads only the Objective 003 measured resident `sam2_clip` profile. BLIP3 is
-rejected before model loading because its qualified memory profile does not fit
-the target card. This is not a LAN, public, customer-data, or release procedure.
+automatically selects the capacity-based residency profile. On the observed
+11-GB card BLIP3 is host-resident and swaps with SAM2+CLIP for each BLIP3
+request. The >=24-GB all-resident implementation is not live-qualified until
+007-b. This is not a LAN, public, customer-data, or release procedure.
 
 ## Before every activation
 
@@ -39,9 +40,9 @@ set +a
 ```
 
 Replace the UUID with the fresh physical GPU1 value and set
-`SLAIF_ZAP_IT_MODEL_CACHE_ROOT` to the operator cache containing the already
-qualified SAM2 and CLIP snapshots. Do not add model IDs, revisions, devices,
-URLs, paths, or credentials to request YAML; those are startup policy. Keep the
+`SLAIF_ZAP_IT_MODEL_CACHE_ROOT` to the operator cache containing the pinned
+SAM2, CLIP and BLIP3 snapshots. Do not add model IDs, revisions, devices,
+URLs, paths, dtypes, or credentials to request YAML; those are startup policy. Keep the
 port empty for live candidate selection unless a fresh, read-only check has
 selected a specific free port.
 
@@ -99,8 +100,10 @@ At each verbosity, verify the normalized five-field YOLO lines. L1 contains a
 status, timings, pinned model/device provenance, warnings, annotated/debug
 artifacts, and exact per-object column-major RLE. ZIP contains `manifest.json`,
 `detections.yolo.txt`, and the same level-gated artifact names. A request
-containing BLIP3, geometry or panoptic visualization is rejected before
-inference with a stable unsupported status.
+containing bounded nested BLIP3 verification rules is supported. The service
+fixes BLIP3 to FP16, 32 questions/request and 32 generated tokens per question;
+model IDs, revisions, dtype, paths and runtime controls remain rejected.
+Geometry and panoptic visualization remain unsupported.
 
 Scrape `GET /metrics` during the bounded run. It is process-local and contains
 only finite labels; it must not contain filenames, labels, prompts, answers,
@@ -158,7 +161,7 @@ depth is zero. Repeat a bounded number of calls and record latency, response
 size, GPU1 allocated/reserved memory, process RSS, and residue; this is not a
 soak test or a leak-proof claim.
 
-Exercise invalid image/YAML, unsupported profile, injected operator-only
+Exercise invalid image/YAML, hostile model-control rejection, injected operator-only
 failure (`SLAIF_ZAP_IT_TEST_INJECT=failure`), and timeout/cancel behavior with
 the test-only delay hook (`SLAIF_ZAP_IT_TEST_INJECT=timeout` plus
 `SLAIF_ZAP_IT_TEST_DELAY_SECONDS` and a short operator deadline). Use a small
@@ -216,9 +219,11 @@ explicit and GPU1-only:
 ~~~
 
 The harness is local-only and refuses missing, symlinked or out-of-root files,
-safe-loads and allowlists the legacy YAML, independently crops both goat images
-to exactly the middle 50 percent in memory, and emits only sanitized
-aliases/digests/dimensions/statuses/timings/counts. It performs A/B/A as crop A,
-crop B, crop A with L2 JSON, L3 JSON and L3 ZIP calls and checks that the
-configured shared-memory workspace has no new files. It never prints or
-persists the source YAML, crop, prompts, labels, response bodies or bearer key.
+safe-loads and allowlists the legacy YAML including nested BLIP3 rules, strips
+operator/model controls, independently crops both goat images to exactly the
+middle 50 percent in memory, and emits only sanitized aliases/digests/
+dimensions/statuses/timings/counts. Its `--benchmark` mode sends exactly ten
+BLIP3-enabled L3 JSON requests in A,B,A,B,A,B,A,B,A,B order and reports
+first/minimum/median/nearest-rank-p95/maximum latency statistics. It never
+prints or persists the source YAML, crop, prompts, labels, answers, response
+bodies or bearer key.

@@ -9,8 +9,11 @@ This is a **ZAP-IT-specific multimodal pipeline endpoint** using a conventional
 path. It is **not** drop-in OpenAI `text-completions` compatibility.
 
 The CPU contract is tested with `FakeEngine`; the operator launcher additionally
-wires the qualified resident SAM2+CLIP profile on freshly verified physical GPU1.
-No persistent listener is started by the package factory.
+selects the adaptive pinned SAM2/CLIP/BLIP3 residency profile on freshly
+verified physical GPU1. Cards below 24576 MiB use serialized host-RAM swapping;
+cards at or above the boundary use the implemented all-resident path, which is
+not live-qualified until 007-b. No persistent listener is started by the package
+factory.
 
 ## Endpoints
 
@@ -254,6 +257,9 @@ measured evidence and deployment prerequisites.
 - The package factory is CPU/fake-engine; live readiness requires the qualified
   operator launcher and pinned GPU1 profile.
 - No streaming; no asynchronous jobs; no video API.
+- BLIP3 request rules are bounded to 32 questions and 32 generated tokens per
+  question. Model identity, revision, dtype, device and residency are fixed
+  operator policy; they cannot be selected by YAML or multipart fields.
 - Geometry and panoptic visualization remain explicitly unsupported service
   capabilities; geometry activation requires a separate scientific-stage order.
 - `geometry`/`blip2` config sections are rejected until the core consumes them.

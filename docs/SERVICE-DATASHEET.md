@@ -13,7 +13,7 @@ returns deterministic segmentation/classification artifacts through a loopback
 OpenAI text-completion compatibility.
 
 It does not provide LAN/public exposure, TLS, gateway integration, async jobs,
-history, persistence, training, multi-worker CUDA, BLIP3, geometry activation,
+history, persistence, training, multi-worker CUDA, geometry activation,
 Detectron2 panoptic output, or customer-data handling.
 
 ## Exact response levels
@@ -32,11 +32,13 @@ overlap. The identity PNG remains a documented single-valued projection.
 
 ## Supported stages
 
-The qualified resident profile is SAM2 + CLIP. ROI/resize, SAM2 candidate
-filtering, CLIP label refresh, deterministic ordering, YOLO, identity PNG,
-annotated overlays and L3 RLE are supported. BLIP3, geometry and panoptic are
-rejected before inference or remain legacy-only as documented in
-[OUTPUT-PARITY.md](OUTPUT-PARITY.md).
+ROI/resize, SAM2 candidate filtering, CLIP label refresh, deterministic ordering,
+YOLO, identity PNG, annotated overlays and L3 RLE are supported. BLIP3 rules are
+supported with a pinned FP16 holder: on cards below 24576 MiB the service swaps
+SAM2+CLIP and BLIP3, while cards at or above the boundary select all-resident.
+The 11-GB sequential path is the only live-qualified BLIP3 path in 007-a;
+all-resident qualification is deferred to 007-b. Geometry and panoptic remain
+unsupported as documented in [OUTPUT-PARITY.md](OUTPUT-PARITY.md).
 
 ## Limits (operator startup settings)
 
@@ -58,6 +60,7 @@ rejected before inference or remain legacy-only as documented in
 | Host available floor | 2 GiB | `SLAIF_ZAP_IT_MIN_HOST_AVAILABLE_BYTES` |
 | `/dev/shm` free floor | 64 MiB | `SLAIF_ZAP_IT_MIN_SHM_FREE_BYTES` |
 | Deadline / queue | 120 s / 0 | `SLAIF_ZAP_IT_REQUEST_DEADLINE_SECONDS`, `SLAIF_ZAP_IT_QUEUE_DEPTH` |
+| BLIP3 questions / generated tokens | 32 / 32 | Fixed service policy; not uploaded controls |
 
 Budgets are validated at startup and cannot be changed by request YAML. For L3,
 each supported annotated stream reserves exactly `height * width * 3` raw bytes
@@ -90,6 +93,12 @@ Objective-005 bounded 32-request table, live RLE/metrics/recovery evidence and
 final GPU/process snapshots are published in `oap/reports/005-a-report.md`.
 These measurements are bounded fixture evidence, not an SLA or soak test.
 
+Objective 007-a adds a real low-card BLIP3 qualification table and ten-request
+central-crop benchmark to its immutable report. It records startup, transition,
+restore, latency and memory evidence without committing goat bytes or response
+content. The >=24-GB all-resident path is implemented and CPU/fake-tested but
+is intentionally not claimed as live-qualified until 007-b.
+
 ## Objective 006-a fixture and release constraint
 
 **NONREDISTRIBUTABLE — local academic E2E only; excluded from packages/release
@@ -106,7 +115,9 @@ human-gated CRIT-0001 release blocker.
 
 `GET /metrics` exposes a custom process-local Prometheus registry without
 default process collectors. Labels are limited to stable outcome code,
-verbosity and `json|zip`; duration/size/object/artifact histograms are unlabeled.
+verbosity, `json|zip`, fixed model component/outcome and fixed transition
+direction/outcome; duration/size/object/artifact histograms are otherwise
+unlabeled.
 Readiness, active inference and logical `cuda:0` allocated/reserved gauges are
 also exposed when available. Request IDs, labels, prompts, answers, filenames,
 paths, headers, credentials and raw content are never metric labels or logs.

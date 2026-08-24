@@ -310,6 +310,12 @@ def run_single_image(
             "fname_stem": frame_id,
             "dryrun": dryrun,
         }
+        if isinstance(blip3_state, dict):
+            # These bounds are fixed by the service registry, never by upload.
+            if "max_questions" in blip3_state:
+                blip3_params["max_questions"] = int(blip3_state["max_questions"])
+            if "max_new_tokens" in blip3_state:
+                blip3_params["max_new_tokens"] = int(blip3_state["max_new_tokens"])
 
         def _run_blip3():
             return stages.run_blip3(

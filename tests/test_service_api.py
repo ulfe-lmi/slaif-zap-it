@@ -89,7 +89,7 @@ def test_readyz_with_ready_provider():
     assert response.json() == {"status": "ready", "detail": "fake engine ready"}
 
 
-def test_operator_runtime_policy_rejects_unqualified_blip3_profile():
+def test_operator_runtime_policy_accepts_sequential_blip3_profile():
     policy = RuntimePolicy(expected_gpu_uuid="GPU-target", model_registry_ready=True)
     app = create_app(
         engine=FakeEngine(),
@@ -107,9 +107,10 @@ def test_operator_runtime_policy_rejects_unqualified_blip3_profile():
                 "application/yaml",
             ),
         },
+        data={"verbosity": "2"},
     )
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "unsupported_profile"
+    assert response.status_code == 200
+    assert response.json()["service"]["objects"]
 
 
 def test_not_ready_blocks_inference_but_parsing_errors_come_first():

@@ -39,12 +39,13 @@ nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory \
   --format=csv,noheader
 ```
 
-The ~11 GB capacity is a hard planning constraint. Do not assume SAM2, CLIP and
-BLIP3 can all remain resident. Objective 003 must measure individual and combined
-profiles and select an explicit safe strategy: supported resident combination,
-staged load/unload, bounded CPU placement where acceptable, an explicitly
-approved smaller model revision, or rejection of unsupported configurations.
-Never spill to GPU0 or claim a stage ran when it did not.
+The ~11 GB capacity is a hard planning constraint. The service automatically
+selects `sam2_clip_gpu_blip3_cpu_swap` below 24576 MiB of physical total
+capacity and `sam2_clip_blip3_gpu_resident` at or above 24576 MiB. The first
+mode initializes BLIP3 in host RAM, swaps SAM2+CLIP to host RAM for a BLIP3
+request, then restores the baseline in `finally`; it does not reload BLIP3 per
+request. Capacity is selected from fresh total-memory evidence, not current
+free memory. Never spill to GPU0 or claim a stage ran when it did not.
 
 Never stop/reset/modify another process or physical GPU0. No driver/CUDA/power/
 persistence changes in ordinary orders. GPU tests are explicit, serial and clean
@@ -52,8 +53,9 @@ only processes/workspaces they created.
 
 ## Objective 003 qualification
 
-The live qualification record, pinned environment, model revisions, measured
-tables, supported profile and selected Objective 004 port are in
-[runtime.md](runtime.md). The measured strategy is resident SAM2+CLIP with
-BLIP3 rejected before load by the operator policy. This document remains the
-short launch/isolation law; it does not claim that a service is running.
+The live qualification record, pinned environment, model revisions and measured
+tables are in [runtime.md](runtime.md) and the immutable 007-a report. The
+11-GB sequential profile is the only live-qualified BLIP3 mode in 007-a; the
+all-resident implementation is present but remains unqualified until 007-b on
+an exclusive >=24-GB GPU. This document remains the short launch/isolation law;
+it does not claim that a service is running.

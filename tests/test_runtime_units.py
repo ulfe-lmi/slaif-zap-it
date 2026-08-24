@@ -16,7 +16,7 @@ from src.runtime.device import (
 from src.runtime.ports import PortCheck
 from src.runtime.readiness import make_readiness_provider
 from src.runtime.shm import ShmError, ShmWorkspace, ensure_shm_root
-from src.runtime.strategy import RuntimePolicy, UnsupportedProfileError
+from src.runtime.strategy import RuntimePolicy
 
 
 class _FakeCuda:
@@ -88,13 +88,12 @@ def test_device_guard_allows_explicit_cpu_test_mode():
     assert report.logical_index is None
 
 
-def test_runtime_policy_rejects_client_requested_unsupported_profile():
+def test_runtime_policy_supports_blip3_profiles():
     policy = RuntimePolicy(expected_gpu_uuid="GPU-target")
     config = SimpleNamespace(clip_cfg={"labels": {"thing": "a thing"}}, blip3_cfg={})
     assert policy.validate_config(config) == "sam2_clip"
     blip_config = SimpleNamespace(clip_cfg={}, blip3_cfg={"thing": {"question": "what?"}})
-    with pytest.raises(UnsupportedProfileError):
-        policy.validate_config(blip_config)
+    assert policy.validate_config(blip_config) == "sam2_blip3"
 
 
 def test_runtime_policy_readiness_is_not_ready_until_device_and_registry_are_ready():
