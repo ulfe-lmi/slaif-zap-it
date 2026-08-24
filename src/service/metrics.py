@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import resource
+
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from prometheus_client.registry import CollectorRegistry
 
@@ -91,6 +93,45 @@ class ServiceMetrics:
             "Logical cuda:0 reserved bytes.",
             registry=self.registry,
         )
+        self.gpu_peak_allocated = Gauge(
+            "zap_it_torch_gpu_peak_allocated_bytes",
+            "Logical cuda:0 peak allocated bytes for the latest inference.",
+            registry=self.registry,
+        )
+        self.gpu_peak_reserved = Gauge(
+            "zap_it_torch_gpu_peak_reserved_bytes",
+            "Logical cuda:0 peak reserved bytes for the latest inference.",
+            registry=self.registry,
+        )
+        self.gpu_free = Gauge(
+            "zap_it_torch_gpu_free_bytes",
+            "Logical cuda:0 free bytes at the latest inference sample.",
+            registry=self.registry,
+        )
+        self.host_rss = Gauge(
+            "zap_it_host_rss_max_bytes",
+            "Process maximum resident set size in bytes.",
+            registry=self.registry,
+        )
+        self.model_initializations = Counter(
+            "zap_it_model_initializations_total",
+            "Pinned model-holder initialization outcomes.",
+            ("component", "outcome"),
+            registry=self.registry,
+        )
+        self.residency_transitions = Counter(
+            "zap_it_residency_transitions_total",
+            "Bounded model residency transition outcomes.",
+            ("direction", "outcome"),
+            registry=self.registry,
+        )
+        self.residency_transition_duration = Histogram(
+            "zap_it_residency_transition_duration_seconds",
+            "Model residency transition duration.",
+            ("direction",),
+            buckets=(0.01, 0.1, 0.5, 1, 2, 5, 10, 30, 60, 120),
+            registry=self.registry,
+        )
 
     def observe_error(self, code: str) -> None:
         self.requests.labels(outcome=code).inc()
@@ -120,18 +161,59 @@ class ServiceMetrics:
         self.object_count.observe(objects)
         self.artifact_count.observe(artifacts)
 
+    def reset_gpu_peaks(self) -> None:
+        """Start a per-request logical CUDA peak window when available."""
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.reset_peak_memory_stats(0)
+        except (ImportError, RuntimeError, AttributeError, TypeError):
+            return
+
     def update_gpu(self) -> None:
-        """Sample only logical ``cuda:0`` counters when Torch is available."""
+        """Sample logical ``cuda:0`` current/peak counters and host RSS."""
         try:
             import torch
 
             if torch.cuda.is_available():
                 self.gpu_allocated.set(float(torch.cuda.memory_allocated(0)))
                 self.gpu_reserved.set(float(torch.cuda.memory_reserved(0)))
+                self.gpu_peak_allocated.set(float(torch.cuda.max_memory_allocated(0)))
+                self.gpu_peak_reserved.set(float(torch.cuda.max_memory_reserved(0)))
+                free_bytes, _total_bytes = torch.cuda.mem_get_info(0)
+                self.gpu_free.set(float(free_bytes))
         except (ImportError, RuntimeError, AttributeError, TypeError):
             # CPU installs and transient CUDA teardown do not make metrics
             # collection a request failure.
+            pass
+        try:
+            # Linux reports ru_maxrss in KiB; this metric is intentionally
+            # unlabeled and process-local to avoid content/cardinality leaks.
+            self.host_rss.set(float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024))
+        except (OSError, TypeError, ValueError):
             return
+
+    def observe_model_initialization(self, component: str, outcome: str) -> None:
+        """Record only fixed operator component/outcome labels."""
+        if component not in {"sam2", "clip", "blip3", "registry"}:
+            component = "registry"
+        if outcome not in {"success", "failure"}:
+            outcome = "failure"
+        self.model_initializations.labels(component=component, outcome=outcome).inc()
+
+    def observe_residency_transition(
+        self, direction: str, outcome: str, duration_seconds: float
+    ) -> None:
+        """Record fixed-label swap/restore observations without request data."""
+        if direction not in {"to_blip3", "restore"}:
+            direction = "restore"
+        if outcome not in {"success", "failure"}:
+            outcome = "failure"
+        self.residency_transitions.labels(direction=direction, outcome=outcome).inc()
+        self.residency_transition_duration.labels(direction=direction).observe(
+            max(float(duration_seconds), 0.0)
+        )
 
     def scrape(self) -> bytes:
         return generate_latest(self.registry)

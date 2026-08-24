@@ -17,11 +17,13 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.request import Request, urlopen
 
 import yaml
 from PIL import Image
 
 from smoke_local_service import (
+    post_completion,
     run_level_case,
 )
 
@@ -30,13 +32,20 @@ DEFAULT_IMAGE_A = REPO_ROOT / "demos/goats/goats1.jpg"
 DEFAULT_IMAGE_B = REPO_ROOT / "demos/goats/goats2.jpg"
 DEFAULT_CONFIG = REPO_ROOT / "configs/goats2.yaml"
 ALLOWED_TOP_LEVEL = frozenset(
-    {"alpha", "preprocessing", "mask_generator", "postsam2processing", "clip", "visualization"}
+    {
+        "alpha",
+        "preprocessing",
+        "mask_generator",
+        "postsam2processing",
+        "clip",
+        "blip3",
+        "visualization",
+    }
 )
 DENIED_KEY_WORDS = frozenset(
     {
         "model",
         "revision",
-        "blip3",
         "panoptic",
         "device",
         "path",
@@ -51,6 +60,11 @@ DENIED_KEY_WORDS = frozenset(
         "import",
         "service",
         "resource",
+        "dtype",
+        "tokenizer",
+        "processor",
+        "remote",
+        "download",
         "credential",
         "secret",
     }
@@ -135,6 +149,9 @@ def derive_api_safe_config(raw_yaml: bytes) -> tuple[bytes, int]:
             derived[name] = {}
             continue
         sanitized = _safe_value(value, name)
+        if name == "visualization" and isinstance(sanitized, dict):
+            # Academic panoptic visualization is not an API-safe renderer.
+            sanitized.pop("blip3", None)
         if sanitized is not None:
             derived[name] = sanitized
         elif value is not None:
@@ -152,11 +169,45 @@ def _workspace_snapshot(root: Path) -> tuple[int, int]:
         return (0, 0)
     count = 0
     total = 0
+    operator_runtime = root / "runtime"
     for path in root.rglob("*"):
+        if path == operator_runtime or operator_runtime in path.parents:
+            continue
         if path.is_file():
             count += 1
             total += path.stat().st_size
     return count, total
+
+
+def _metric_values(host: str, port: int, api_key: str | None) -> dict[str, float]:
+    """Read fixed-label numeric runtime evidence from the metrics endpoint."""
+    request = Request(f"http://{host}:{port}/metrics")
+    if api_key:
+        request.add_header("Authorization", f"Bearer {api_key}")
+    try:
+        with urlopen(request, timeout=5) as response:
+            lines = response.read().decode("utf-8").splitlines()
+    except Exception:
+        return {}
+
+    values: dict[str, float] = {}
+    for line in lines:
+        if not line or line.startswith("#") or " " not in line:
+            continue
+        name, raw_value = line.rsplit(" ", 1)
+        try:
+            value = float(raw_value)
+        except ValueError:
+            continue
+        if name.startswith("zap_it_torch_gpu_") or name.startswith("zap_it_host_rss_"):
+            values[name] = value
+        elif name.startswith("zap_it_residency_transition_duration_seconds_sum"):
+            try:
+                direction = name.split('direction="', 1)[1].split('"', 1)[0]
+            except IndexError:
+                continue
+            values[f"transition_{direction}_seconds_sum"] = value
+    return values
 
 
 def _run_sequence(
@@ -197,6 +248,188 @@ def _run_sequence(
     return cases
 
 
+def _nearest_rank_p95(values: list[float]) -> float:
+    ordered = sorted(values)
+    return ordered[max(0, int(0.95 * len(ordered) + 0.999999) - 1)]
+
+
+def run_request_summary(
+    host: str,
+    port: int,
+    *,
+    image_bytes: bytes,
+    config_bytes: bytes,
+    api_key: str | None,
+) -> tuple[int, int, dict[str, Any], dict[str, str], dict[str, Any]]:
+    """Send one L3 JSON request and retain only non-content numeric summaries."""
+    metrics_before = _metric_values(host, port, api_key)
+    status, payload, meta = post_completion(
+        host,
+        port,
+        image_bytes=image_bytes,
+        config_bytes=config_bytes,
+        verbosity=3,
+        response_format="json",
+        api_key=api_key,
+        timeout_s=240.0,
+    )
+    metrics_after = _metric_values(host, port, api_key)
+    if status != 200 or not isinstance(payload, dict):
+        return status, 0, {}, meta, {"metrics": metrics_after}
+    service = payload.get("service") if isinstance(payload.get("service"), dict) else {}
+    timings = service.get("timings_ms") if isinstance(service.get("timings_ms"), dict) else {}
+    safe_timings = {
+        str(key): float(value)
+        for key, value in timings.items()
+        if str(key).startswith("stage.") and isinstance(value, (int, float))
+    }
+    objects = service.get("objects")
+    yolo_text = str((payload.get("choices") or [{}])[0].get("text", ""))
+    stages = (
+        service.get("stage_statuses") if isinstance(service.get("stage_statuses"), list) else []
+    )
+    stage_statuses = {
+        str(item.get("name")): str(item.get("status"))
+        for item in stages
+        if isinstance(item, dict) and item.get("name")
+    }
+    answers = [
+        str(item.get("blip3_answer"))
+        for item in (objects if isinstance(objects, list) else [])
+        if isinstance(item, dict) and item.get("blip3_answer")
+    ]
+    return (
+        status,
+        len(objects) if isinstance(objects, list) else 0,
+        safe_timings,
+        meta,
+        {
+            "stage_statuses": stage_statuses,
+            "blip3_executed": stage_statuses.get("blip3") == "executed",
+            "answer_count": len(answers),
+            "answer_digest_prefix": _digest("\n".join(answers).encode())[:16] if answers else None,
+            "yolo_digest_prefix": _digest(yolo_text.encode())[:16],
+            "metrics": metrics_after,
+            "transition_to_blip3_seconds": round(
+                metrics_after.get("transition_to_blip3_seconds_sum", 0.0)
+                - metrics_before.get("transition_to_blip3_seconds_sum", 0.0),
+                3,
+            ),
+            "restore_seconds": round(
+                metrics_after.get("transition_restore_seconds_sum", 0.0)
+                - metrics_before.get("transition_restore_seconds_sum", 0.0),
+                3,
+            ),
+        },
+    )
+
+
+def run_benchmark(
+    host: str,
+    port: int,
+    crop_a_bytes: bytes,
+    crop_b_bytes: bytes,
+    config_bytes: bytes,
+    api_key: str | None,
+) -> dict[str, Any]:
+    """Run the exact ten-request A/B sequence with sanitized summaries only."""
+    samples: list[dict[str, Any]] = []
+    for index in range(10):
+        alias = "A" if index % 2 == 0 else "B"
+        image_bytes = crop_a_bytes if alias == "A" else crop_b_bytes
+        status, object_count, timings, meta, evidence = run_request_summary(
+            host,
+            port,
+            image_bytes=image_bytes,
+            config_bytes=config_bytes,
+            api_key=api_key,
+        )
+        samples.append(
+            {
+                "index": index + 1,
+                "image": alias,
+                "status": status,
+                "latency_ms": float(meta.get("latency_ms", 0)),
+                "objects": object_count,
+                "stage_timings_ms": timings,
+                "stage_statuses": evidence.get("stage_statuses", {}),
+                "blip3_executed": bool(evidence.get("blip3_executed")),
+                "answer_count": int(evidence.get("answer_count", 0)),
+                "answer_digest_prefix": evidence.get("answer_digest_prefix"),
+                "yolo_digest_prefix": evidence.get("yolo_digest_prefix"),
+                "transition_to_blip3_seconds": evidence.get("transition_to_blip3_seconds", 0.0),
+                "restore_seconds": evidence.get("restore_seconds", 0.0),
+                "gpu_peak_allocated_mib": round(
+                    float(
+                        evidence.get("metrics", {}).get(
+                            "zap_it_torch_gpu_peak_allocated_bytes", 0.0
+                        )
+                    )
+                    / 2**20,
+                    1,
+                ),
+                "gpu_peak_reserved_mib": round(
+                    float(
+                        evidence.get("metrics", {}).get("zap_it_torch_gpu_peak_reserved_bytes", 0.0)
+                    )
+                    / 2**20,
+                    1,
+                ),
+                "gpu_free_mib": round(
+                    float(evidence.get("metrics", {}).get("zap_it_torch_gpu_free_bytes", 0.0))
+                    / 2**20,
+                    1,
+                ),
+                "host_rss_max_mib": round(
+                    float(evidence.get("metrics", {}).get("zap_it_host_rss_max_bytes", 0.0))
+                    / 2**20,
+                    1,
+                ),
+            }
+        )
+    by_image: dict[str, list[float]] = {"A": [], "B": []}
+    repeatability: dict[str, bool] = {}
+    for sample in samples:
+        if sample["status"] == 200:
+            by_image[sample["image"]].append(sample["latency_ms"])
+    for alias in ("A", "B"):
+        signatures = {
+            (
+                sample["objects"],
+                sample["answer_count"],
+                sample["answer_digest_prefix"],
+                sample["yolo_digest_prefix"],
+            )
+            for sample in samples
+            if sample["image"] == alias and sample["status"] == 200
+        }
+        repeatability[alias] = len(signatures) == 1
+
+    def stats(values: list[float]) -> dict[str, float]:
+        if not values:
+            return {}
+        ordered = sorted(values)
+        return {
+            "first": round(values[0], 1),
+            "minimum": round(min(values), 1),
+            "median": round(ordered[len(ordered) // 2], 1),
+            "p95_nearest_rank": round(_nearest_rank_p95(values), 1),
+            "maximum": round(max(values), 1),
+        }
+
+    return {
+        "status": "PASSED"
+        if all(item["status"] == 200 and item["blip3_executed"] for item in samples)
+        and all(repeatability.values())
+        else "FAILED",
+        "request_order": [item["image"] for item in samples],
+        "samples": samples,
+        "statistics": {key: stats(value) for key, value in by_image.items()},
+        "aggregate": stats([item["latency_ms"] for item in samples if item["status"] == 200]),
+        "repeatability": repeatability,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, required=True)
@@ -207,6 +440,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fixture-root", type=Path, default=REPO_ROOT)
     parser.add_argument("--api-key", default=os.environ.get("SLAIF_ZAP_IT_API_KEY"))
     parser.add_argument("--tmp-root", type=Path, default=Path("/dev/shm/slaif-zap-it"))
+    parser.add_argument(
+        "--benchmark",
+        action="store_true",
+        help="run exactly ten real BLIP3-enabled central-crop requests A,B,A,B,A,B,A,B,A,B",
+    )
     args = parser.parse_args(argv)
     if args.host != "127.0.0.1":
         parser.error("the local academic harness only permits loopback")
@@ -222,22 +460,37 @@ def main(argv: list[str] | None = None) -> int:
         safe_config, stripped_count = derive_api_safe_config(raw_config)
         before = _workspace_snapshot(args.tmp_root)
         results = []
-        # A/B/A: the two independently decoded academic crops, then crop A
-        # again. Each state is exercised at L2 JSON, L3 JSON and L3 ZIP so
-        # request state cannot be hidden by one response format.
-        for alias, payload in (
-            ("a1", crop_a_bytes),
-            ("b", crop_b_bytes),
-            ("a2", crop_a_bytes),
-        ):
-            results.extend(
-                _run_sequence(args.host, args.port, payload, safe_config, args.api_key, alias)
+        benchmark = None
+        if args.benchmark:
+            benchmark = run_benchmark(
+                args.host,
+                args.port,
+                crop_a_bytes,
+                crop_b_bytes,
+                safe_config,
+                args.api_key,
             )
+        else:
+            # A/B/A: the two independently decoded academic crops, then crop A
+            # again. Each state is exercised at L2 JSON, L3 JSON and L3 ZIP so
+            # request state cannot be hidden by one response format.
+            for alias, payload in (
+                ("a1", crop_a_bytes),
+                ("b", crop_b_bytes),
+                ("a2", crop_a_bytes),
+            ):
+                results.extend(
+                    _run_sequence(args.host, args.port, payload, safe_config, args.api_key, alias)
+                )
         after = _workspace_snapshot(args.tmp_root)
     except (OSError, ValueError, yaml.YAMLError, AssertionError) as exc:
         print(json.dumps({"status": "FAILED", "error": type(exc).__name__}))
         return 1
-    passed = all(bool(item["passed"]) for item in results) and before == after
+    passed = (
+        all(bool(item["passed"]) for item in results)
+        and (benchmark is None or benchmark["status"] == "PASSED")
+        and before == after
+    )
     output = {
         "status": "PASSED" if passed else "FAILED",
         "fixture_aliases": ["a1", "b", "a2"],
@@ -260,6 +513,9 @@ def main(argv: list[str] | None = None) -> int:
         "workspace_bytes": after[1],
         "cases": results,
     }
+    if benchmark is not None:
+        output["benchmark"] = benchmark
+        output["status"] = benchmark["status"] if passed else "FAILED"
     print(json.dumps(output, sort_keys=True))
     return 0 if passed else 1
 

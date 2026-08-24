@@ -1,8 +1,7 @@
 # Changelog
 
 All versions below are unpublished development state unless explicitly marked
-otherwise. No ZAP-IT package, tag or GitHub release is created by Objective
-006-a.
+otherwise. No ZAP-IT package, tag, or GitHub release has been published.
 
 ## 0.1.0 — unpublished release candidate
 
@@ -12,6 +11,13 @@ otherwise. No ZAP-IT package, tag or GitHub release is created by Objective
 - 2026-08-23: Objective 006-a adds auditable wheel/sdist allowlists, installed
   service provenance, operator runbooks, supply-chain checks, and the
   opt-in local academic fixture harness.
-- Legacy batch/video behavior remains supported. BLIP3, geometry activation,
-  panoptic output, gateway integration, containers, LAN/public listeners and
-  final release authorization remain outside this candidate.
+- 2026-08-24: CRIT-0001 is human accepted; the repository owner confirmed
+  redistribution rights for the two goat images and two YAML files.
+- 2026-08-24: Objective 007 adds bounded BLIP3 request rules, reusable pinned
+  FP16 model state, stage-aware sequential residency, restoration/failure
+  handling, memory/transition metrics, and repeated local qualification on the
+  11 GB target GPU.
+- Legacy batch/video behavior remains supported. Geometry activation, panoptic
+  service output, gateway integration, containers, LAN/public listeners,
+  all-resident >=24 GB qualification, and final release authorization remain
+  outside the current candidate.

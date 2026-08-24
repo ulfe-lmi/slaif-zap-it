@@ -1,11 +1,9 @@
 # ZAP-IT output parity matrix
 
-> **NONREDISTRIBUTABLE — local academic E2E only; excluded from packages/release
-> fixtures.** The repository's goat image/config assets are permitted only for
-> operator-run local regression on the documented central crop. They are not
-> accuracy goldens, CI fixtures, package data or release evidence. Objective
-> 006 must review and exclude these existing assets from distributable artifacts
-> unless human rights clearance changes.
+> **Local academic regression policy.** The repository owner confirmed
+> redistribution rights for the goat image/config assets. They remain ignored
+> operator inputs and excluded from packages as defense in depth. They are not
+> accuracy goldens or public CI fixtures.
 
 This matrix is the authoritative inventory for the current YAML pipeline. A
 module or helper is not evidence that the live service produces its output.
@@ -17,8 +15,8 @@ module or helper is not evidence that the live service produces its output.
 | SAM2 candidate masks and quality fields | Candidate masks are filtered and ordered | Public L2 fields when produced; bounded L3 counts/status |
 | Post-SAM2 area/bbox filter | Removes candidates before optional classification | Public L3 candidate counts/status |
 | CLIP labels, scores and class map | Request labels refresh resident CLIP prompts | Public L0 class mapping, L2 label/score, L3 provenance |
-| BLIP3 verification | Legacy module exists; qualified live profile rejects it before load/inference | Unsupported live capability; legacy CLI-only |
-| Geometry Canny/Hough helpers | Helpers and tests exist, but canonical core does not call them; helpers may write TSV/debug files | Unsupported/dead for service; legacy compatibility only where explicitly wired |
+| BLIP3 verification | Pinned FP16 holder; live-qualified service swaps SAM2+CLIP and BLIP3 at the stage boundary | Public L2/L3 fields when executed; all-resident qualification remains separate |
+| Geometry Canny/Hough helpers | Helpers and tests exist, but canonical core does not call them; helpers may write TSV/debug files | Not supported by the service; legacy compatibility only where explicitly wired |
 | `annotated`/`alpha-overlay` in-memory streams | Bounded RGB overlays; service executes them only at L3 | Bounded operator/service diagnostic |
 | Panoptic/Detectron2 renderer | Detectron2 is absent and renderer is not a live capability | Unsupported for service; legacy helper only |
 | Stage statuses, candidate counts, timings | Produced by the core | Bounded L3 service metadata |
@@ -30,13 +28,13 @@ module or helper is not evidence that the live service produces its output.
 | JSON envelope and artifact descriptors | Level-gated, base64 binary artifacts with hashes and sizes | Public L0-L3 |
 | ZIP manifest and raw artifacts | Data-free manifest plus the same raw artifacts and YOLO text | Public L0-L3 `zip` response |
 | ROI/SAM2/post-filter/CLIP debug patches | In-memory only at L3, opaque names, bounded sink | Bounded operator/service diagnostic |
-| BLIP3 debug answers | Legacy filesystem/debug path only; live BLIP3 is rejected | Legacy CLI-only; unsafe for current service |
+| BLIP3 debug answers | Bounded in-memory artifacts only at L3; answers are not metric labels or logs | Public L2/L3 fields when produced; request rules only |
 | Legacy image writer | Writes configured image sequences through the trusted batch adapter | Legacy CLI-only |
 | Legacy video/MJPEG writer | Writes configured video streams through the trusted batch adapter | Legacy CLI-only |
 | `images` and `video` batch output mappings | API parser ignores them with a warning | Legacy CLI-only; unsafe/inappropriate for service |
 | `export_yolo_det` dataset export | Trusted batch adapter writes dataset annotations | Legacy CLI-only |
 | Raw request/config/result persistence | Not used by the service | Unsafe/inappropriate for service |
-| Goat academic fixture E2E | Local central-50% crop only; sanitized aliases/digests and bounded resource evidence | **NONREDISTRIBUTABLE — local academic E2E only; excluded from packages/release fixtures** |
+| Goat academic fixture E2E | Local central-50% crop only; sanitized aliases/digests and bounded resource evidence | Rights confirmed; ignored operator inputs, excluded from packages as defense in depth |
 
 ## Renderer policy
 
@@ -56,7 +54,7 @@ column-major chunks and never retains a second full-size flattened mask.
 
 ## Geometry status
 
-Geometry is intentionally not activated in Objective 005. The API rejects a
+Geometry is intentionally not activated in the service. The API rejects a
 top-level `geometry` field with `unsupported_field` before inference. Future
 activation requires a separately governed scientific-stage order and an
 in-memory refactor of the current file-writing helper.

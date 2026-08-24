@@ -55,7 +55,7 @@ def test_goat_derivation_is_allowlisted_and_strips_operator_controls():
             "mask_generator": {"points_per_side": 4},
             "clip": {"labels": {"synthetic": "a synthetic object"}},
             "model_repo": "private-model",
-            "blip3": {"question": "private prompt"},
+            "blip3": {"synthetic": {"question": "private prompt"}},
             "images": {"input_dir": "/private/input"},
             "output_dir": "/private/output",
         }
@@ -66,10 +66,10 @@ def test_goat_derivation_is_allowlisted_and_strips_operator_controls():
 
     assert mapping["mask_generator"] == {}
     assert "model_repo" not in mapping
-    assert "blip3" not in mapping
+    assert mapping["blip3"]["synthetic"]["question"] == "private prompt"
     assert "images" not in mapping
     assert "output_dir" not in mapping
-    assert stripped == 5
+    assert stripped == 4
 
 
 def test_goat_path_guard_rejects_symlink_and_out_of_root(tmp_path):

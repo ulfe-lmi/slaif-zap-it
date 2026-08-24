@@ -85,7 +85,10 @@ visualization:
 
 BLIP3_CONFIG_YAML = b"""
 blip3:
-  question: "What is in this region?"
+  object:
+    question: "What is in this region?"
+    trueresult: "yes"
+    falseresult: "no"
 """
 
 INVALID_CONFIG_YAML = b"[unterminated\n"
@@ -376,7 +379,10 @@ def run_level_case(
         runtime = provenance.get("runtime") or {}
         if runtime:
             assert runtime.get("device", {}).get("logical") == "cuda:0"
-            assert runtime.get("strategy") == "sam2_clip_resident_blip3_rejected"
+            assert runtime.get("strategy") in {
+                "sam2_clip_gpu_blip3_cpu_swap",
+                "sam2_clip_blip3_gpu_resident",
+            }
     return case_summary(case, status, meta, extra, passed=True)
 
 
@@ -388,14 +394,14 @@ def run_blip3_rejection_case(
         port,
         image_bytes=fixture_png,
         config_bytes=BLIP3_CONFIG_YAML,
-        verbosity=0,
+        verbosity=2,
         response_format="json",
         api_key=api_key,
     )
     code = error_code(payload)
-    passed = status == 400 and code == "unsupported_profile"
+    passed = status == 200 and isinstance(payload, dict)
     return case_summary(
-        "blip3_rejected",
+        "blip3_supported",
         status,
         meta,
         {"error_code": code},

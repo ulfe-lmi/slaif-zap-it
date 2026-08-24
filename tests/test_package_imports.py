@@ -3,7 +3,7 @@
 These run inside the canonical CPU suite where ``tests/conftest.py`` provides
 the documented stub harness, proving the package layout imports cleanly
 without GPU libraries. Importing outside this harness requires the qualified
-GPU environment (see docs/BASELINE.md).
+GPU environment (see TESTING.md and docs/runtime.md).
 """
 
 from importlib import import_module

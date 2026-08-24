@@ -8,6 +8,15 @@ import os
 import numpy as np
 from PIL import Image
 
+
+MAX_SERVICE_QUESTIONS = 32
+MAX_SERVICE_NEW_TOKENS = 32
+
+
+class Blip3ResourceLimitError(ValueError):
+    """Raised before generation when the service BLIP3 budget is exceeded."""
+
+
 # -------------------------------------------------------------------------
 # Safe fallback if transformers isn't present during dry-run
 # -------------------------------------------------------------------------
@@ -92,7 +101,13 @@ def _force_openclip_default_pretrained(default_tag: str = "laion2b_s32b_b79k"):
 # -------------------------------------------------------------------------
 class _Blip3QA:
     def __init__(
-        self, blip_config: Dict[str, Any], device="cuda", verbosity: int = 1, log_print_func=None
+        self,
+        blip_config: Dict[str, Any],
+        device="cuda",
+        verbosity: int = 1,
+        log_print_func=None,
+        *,
+        local_files_only: bool = False,
     ):
         import torch
         from transformers import (
@@ -113,6 +128,8 @@ class _Blip3QA:
         )
         self.revision = blip_config.get("revision")
         load_kwargs = {"revision": str(self.revision)} if self.revision else {}
+        if local_files_only:
+            load_kwargs["local_files_only"] = True
 
         # dtype: "auto" | "float16" | "bfloat16" | "float32"
         dtype_cfg = str(blip_config.get("dtype", "auto")).lower()
@@ -157,7 +174,7 @@ class _Blip3QA:
             **load_kwargs,
             trust_remote_code=True,
             use_safetensors=True,
-            dtype=dtype,  # remote class prefers 'dtype='
+            torch_dtype=dtype,
             low_cpu_mem_usage=False,  # <<< critical: don't init on meta
             device_map=None,  # avoid accelerate sharding/meta route
             attn_implementation="eager",  # optional; remove if your stack complains
@@ -165,6 +182,13 @@ class _Blip3QA:
 
         # Unify device & dtype; prevents BF16/FP16 mismatches in remote generate()
         self.model.to(device=self.device, dtype=dtype).eval()
+        try:
+            self.estimated_gpu_bytes = sum(
+                int(parameter.numel()) * int(parameter.element_size())
+                for parameter in self.model.parameters()
+            )
+        except (AttributeError, TypeError):
+            self.estimated_gpu_bytes = 0
         try:
             # Some remote loaders keep nested modules in a different dtype; normalize them.
             if hasattr(self.model, "vlm") and hasattr(self.model.vlm, "lang_model"):
@@ -198,6 +222,12 @@ class _Blip3QA:
         )
 
         self.stopper = _EosListStoppingCriteria()
+
+    def move_to(self, device: Any) -> None:
+        """Move only the reusable model holder; request tensors are never kept."""
+        target = self._torch.device(device)
+        self.model.to(device=target)
+        self.device = target
 
     def answer(self, image, query: str, max_new_tokens: int = 768) -> str:
         from PIL import Image as _PILImage
@@ -257,7 +287,15 @@ class _Blip3QA:
 # -------------------------------------------------------------------------
 class _Blip3Filter:
     def __init__(
-        self, blip_config: Dict[str, Any], device="cuda", verbosity: int = 1, log_print_func=None
+        self,
+        blip_config: Dict[str, Any],
+        device="cuda",
+        verbosity: int = 1,
+        log_print_func=None,
+        *,
+        qa: _Blip3QA | None = None,
+        max_questions: int | None = None,
+        max_new_tokens: int | None = None,
     ):
         import torch
 
@@ -269,12 +307,45 @@ class _Blip3Filter:
         self.log_print = log_print_func or (lambda *a, **k: None)
 
         self.label_cfg: Dict[str, Dict[str, Any]] = {}
-        model_cfg: Dict[str, Any] = {}
-        for k, v in blip_config.items():
-            (self.label_cfg if isinstance(v, dict) else model_cfg)[k] = v
+        self.max_questions = max_questions
+        self.max_new_tokens = max_new_tokens
+        self.qa = qa
+        self.update_rules(blip_config)
+        if self.qa is None:
+            model_cfg: Dict[str, Any] = {
+                k: v for k, v in blip_config.items() if not isinstance(v, dict)
+            }
+            self.qa = _Blip3QA(
+                model_cfg, device=device, verbosity=verbosity, log_print_func=self.log_print
+            )
 
-        self.qa = _Blip3QA(
-            model_cfg, device=device, verbosity=verbosity, log_print_func=self.log_print
+    def update_rules(self, blip_config: Dict[str, Any]) -> None:
+        """Replace request rules without changing the reusable model holder."""
+        self.label_cfg = {
+            str(key): dict(value)
+            for key, value in (blip_config or {}).items()
+            if isinstance(value, dict)
+        }
+
+    @classmethod
+    def from_qa(
+        cls,
+        qa: _Blip3QA,
+        blip_config: Dict[str, Any],
+        *,
+        verbosity: int = 1,
+        log_print_func=None,
+        max_questions: int | None = None,
+        max_new_tokens: int | None = None,
+    ) -> "_Blip3Filter":
+        return cls(
+            blip_config,
+            device=qa.device,
+            verbosity=verbosity,
+            log_print_func=log_print_func,
+            qa=qa,
+            max_questions=max_questions,
+            max_new_tokens=max_new_tokens,
         )
 
     def _write_debug_artifacts(
@@ -307,6 +378,20 @@ class _Blip3Filter:
                 any_rules.append((thr, key, rule))
             else:
                 label_rules[key] = rule
+
+        if self.max_questions is not None:
+            planned_questions = 0
+            for mask in masks:
+                score = float(mask.get("clip_score", 0.0))
+                planned_questions += sum(
+                    1 for threshold, _key, _rule in any_rules if score <= threshold
+                )
+                if mask.get("clip_label") in label_rules:
+                    planned_questions += 1
+            if planned_questions > self.max_questions:
+                raise Blip3ResourceLimitError(
+                    f"BLIP3 candidate count exceeds the fixed {self.max_questions}-question limit"
+                )
 
         answers = []
 
@@ -341,7 +426,11 @@ class _Blip3Filter:
                 if score > thr:
                     continue
                 question = cfg.get("question", "")
-                answer = self.qa.answer(Image.fromarray(patch), question)
+                answer = self.qa.answer(
+                    Image.fromarray(patch),
+                    question,
+                    max_new_tokens=self.max_new_tokens or 768,
+                )
                 m["blip3_answer"] = answer
                 answers.append(answer)
 
@@ -378,7 +467,11 @@ class _Blip3Filter:
                 continue
 
             question = cfg.get("question", "")
-            answer = self.qa.answer(Image.fromarray(patch), question)
+            answer = self.qa.answer(
+                Image.fromarray(patch),
+                question,
+                max_new_tokens=self.max_new_tokens or 768,
+            )
             m["blip3_answer"] = answer
             answers.append(answer)
 
@@ -443,7 +536,20 @@ def run(
     dryrun_mode = bool(params.get("dryrun", False))
 
     blip_filter = state.get("blip3_filter")
-    if blip_filter is None:
+    holder = state.get("blip3_qa")
+    request_state = state
+    if holder is not None:
+        # The holder is shared, but this filter and its rules are request-local.
+        request_state = dict(state)
+        blip_filter = _Blip3Filter.from_qa(
+            holder,
+            params.get("config", {}) or {},
+            verbosity=verbosity,
+            log_print_func=log,
+            max_questions=params.get("max_questions"),
+            max_new_tokens=params.get("max_new_tokens"),
+        )
+    elif blip_filter is None:
         blip_cfg = params.get("config", {})
         device = params.get("device", "cuda")
         blip_filter = (
@@ -473,7 +579,7 @@ def run(
         "answers": answers,
         "num_masks": len(updated_masks) if updated_masks is not None else 0,
     }
-    return state, updated_masks, meta
+    return (state if holder is not None else request_state), updated_masks, meta
 
 
 def initialize(
@@ -496,4 +602,42 @@ def initialize(
     return {"blip3_filter": blip_filter}
 
 
-__all__ = ["initialize", "run"]
+def initialize_holder(
+    *,
+    device: str = "cpu",
+    verbosity: int = 0,
+    log_print_func=None,
+    local_files_only: bool = True,
+    model_name: str | None = None,
+    revision: str | None = None,
+) -> Dict[str, Any]:
+    """Initialize the pinned reusable BLIP3 holder without request rules."""
+    from src.runtime.models import APPROVED_MODEL_SPECS
+
+    spec = APPROVED_MODEL_SPECS["blip3"]
+    model_name = model_name or spec.model_id
+    revision = revision or spec.revision
+    qa = _Blip3QA(
+        {
+            "model_name": model_name,
+            "revision": revision,
+            "dtype": "float16",
+            "use_fast_tokenizer": True,
+            "use_fast_processor": True,
+        },
+        device=device,
+        verbosity=verbosity,
+        log_print_func=log_print_func,
+        local_files_only=local_files_only,
+    )
+    return {"blip3_qa": qa}
+
+
+__all__ = [
+    "Blip3ResourceLimitError",
+    "MAX_SERVICE_NEW_TOKENS",
+    "MAX_SERVICE_QUESTIONS",
+    "initialize",
+    "initialize_holder",
+    "run",
+]

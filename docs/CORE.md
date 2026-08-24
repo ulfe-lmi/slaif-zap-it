@@ -1,10 +1,8 @@
-# ZAP-IT in-memory single-image core (objective 001-a)
+# In-memory single-image core
 
-Status: implemented in objectives `001-a` and `005-a`. This document describes the
-canonical single-image core entry point, its typed results, the deterministic
-ordering and renderer semantics, the artifact-sink boundary and the
-compatibility guarantees for the legacy CLI/batch path. It does **not** claim
-any HTTP/API or live-GPU readiness; those are objectives 002+.
+This document describes the canonical core entry point, typed results,
+deterministic ordering and renderer semantics, artifact-sink boundary, and
+compatibility guarantees for the batch and service adapters.
 
 ## Canonical entry point
 
@@ -40,8 +38,9 @@ injectable via :class:`src.core.StageFunctions` for testing with fakes.
 hoisted, `roi: false -> None`). `classify_config_fields` partitions top-level
 keys into *algorithm*, *batch/deployment-only* (`images`, `video`,
 `export_yolo_det`) and *unrecognized*; the core never reads batch-only keys.
-This is a trusted-CLI boundary only — it is not yet the hostile-upload policy
-validator planned for objective 002.
+This is the normalized algorithm boundary. The service performs its hostile
+upload policy validation before constructing `CoreConfig`; the trusted CLI may
+pass its broader legacy configuration through a separate adapter.
 
 `config_digest(config)` returns a stable SHA-256 over the normalized values
 (provenance hook; excludes wall-clock time).
@@ -181,6 +180,6 @@ fabricated by the core; the typed hook stays reserved for a later objective.
 
 ## Verification
 
-See `TESTING.md`. Objective-specific coverage lives in
+See [`TESTING.md`](../TESTING.md). Core coverage lives in
 `tests/test_core_*.py` plus the extended `tests/test_run_frame_pipeline.py`.
 All tests run CPU-only with no CUDA, network or model downloads.

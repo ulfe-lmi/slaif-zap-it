@@ -1,4 +1,8 @@
-# Professional baseline target
+# Historical record: professional baseline target
+
+> This modernization target has been implemented through the current package,
+> API, runtime, release tooling, and documentation. It remains only as planning
+> provenance; see the [current documentation index](../README.md).
 
 Preserve current algorithms/CLI while converging toward SLAIF service quality:
 

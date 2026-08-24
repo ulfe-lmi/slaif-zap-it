@@ -8,18 +8,17 @@ all demo/assets media and all model/cache payloads.
 
 | Gate | State | Required action |
 | --- | --- | --- |
-| CRIT-0001 public history | OPEN / BLOCKING | Human selects the authoritative remedy before any final tag, package/source release or rights-cleared claim. |
+| CRIT-0001 goat fixture rights/history | ACCEPTED / CLEARED | Repository owner confirmed redistribution rights; no history rewrite or visibility change is required. Current exclusions remain defense in depth. |
 | Model deployment/commercial rights | OPEN / BLOCKING | Human/legal review of SAM2, CLIP and BLIP3 cards/licenses; weights remain operator assets. |
 | Tracked media rights | REVIEW REQUIRED | Confirm rights for historical repository media; no absence-of-evidence inference. |
 | GitHub security settings | RECOMMENDATION | Owner should review Dependabot security updates, secret scanning/push protection and branch protection; current settings are not called enabled by this repository. |
 | Gateway/container/public exposure | NOT INCLUDED | Separate repository/order and separate topology/auth review required. |
 
-## Tracked media inventory at the 006-a starting tip
+## Reviewed repository media inventory
 
-The following paths were tracked before the required removal of the four
-nonredistributable goat paths. Every listed media payload is excluded from the
-wheel and sdist; its presence in history is not treated as redistribution
-clearance.
+The following paths were tracked at the start of release review. Every listed
+media payload remains excluded from the wheel and sdist unless an explicit
+release allowlist later changes that policy.
 
 ### Repository assets
 
@@ -69,18 +68,19 @@ demos/underwater/Powder Blue Tang_20170105_051950A_005.jpg,
 demos/underwater/Parrot Fish_20170106_023727A_606.jpg,
 demos/underwater/Turtle_20230815_095315A_029.jpg.
 
-The four local-only goat paths are configs/goats.yaml, configs/goats2.yaml,
-demos/goats/goats1.jpg and demos/goats/goats2.jpg. They remain operator-held
-ignored inputs only; current-tip removal does not remediate public history and
-is blocked by CRIT-0001.
+The four goat paths are `configs/goats.yaml`, `configs/goats2.yaml`,
+`demos/goats/goats1.jpg`, and `demos/goats/goats2.jpg`. Their redistribution
+rights are confirmed and CRIT-0001 is accepted. They remain ignored,
+operator-supplied academic inputs and excluded from build artifacts as a
+deliberate defense-in-depth distribution policy.
 
 ## Artifact and model policy
 
 Wheels/sdists are source allowlists verified by
 scripts/verify_release_artifacts.py; all media, demos, caches, weights,
 outputs, OAP transcript material, credentials and private environment files
-are denied. SAM2 code is pinned to the Objective 003 revision and its weights
+are denied. SAM2 code and model assets are revision-pinned; its weights
 are downloaded only by the operator. CLIP's pinned model card has no SPDX
-deployment license. BLIP3/XGen-MM is unsupported on this host and
-CC-BY-NC/research-only. Commercial or deployed model use and any weight
+deployment license. BLIP3/XGen-MM is exercised only through the 007-b low-card
+sequential qualification and remains CC-BY-NC/research-only. Commercial or deployed model use and any weight
 redistribution require human/legal clearance.

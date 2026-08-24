@@ -1,6 +1,6 @@
-# Qualified GPU runtime (objective 003-a)
+# GPU runtime and measured evidence
 
-Status: qualified on `maelstrom1` on 2026-08-23 for bounded local testing. This
+Status: qualified on `maelstrom1` during 2026-08-23–24 for bounded local testing. This
 record is not a service activation or a production-readiness claim. Model
 weights remain in the operator Hugging Face cache and are not part of the
 repository.
@@ -19,8 +19,7 @@ export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export CUDA_VISIBLE_DEVICES=1
 export SLAIF_ZAP_IT_EXPECTED_GPU_UUID=GPU-c457dbaf-991c-dc23-c781-0dc030776dd8
 export SLAIF_ZAP_IT_STRICT_GPU=1
-export SLAIF_ZAP_IT_RESOURCE_STRATEGY=sam2_clip_resident_blip3_rejected
-export SLAIF_ZAP_IT_SUPPORTED_PROFILES=sam2,clip,sam2_clip
+# Residency is selected automatically from fresh physical total-memory evidence.
 
 .venv-gpu/bin/python scripts/qualify_gpu_runtime.py --download
 .venv-gpu/bin/python scripts/qualify_gpu_runtime.py
@@ -105,12 +104,13 @@ language modules and tensor utilities; it found no client-controlled import,
 URL, command or device selection in the service boundary. The service YAML
 validator rejects model IDs, revisions, paths, cache roots, devices,
 `trust_remote_code`, commands and environment settings. The operator policy
-rejects BLIP3 profiles before engine invocation. Thus remote code is pinned and
+loads the pinned BLIP3 holder locally at startup and keeps its model/runtime
+controls outside the request boundary. Thus remote code is pinned and
 operator-only; it is not loadable or selectable by a request.
 
-## Measurements
+## Earlier baseline measurements
 
-The qualification runner used `torch.cuda` memory counters and all-GPU
+The initial qualification runner used `torch.cuda` memory counters and all-GPU
 `nvidia-smi` snapshots before/after each class. It performed three serial
 repeated inferences per supported profile. `peak` is the maximum Torch counter
 within the class; `cleanup allocated/reserved` is measured after model state is
@@ -120,7 +120,7 @@ dropped, garbage collection and `torch.cuda.empty_cache()`.
 | --- | --- | ---: | ---: | --- | ---: | ---: |
 | SAM2 only | `PASSED` | 1285 MiB | 2.798 s | 668.94, 375.86, 363.12 | 3079.2 / 4902.0 MiB | 8.1 / 20.0 MiB |
 | CLIP only | `PASSED` | 866 MiB | 1.432 s | 12.68, 10.28, 9.90 | 588.9 / 632.0 MiB | 8.1 / 20.0 MiB |
-| BLIP3 only | `BLOCKED` | 10505 MiB | not loaded | not run | hard stop before load | no model allocation |
+| BLIP3 only | `SUPERSEDED by 007-b` | 10505 MiB | not loaded | not run | conservative pre-007 hard stop | no model allocation |
 | SAM2 + CLIP resident | `PASSED` | 2151 MiB | 3.208 s | 434.73, 417.44, 434.17 | 3656.5 / 5530.0 MiB | 8.1 / 20.0 MiB |
 
 The Torch-reported 90% ceiling is approximately 9738.8 MiB. BLIP3's pinned
@@ -135,21 +135,75 @@ These are stability-shape checks, not an accuracy claim.
 
 ## Selected resource strategy and readiness
 
-The measured strategy is `sam2_clip_resident_blip3_rejected`:
+The implemented policy is capacity-based:
 
-- supported operator profiles: `sam2`, `clip`, and resident `sam2_clip`;
-- BLIP3-only and SAM2+CLIP+BLIP3 profiles are unsupported and rejected before
-  inference;
+- `<24576 MiB`: `sam2_clip_gpu_blip3_cpu_swap`, with host-resident pinned FP16
+  BLIP3 and serialized SAM2+CLIP/BLIP3 transitions;
+- `>=24576 MiB`: `sam2_clip_blip3_gpu_resident`, implemented and fake-tested but
+  not yet live-qualified;
+- supported profiles are `sam2`, `sam2_clip`, `sam2_blip3` and
+  `sam2_clip_blip3`; there is no standalone service profile that skips SAM2;
 - one process, one worker and one active GPU request remain the service law;
-- no CPU spill or GPU0 fallback is permitted;
-- BLIP3 may not be enabled by a later request without a new measured order.
+- request YAML may provide only bounded nested BLIP3 rules (32 questions and 32
+  generated tokens per question are fixed service limits).
 
-`src.runtime.RuntimePolicy.from_environment()` is operator-only startup state;
-`src.runtime.make_readiness_provider()` joins it to the strict device guard.
-`src.service.create_app(..., runtime_policy=policy)` validates the normalized
-request configuration before readiness/engine execution and returns stable
-`unsupported_profile` for rejected combinations. The request YAML cannot set
-the strategy, supported profiles, model revision, device or readiness state.
+`src.runtime.RuntimePolicy.for_capacity()` consumes the UUID-matched physical
+total-memory observation. `src.runtime.make_readiness_provider()` joins it to
+the strict device guard, and restoration failure leaves readiness false until
+operator restart. The request YAML cannot set the strategy, model revision,
+dtype, device or readiness state.
+
+The sequential live evidence is recorded in its immutable OAP report: BLIP3-alone
+FP16 load/inference, startup residency, no-BLIP smoke, ten alternating
+central-crop requests, transition/restore timings, memory stability, host-RAM
+cost, cleanup and protected-GPU evidence. This document does not claim the
+>=24-GB profile is qualified.
+
+## Measured sequential qualification
+
+Status: `PASSED` for the physical 11,264-MiB GPU1 sequential profile on
+2026-08-24. This is bounded local evidence, not production readiness or a
+license/commercial-use decision. The service reported strategy
+`sam2_clip_gpu_blip3_cpu_swap`, one visible logical `cuda:0`, and readiness only
+after SAM2, CLIP and the host-resident BLIP3 holder initialized. Ready probes
+returned `200` within the observed 6.1-second startup window after launch.
+
+The corrected isolated BLIP3-only gate loaded the pinned FP16 holder from local
+files in 176.983 seconds, moved it to GPU1 in 2.176 seconds, and completed the
+128x128 yes/no inference in 2.286 seconds. The bounded answer was non-empty.
+Peak Torch memory was 9,327.9 MiB allocated and 9,532.0 MiB reserved out of
+10,820.9 MiB CUDA-visible total (88.09% reserved); free memory at the end of
+inference was 1,086.2 MiB. External post-process evidence returned GPU1 to
+6 MiB used and preserved GPU0's unrelated PID 66522.
+
+The authenticated loopback service completed one no-BLIP L3 control with no
+residency transitions, one real BLIP3 L3 request with eight bounded answers,
+and a client-aborted BLIP3 request whose worker completed restoration before a
+subsequent no-BLIP request returned `200`. An operator-only failure injection
+returned the sanitized `500 inference_failure` response. The service process
+was stopped after evidence, leaving port 17891 free and the shared-memory root
+empty.
+
+The final exact ten-request goat sequence used in-memory central 50% crops of
+the two 5568x4176 images (each crop 2784x2088), in order
+`A,B,A,B,A,B,A,B,A,B`. All ten requests returned HTTP 200 and reported
+`blip3=executed`; per-image semantic digests were repeatable and each request
+recorded a successful transition and restore. Sanitized latency statistics:
+
+| Image | First / minimum / median / nearest-rank p95 / maximum (ms) | BLIP3 stage range (ms) | To-BLIP3 range (s) | Restore range (s) |
+| --- | ---: | ---: | ---: | ---: |
+| A | 11412.7 / 11273.9 / 11345.6 / 11484.1 / 11484.1 | 6537.982–6726.721 | 2.303–2.330 | 3.949–4.109 |
+| B | 10193.8 / 10150.0 / 10193.8 / 10389.7 / 10389.7 | 6192.563–6341.419 | 2.305–2.329 | 3.856–4.072 |
+| Aggregate | 11412.7 / 10150.0 / 11273.9 / 11484.1 / 11484.1 | — | — | — |
+
+Across the ten calls, peak logical CUDA allocation was 8,902.5–9,465.8 MiB,
+peak reservation was 9,052.0–9,662.0 MiB, sampled post-request free memory was
+8,930.2 MiB, and the service high-water RSS settled at 16,003.6 MiB without
+unbounded growth. Object and answer counts were both zero for this academic
+configuration, while BLIP3 execution was independently present in every L3
+stage status. The harness reported zero request-workspace files/bytes before
+and after the sequence; after service stop the complete `/dev/shm` root was
+empty. The >=24 GB all-resident profile remains pending separate qualification.
 
 ## Shared memory and port qualification
 
@@ -163,13 +217,13 @@ and residue. Startup logs report only `shm_ready=true` and bounded free
 capacity, never the operator root path. The live root `/dev/shm/slaif-zap-it`
 was mode 0700, had 26964.1 MiB free, and was empty after qualification.
 
-Port `127.0.0.1:17891` was selected for Objective 004. It was absent from a
+Port `127.0.0.1:17891` was used for qualification. It was absent from a
 live `ss -H -ltn` scan and passed a transient bind check; the socket was closed
 immediately. No listener or reservation remains. Fallbacks are `23654`, then
-the first verified-unused port in 20000–40000. Objective 003 does not start a
-service.
+the first verified-unused port in 20000–40000. A documented port is evidence,
+not a reservation; every launch rechecks it.
 
-## Verification commands
+## Qualification commands and evidence
 
 | Command | Status | Evidence |
 | --- | --- | --- |
@@ -182,7 +236,9 @@ service.
 | `.venv/bin/ruff check .` and `.venv/bin/ruff format --check .` | `PASSED` | lint and format checks clean |
 | `.venv/bin/python -m build --wheel` | `PASSED` | isolated wheel build produced `zap_it-0.1.0-py3-none-any.whl` |
 
-The optional GPU test is never part of public CPU CI. It auto-skips without
+The table includes the earlier baseline commands and counts recorded at their
+execution time; the current CPU totals are maintained by CI and
+[TESTING.md](../TESTING.md). The optional GPU test is never part of public CPU CI. It auto-skips without
 `ZAP_IT_RUN_GPU=1`, serializes on a RAM-backed lock, sets/checks the GPU1 mask
 inside the test process before importing Torch, and checks GPU0 process evidence.
 
