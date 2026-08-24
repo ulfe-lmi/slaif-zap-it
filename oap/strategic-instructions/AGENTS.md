@@ -25,7 +25,8 @@ writes orders/active/control and reads report/response. Coding does inverse.
 Modernize existing ZAP-IT without erasing its SAM2→CLIP→optional BLIP3→geometry/
 visualization/YOLO capability. First professional baseline; then pure in-memory
 core; then ZAP-IT-specific multipart `POST /v1/completions`; then qualify and
-activate local service on physical GPU1 and a verified unused loopback port.
+activate local service on the explicit operator-assigned physical GPU and a
+verified unused loopback port.
 
 Verbosity 0 YOLO, 1 uint16 identity PNG, 2 object metadata, 3 bounded full
 artifacts. One image+YAML; RAM or `/dev/shm`; no persistent request data. Uploaded
@@ -48,17 +49,25 @@ requires it, preserving dependency gates and explaining material deviations.
 
 ## Multi-GPU law
 
-Human/operator preflight on 2026-08-23 observed physical GPU1 as an ordinary
-NVIDIA GeForce RTX 2080 Ti with **11264 MiB** VRAM, UUID
-`GPU-c457dbaf-991c-dc23-c781-0dc030776dd8`; GPU0 was another 11264-MiB RTX 2080 Ti
-with an unrelated Python workload. Treat this as planning evidence, not permanent
-runtime truth. Before every GPU order verify every device index/UUID/PCI/name/VRAM/
-process, driver/CUDA/PyTorch, `/dev/shm`, and free ports. Launch service with
-`CUDA_VISIBLE_DEVICES=1`, use logical `cuda:0`, pin/verify UUID. Never touch GPU0
-or unrelated workloads even if GPU0 later appears idle. One process/worker/request
-initially. With ~11 GB VRAM, never assume SAM2+CLIP+BLIP3 co-residency; Objective
-003 must measure and choose an explicit safe supported strategy. No system driver/
-firewall/network/service mutation in ordinary objectives.
+The 2026-08-23 maelstrom1 preflight observed physical GPU1 as an ordinary NVIDIA
+GeForce RTX 2080 Ti with **11264 MiB** VRAM, UUID
+`GPU-c457dbaf-991c-dc23-c781-0dc030776dd8`, while GPU0 carried an unrelated Python
+workload. Objective 008 separately qualified the hinton2 host's operator-assigned
+physical GPU0 as an RTX 3090 with **24576 MiB** and UUID
+`GPU-a91444df-4e87-011e-3347-9b3a4b9f9575`. These are host-specific planning and
+qualification evidence, not a universal index rule. Before every GPU order verify
+every device index/UUID/PCI/name/VRAM/process, driver/CUDA/PyTorch, `/dev/shm`, and
+free ports. The active order is the sole live-selection authority and must name
+the exact operator-assigned physical index and UUID. The launcher exposes exactly
+that card with `CUDA_DEVICE_ORDER=PCI_BUS_ID` and
+`CUDA_VISIBLE_DEVICES=<assigned-physical-index>`; startup fails closed on UUID or
+visible-device mismatch, and the application uses only logical `cuda:0`. There is
+no automatic fallback, free-device heuristic, or request-selected device. Every
+unassigned device and unrelated workload remains protected. One
+process/worker/request initially. With ~11 GB VRAM, never assume
+SAM2+CLIP+BLIP3 co-residency; Objective 003 must measure and choose an explicit
+safe supported strategy. No system driver/firewall/network/service mutation in
+ordinary objectives.
 
 ## Human work preloading and Human Judgment Postloading
 

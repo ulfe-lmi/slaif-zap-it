@@ -33,8 +33,9 @@ disposition clears it.
 
 1. Refresh constitutions/architecture/roadmap/prior evidence.
 2. Query GitHub default SHA, open/recent objective PRs, checks/reviews/mergeability.
-3. Query relevant host facts: tests/tooling, all GPUs/processes, physical GPU1
-   UUID/VRAM, GPU0 protection, `/dev/shm`, listeners, environment/service state.
+3. Query relevant host facts: tests/tooling, all GPUs/processes, the
+   active-order-assigned physical index/UUID/VRAM, unassigned-device protection,
+   `/dev/shm`, listeners, environment/service state.
 4. Choose new objective or next same-PR letter; resolve material ambiguity.
 5. Apply the `CRITICAL.md` five-condition test. Normally record `NONE`; if all
    conditions hold, make the decision and include exact append-only entry bytes.

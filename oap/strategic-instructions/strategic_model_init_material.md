@@ -11,15 +11,20 @@ changed after this bootstrap.
 - run existing test suite in a safe CPU environment without model downloads;
 - identify packaging/docs/CI gaps versus the reference SLAIF service;
 - `opencode --version`, authenticated provider/model choices, `gh auth status`;
-- all GPU index/UUID/PCI/name/VRAM/process state; verify physical GPU1 claim;
+- all GPU index/UUID/PCI/name/VRAM/process state; verify the active-order
+  operator-assigned index+UUID claim;
 - intended Python/PyTorch/CUDA/SAM2/CLIP/BLIP3 environment and model caches;
 - `/dev/shm` type/capacity/permissions;
 - loopback listeners and an unused candidate port; do not reserve/change yet.
 
-Human/operator preflight on 2026-08-23 observed physical GPU1 as RTX 2080 Ti,
+Human/operator preflight on 2026-08-23 observed physical GPU1 as an RTX 2080 Ti,
 11264 MiB, UUID `GPU-c457dbaf-991c-dc23-c781-0dc030776dd8`, with GPU0 carrying an
-unrelated workload. Re-verify this live; do not assume the process/free-memory
-state remains unchanged and never use GPU0 even if it later appears idle.
+unrelated workload. Objective 008 separately recorded an explicit hinton2
+assignment of physical GPU0 to an RTX 3090, UUID
+`GPU-a91444df-4e87-011e-3347-9b3a4b9f9575`. These are host-specific evidence.
+Re-verify the exact index/UUID assigned by the active order before live use; do
+not infer selection from idleness, and fail closed on a mismatch. All unassigned
+devices and unrelated workloads remain protected.
 
 ## Human-work-preloaded objective sequence
 
@@ -56,7 +61,8 @@ otherwise keep ordinary decisions in the order/architecture/evidence.
 1. Professional baseline and honest current-test/CI/docs/provenance state.
 2. In-memory typed single-image core, artifact sink, YOLO and identity PNG.
 3. `/v1/completions` transport and fake-engine CPU contract.
-4. Physical GPU1 qualification and dependency/model revision/license audit.
+4. Operator-assigned-GPU qualification and dependency/model revision/license
+   audit.
 5. Loopback service activation on verified unused port with rollback/E2E.
 6. Full artifact parity/resource hardening/metrics/datasheet.
 7. Packaging/gateway/release readiness only after local evidence and applicable

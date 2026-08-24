@@ -110,7 +110,8 @@ conversation memory.
 5. Final round commit changes only report.
 6. Coding never merges/accepts/advances.
 7. Required skipped/pending/missing is not pass.
-8. Physical GPU0 and unrelated services/processes are protected.
+8. The active-order-assigned physical GPU alone is exposed as logical `cuda:0`;
+   every unassigned device and unrelated service/process is protected.
 9. Request content/secrets never enter logs/OAP artifacts.
 10. CRITICAL entries are rare, strategic-authored and append-only; coding does not
     use them to avoid ordinary engineering judgment.

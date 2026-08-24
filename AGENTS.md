@@ -56,7 +56,8 @@ Target service:
 ```text
 POST /v1/completions
 multipart: image + config YAML + verbosity + response_format
-local loopback service -> physical GPU 1 only
+local loopback service -> the explicit operator-assigned physical GPU index+UUID,
+exposed inside the process as logical cuda:0
 ```
 
 This path is a ZAP-IT multimodal service contract, not a claim of drop-in OpenAI

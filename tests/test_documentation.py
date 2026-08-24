@@ -32,3 +32,33 @@ def test_audited_obsolete_residency_claims_are_rejected():
         assert any(
             pattern.search(sample) for pattern in checker.FORBIDDEN_CURRENT_PATTERNS.values()
         )
+
+
+def test_audited_obsolete_gpu_governance_claims_are_rejected():
+    checker = _checker()
+    samples = (
+        "local service -> physical GPU 1 only",
+        "Physical GPU0 is never used",
+        "Never use physical GPU0, even when it is idle",
+        "CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1",
+    )
+    for sample in samples:
+        assert any(
+            pattern.search(sample)
+            for name, pattern in checker.FORBIDDEN_CURRENT_PATTERNS.items()
+            if name.startswith("obsolete ")
+        )
+
+
+def test_operator_assigned_gpu_wording_is_allowed():
+    checker = _checker()
+    samples = (
+        "The active order names an explicit operator-assigned physical index and UUID.",
+        "CUDA_VISIBLE_DEVICES=<assigned-physical-index>",
+        "Every unassigned device and unrelated workload remains protected.",
+        "Historical physical GPU1 evidence is retained as host-specific context.",
+    )
+    for sample in samples:
+        assert not any(
+            pattern.search(sample) for pattern in checker.FORBIDDEN_CURRENT_PATTERNS.values()
+        )

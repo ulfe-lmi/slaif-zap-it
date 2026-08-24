@@ -85,7 +85,7 @@ prepared raw bytes directly. RLE and every serialization loop check the absolute
 | Driver / CUDA Torch | Historical 580.178.04 / CUDA 12.4; assigned 610.43.02 / CUDA 12.4 / Torch 2.5.1+cu124 |
 | Service stack | FastAPI 0.141.1, Uvicorn 0.52.4, python-multipart 0.0.32 |
 | Process model | One Uvicorn worker, one inference executor, one request in flight |
-| Protected device | Physical GPU0 and its unrelated workload are never used |
+| Protected devices | Every unassigned physical GPU and unrelated workload remain protected; only the active-order-assigned index+UUID is exposed as logical `cuda:0` |
 
 ## Measured evidence
 
