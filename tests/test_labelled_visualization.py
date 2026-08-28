@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import zipfile
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -15,7 +16,12 @@ from PIL import Image
 from modules import visualizer
 from modules.input.images import apply_roi, resize_image
 from src.core import CoreConfig, ObjectResult, StageFunctions, run_single_image
-from src.service.envelope import ResponseContext, build_completion_json, build_completion_zip
+from src.service.envelope import (
+    ResponseContext,
+    _encode_png,
+    build_completion_json,
+    build_completion_zip,
+)
 from src.service.errors import ServiceError
 from src.service.yaml_input import parse_hostile_config
 
@@ -42,6 +48,57 @@ def _rect(shape: tuple[int, int], top: int, bottom: int, left: int, right: int) 
     mask = np.zeros(shape, dtype=bool)
     mask[top:bottom, left:right] = True
     return mask
+
+
+class _DrawRecorder:
+    """Record the renderer's actual Pillow geometry while delegating all drawing."""
+
+    def __init__(self, delegate):
+        self.delegate = delegate
+        self.rectangles = []
+        self.text_calls = []
+
+    def textbbox(self, *args, **kwargs):
+        return self.delegate.textbbox(*args, **kwargs)
+
+    def rectangle(self, coordinates, *args, **kwargs):
+        self.rectangles.append(tuple(int(value) for value in coordinates))
+        return self.delegate.rectangle(coordinates, *args, **kwargs)
+
+    def text(self, coordinates, text, *args, **kwargs):
+        font = kwargs.get("font")
+        bounds = self.delegate.textbbox(coordinates, text, font=font)
+        self.text_calls.append(
+            {
+                "coordinates": tuple(coordinates),
+                "text": text,
+                "font": font,
+                "bounds": bounds,
+                "width": int(bounds[2] - bounds[0]),
+                "height": int(bounds[3] - bounds[1]),
+            }
+        )
+        return self.delegate.text(coordinates, text, *args, **kwargs)
+
+
+def _render_with_draw_recording(
+    monkeypatch, image: np.ndarray, objects, *, alpha: float = 0.5, show_confidence: bool = False
+):
+    original_draw = visualizer.ImageDraw.Draw
+    recorder = None
+
+    def recording_draw(canvas):
+        nonlocal recorder
+        recorder = _DrawRecorder(original_draw(canvas))
+        return recorder
+
+    with monkeypatch.context() as patch:
+        patch.setattr(visualizer.ImageDraw, "Draw", recording_draw)
+        output = visualizer.render_annotated_labelled(
+            image, objects, alpha=alpha, show_confidence=show_confidence
+        )
+    assert recorder is not None
+    return output, recorder
 
 
 def test_label_sanitization_is_nfkc_ascii_bounded_and_deterministic():
@@ -76,6 +133,54 @@ def test_labelled_renderer_draws_final_label_and_instance_pixels():
     assert np.array_equal(obj.mask, mask)
 
 
+def test_labelled_renderer_repeats_exact_bytes_and_is_sensitive_to_final_label_and_id():
+    image = np.full((100, 180, 3), 80, dtype=np.uint8)
+    mask = _rect((100, 180), 55, 78, 70, 110)
+    obj = _object(7, "stable label", mask)
+    original_metadata = dict(obj.metadata)
+    original_mask = obj.mask.copy()
+
+    first = visualizer.render_annotated_labelled(image, [obj], alpha=0.45, show_confidence=True)
+    second = visualizer.render_annotated_labelled(image, [obj], alpha=0.45, show_confidence=True)
+    first_png = _encode_png(first)
+    second_png = _encode_png(second)
+
+    assert np.array_equal(first, second)
+    assert (
+        hashlib.sha256(first.tobytes()).hexdigest() == hashlib.sha256(second.tobytes()).hexdigest()
+    )
+    assert first_png == second_png
+    assert hashlib.sha256(first_png).hexdigest() == hashlib.sha256(second_png).hexdigest()
+
+    label_variant = replace(obj, metadata={**obj.metadata, "clip_label": "changed label"})
+    id_variant = replace(obj, instance_id=8)
+    label_pixels = visualizer.render_annotated_labelled(
+        image, [label_variant], alpha=0.45, show_confidence=True
+    )
+    id_pixels = visualizer.render_annotated_labelled(
+        image, [id_variant], alpha=0.45, show_confidence=True
+    )
+    label_png = _encode_png(label_pixels)
+    id_png = _encode_png(id_pixels)
+
+    assert not np.array_equal(first, label_pixels)
+    assert not np.array_equal(first, id_pixels)
+    assert (
+        hashlib.sha256(first.tobytes()).hexdigest()
+        != hashlib.sha256(label_pixels.tobytes()).hexdigest()
+    )
+    assert (
+        hashlib.sha256(first.tobytes()).hexdigest()
+        != hashlib.sha256(id_pixels.tobytes()).hexdigest()
+    )
+    assert hashlib.sha256(first_png).hexdigest() != hashlib.sha256(label_png).hexdigest()
+    assert hashlib.sha256(first_png).hexdigest() != hashlib.sha256(id_png).hexdigest()
+    assert obj.instance_id == 7
+    assert obj.label == "stable label"
+    assert obj.metadata == original_metadata
+    assert np.array_equal(obj.mask, original_mask)
+
+
 def test_labelled_renderer_uses_final_objects_not_stage_mask_metadata():
     image = np.full((80, 100, 3), 240, dtype=np.uint8)
     mask = _rect((80, 100), 50, 70, 35, 65)
@@ -96,25 +201,133 @@ def test_labelled_renderer_uses_final_objects_not_stage_mask_metadata():
     assert not np.array_equal(actual, old)
 
 
-def test_border_and_tiny_masks_are_bounded():
+def test_border_and_tiny_masks_are_bounded(monkeypatch):
     for shape in ((1, 1), (2, 3), (8, 8)):
         mask = np.ones(shape, dtype=bool)
-        output = visualizer.render_annotated_labelled(
+        output, recorder = _render_with_draw_recording(
+            monkeypatch,
             np.zeros((*shape, 3), dtype=np.uint8),
             [_object(1, "a very long label that must be shortened", mask)],
         )
         assert output.shape == (*shape, 3)
         assert output.dtype == np.uint8
+        assert len(recorder.rectangles) == len(recorder.text_calls) == 1
+        left, top, right_inclusive, bottom_inclusive = recorder.rectangles[0]
+        right, bottom = right_inclusive + 1, bottom_inclusive + 1
+        assert 0 <= left < right <= shape[1]
+        assert 0 <= top < bottom <= shape[0]
+
+        # On a one-pixel (and similarly tiny) canvas the bitmap font cannot
+        # physically fit even the mandatory instance suffix.  This checks
+        # deterministic bounded clipping, not an impossible readable suffix.
+        text_call = recorder.text_calls[0]
+        suffix = " 1"
+        assert text_call["text"].endswith(suffix)
+        assert len(text_call["text"]) <= visualizer._LABEL_LIMIT + len(suffix)
+        available_width = max(shape[1] - 2 * visualizer._LABEL_PADDING, 1)
+        suffix_width = visualizer._text_size(recorder.delegate, suffix, text_call["font"])[0]
+        if suffix_width > available_width:
+            assert text_call["text"] == (
+                visualizer.sanitize_visualization_label("a very long label that must be shortened")
+                + suffix
+            )
+
+        repeated, repeated_recorder = _render_with_draw_recording(
+            monkeypatch,
+            np.zeros((*shape, 3), dtype=np.uint8),
+            [_object(1, "a very long label that must be shortened", mask)],
+        )
+        assert np.array_equal(output, repeated)
+        assert recorder.rectangles == repeated_recorder.rectangles
+        assert [call["text"] for call in recorder.text_calls] == [
+            call["text"] for call in repeated_recorder.text_calls
+        ]
 
 
-def test_nearby_label_boxes_are_not_completely_overlapped_when_candidates_allow():
+@pytest.mark.parametrize(
+    ("case", "bounds"),
+    [
+        ("top-edge", (0, 24, 64, 104)),
+        ("bottom-edge", (96, 120, 64, 104)),
+        ("left-edge", (42, 78, 0, 40)),
+        ("right-edge", (42, 78, 128, 160)),
+        ("top-left-corner-adjacent", (2, 28, 2, 38)),
+        ("bottom-right-corner-adjacent", (92, 118, 122, 158)),
+    ],
+)
+def test_labelled_edge_layout_records_bounded_boxes_and_pillow_text_bounds(
+    monkeypatch, case, bounds
+):
+    del case
+    height, width = 120, 160
+    top, bottom, left, right = bounds
+    mask = _rect((height, width), top, bottom, left, right)
+    output, recorder = _render_with_draw_recording(
+        monkeypatch,
+        np.full((height, width, 3), 80, dtype=np.uint8),
+        [_object(11, "edge", mask)],
+        show_confidence=True,
+    )
+
+    assert output.shape == (height, width, 3)
+    assert len(recorder.rectangles) == len(recorder.text_calls) == 1
+    rectangle = recorder.rectangles[0]
+    box_left, box_top = rectangle[:2]
+    box_right, box_bottom = rectangle[2] + 1, rectangle[3] + 1
+    assert 0 <= box_left < box_right <= width
+    assert 0 <= box_top < box_bottom <= height
+
+    text_left, text_top, text_right, text_bottom = recorder.text_calls[0]["bounds"]
+    suffix_width = visualizer._text_size(
+        recorder.delegate, " 11   CLIP 0.88", recorder.text_calls[0]["font"]
+    )[0]
+    assert suffix_width <= width - 2 * visualizer._LABEL_PADDING
+    assert 0 <= text_left < text_right <= width
+    assert 0 <= text_top < text_bottom <= height
+    assert box_left <= text_left < text_right <= box_right
+    assert box_top <= text_top < text_bottom <= box_bottom
+    assert recorder.text_calls[0]["text"].endswith(" 11   CLIP 0.88")
+
+
+def test_labelled_layout_shortens_long_label_and_preserves_finite_suffix(monkeypatch):
+    height, width = 96, 112
+    long_label = "deliberately long safe visualization label for fitting"
+    mask = _rect((height, width), 54, 78, 38, 74)
+    output, recorder = _render_with_draw_recording(
+        monkeypatch,
+        np.zeros((height, width, 3), dtype=np.uint8),
+        [_object(23, long_label, mask)],
+        show_confidence=True,
+    )
+
+    assert output.shape == (height, width, 3)
+    text_call = recorder.text_calls[0]
+    suffix = " 23   CLIP 0.88"
+    sanitized = visualizer.sanitize_visualization_label(long_label)
+    assert text_call["text"].endswith(suffix)
+    assert text_call["text"][: -len(suffix)] != sanitized
+    assert len(text_call["text"][: -len(suffix)]) < len(sanitized)
+    suffix_width = visualizer._text_size(recorder.delegate, suffix, text_call["font"])[0]
+    assert suffix_width <= width - 2 * visualizer._LABEL_PADDING
+    assert text_call["width"] <= width - 2 * visualizer._LABEL_PADDING
+    assert (
+        text_call["width"]
+        == visualizer._text_size(recorder.delegate, text_call["text"], text_call["font"])[0]
+    )
+
+
+def test_nearby_label_boxes_are_not_completely_overlapped_when_candidates_allow(monkeypatch):
     image = np.full((90, 120, 3), 240, dtype=np.uint8)
     first_mask = _rect((90, 120), 40, 58, 45, 65)
     second_mask = _rect((90, 120), 40, 58, 67, 87)
-    output = visualizer.render_annotated_labelled(
-        image,
-        [_object(1, "first", first_mask), _object(2, "second", second_mask)],
-    )
+    objects = [_object(1, "first", first_mask), _object(2, "second", second_mask)]
+    output, recorder = _render_with_draw_recording(monkeypatch, image, objects)
+    repeated, repeated_recorder = _render_with_draw_recording(monkeypatch, image, objects)
+    assert np.array_equal(output, repeated)
+    assert recorder.rectangles == repeated_recorder.rectangles
+    assert [call["coordinates"] for call in recorder.text_calls] == [
+        call["coordinates"] for call in repeated_recorder.text_calls
+    ]
 
     colors = ((34, 70, 124), (97, 114, 144))
     boxes = []
@@ -128,6 +341,14 @@ def test_nearby_label_boxes_are_not_completely_overlapped_when_candidates_allow(
     first_area = (boxes[0][2] - boxes[0][0]) * (boxes[0][3] - boxes[0][1])
     second_area = (boxes[1][2] - boxes[1][0]) * (boxes[1][3] - boxes[1][1])
     assert intersection < min(first_area, second_area)
+
+    repeated_boxes = []
+    for color in colors:
+        rows, columns = np.where(np.all(repeated == color, axis=2))
+        repeated_boxes.append(
+            (int(columns.min()), int(rows.min()), int(columns.max()) + 1, int(rows.max()) + 1)
+        )
+    assert boxes == repeated_boxes
 
 
 @pytest.mark.parametrize("score", [None, float("nan"), float("inf"), float("-inf")])
