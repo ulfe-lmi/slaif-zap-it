@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from src.runtime.live_service import ResidentRegistry
+from src.runtime.live_service import ResidentRegistry, _trim_process_heap
 from src.service.app import ReadyState, create_app
 from src.service.errors import ServiceError
 from src.service.fake_engine import FakeEngine
@@ -63,6 +63,13 @@ class FakeHolder:
             self.cuda.reserved = 0
         return self
 
+    def __del__(self) -> None:
+        # Model the allocator releasing storage when the isolated holder graph
+        # is dropped.  Real Torch tensors behave this way without a CPU move.
+        if getattr(self, "device", None) == "cuda:0":
+            self.cuda.allocated = max(0, self.cuda.allocated - self.bytes_)
+            self.cuda.reserved = max(0, self.cuda.reserved - self.bytes_)
+
 
 def fake_registry(*, delay: float = 0.0, fail_first: bool = False):
     cuda = FakeCuda()
@@ -80,6 +87,10 @@ def fake_registry(*, delay: float = 0.0, fail_first: bool = False):
         return {"segmenter": holder, "clip": holder}
 
     return ResidentRegistry(loader=loader, cuda_module=cuda), cuda, lambda: calls
+
+
+def test_process_heap_trim_is_safe_and_returns_a_boolean() -> None:
+    assert isinstance(_trim_process_heap(), bool)
 
 
 def test_settings_explicit_mode_requires_distinct_control_credential() -> None:

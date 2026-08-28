@@ -25,9 +25,10 @@ control OK. Execute exactly active round $ACTIVE in $REPO_ROOT. Read AGENTS.md,
 OAP-COMMUNICATION-coding-agent.md, ARCHITECTURE-for-agents.md, SECURITY.md,
 TESTING.md, oap/active and the unique matching order; reconcile GitHub and local
 state before mutation. Read CRITICAL.md only if the order requires an append or
-relevant cross-reference. Work only that order. Preserve physical GPU0 and all
-unrelated services/processes; use physical GPU1 only when the order explicitly
-permits live GPU work. Never create a CRITICAL entry yourself; append exact
+relevant cross-reference. Work only that order. Use only the exact
+operator-assigned physical GPU index+UUID named by the active order when it
+explicitly permits live GPU work; preserve every unassigned GPU and all
+unrelated services/processes. Never create a CRITICAL entry yourself; append exact
 strategic-authored bytes only when ordered, before the implementation SHA, and
 never modify prior entries. Create/amend the required PR, never merge. Publish and
 remotely verify the immutable report-only SELF commit, then send exact response

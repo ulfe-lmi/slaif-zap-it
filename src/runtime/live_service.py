@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import gc
+import ctypes
 import subprocess
 import threading
 import time
@@ -66,6 +67,23 @@ __all__ = [
 _LOOPBACK_HOST = "127.0.0.1"
 _SHM_MIN_FREE_BYTES = 64 * 1024 * 1024
 _MODEL_MEMORY_BOUND_BYTES = 64 * 1024 * 1024
+
+
+def _trim_process_heap() -> bool:
+    """Best-effort release of free glibc arenas after destroying model graphs.
+
+    CPython and native model libraries can return every tensor while glibc keeps
+    the now-free arenas mapped in the process RSS.  ``malloc_trim`` releases
+    only free heap pages; it is unavailable on some libc implementations, so
+    lifecycle correctness must not depend on it being present.
+    """
+    try:
+        malloc_trim = ctypes.CDLL(None).malloc_trim
+        malloc_trim.argtypes = [ctypes.c_size_t]
+        malloc_trim.restype = ctypes.c_int
+        return bool(malloc_trim(0))
+    except (AttributeError, OSError):
+        return False
 
 
 class LiveServiceError(RuntimeError):
@@ -480,7 +498,12 @@ class ResidentRegistry:
                 loaded_memory = dict(self.loaded_memory)
             cleanup_error: Exception | None = None
             try:
-                self._move_value(states, "cpu")
+                # Drop the isolated holder graph directly.  Moving a complete
+                # model graph to CPU first would retain a CPU copy and can
+                # require a transient GPU-to-host allocation larger than the
+                # operator's host-memory budget.  The registry owns no holder
+                # references outside this local graph, so ordinary reference
+                # release plus allocator cleanup is the bounded unload path.
                 del states
                 gc.collect()
                 cuda = self._cuda_for_cleanup()
@@ -495,6 +518,7 @@ class ResidentRegistry:
                     if callable(ipc_collect):
                         ipc_collect()
                 gc.collect()
+                _trim_process_heap()
                 memory = self._cuda_memory(cuda)
                 if memory is None:
                     memory = {"allocated": 0, "reserved": 0}
