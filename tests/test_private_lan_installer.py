@@ -6,9 +6,6 @@ from pathlib import Path
 from scripts.install_private_lan_service import install
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-
-
 def _value(path: Path, name: str) -> str:
     for line in path.read_text(encoding="utf-8").splitlines():
         key, separator, value = line.partition("=")
@@ -18,10 +15,18 @@ def _value(path: Path, name: str) -> str:
 
 
 def test_installer_writes_private_config_and_preserves_fixed_key(tmp_path):
+    fake_repo = tmp_path / "repo"
+    fake_python = fake_repo / ".venv-gpu" / "bin" / "python"
+    fake_entrypoint = fake_repo / "scripts" / "serve_local.py"
+    fake_python.parent.mkdir(parents=True)
+    fake_entrypoint.parent.mkdir(parents=True)
+    fake_python.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake_python.chmod(0o755)
+    fake_entrypoint.write_text("# entrypoint\n", encoding="utf-8")
     config = tmp_path / "config" / "service.env"
     unit = tmp_path / "systemd" / "zap-it-lan.service"
     kwargs = {
-        "repo_root": REPO_ROOT,
+        "repo_root": fake_repo,
         "config_path": config,
         "unit_path": unit,
         "host": "10.8.132.76",

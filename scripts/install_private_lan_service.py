@@ -71,11 +71,11 @@ def install(
             "CUDA_DEVICE_ORDER=PCI_BUS_ID",
             f"CUDA_VISIBLE_DEVICES={physical_gpu_index}",
             f"SLAIF_ZAP_IT_EXPECTED_GPU_UUID={expected_gpu_uuid}",
-            "SLAIF_ZAP_IT_NETWORK_SCOPE=private_lan",
+            "SLAIF_ZAP_IT_NETWORK_SCOPE=private_lan",  # pragma: allowlist secret
             f"SLAIF_ZAP_IT_HOST={host}",
             f"SLAIF_ZAP_IT_PRIVATE_LAN_CIDR={cidr}",
             f"SLAIF_ZAP_IT_PORT={port}",
-            "SLAIF_ZAP_IT_TMP_ROOT=/dev/shm/slaif-zap-it",
+            "SLAIF_ZAP_IT_TMP_ROOT=/dev/shm/slaif-zap-it",  # pragma: allowlist secret
             f"SLAIF_ZAP_IT_MODEL_CACHE_ROOT={model_cache_root}",
             "SLAIF_ZAP_IT_STRICT_GPU=1",
             f"SLAIF_ZAP_IT_API_KEY={api_key}",
