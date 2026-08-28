@@ -27,7 +27,9 @@ from src.runtime.live_service import (
     live_engine_callable,
     masked_gpu_uuid,
     preflight,
+    require_network_auth,
 )
+from src.service.settings import ServiceSettings
 from src.runtime.ports import PortCheck
 from src.runtime.strategy import RuntimeReadiness
 from src.service.errors import ServiceError
@@ -47,8 +49,8 @@ def test_config_requires_explicit_port():
         LiveServiceConfig.from_environment({})
 
 
-def test_config_rejects_non_loopback_host():
-    with pytest.raises(LiveServiceError, match="127.0.0.1"):
+def test_config_rejects_non_loopback_host_without_private_scope():
+    with pytest.raises(LiveServiceError, match="loopback"):
         LiveServiceConfig.from_environment(
             {
                 "SLAIF_ZAP_IT_PORT": "17891",
@@ -56,6 +58,42 @@ def test_config_rejects_non_loopback_host():
                 "SLAIF_ZAP_IT_EXPECTED_GPU_UUID": "GPU-x",
             }
         )
+
+
+@pytest.mark.parametrize(
+    ("host", "cidr"),
+    [
+        ("0.0.0.0", "10.8.132.0/24"),
+        ("127.0.0.1", "127.0.0.0/8"),
+        ("8.8.8.8", "8.8.8.0/24"),
+        ("hinton2", "10.8.132.0/24"),
+        ("10.8.132.76", "192.168.1.0/24"),
+        ("172.17.0.1", "10.8.132.0/24"),
+    ],
+)
+def test_private_lan_rejects_wildcard_public_hostname_and_scope_mismatch(host, cidr):
+    with pytest.raises(LiveServiceError, match="RFC1918"):
+        LiveServiceConfig(
+            host=host,
+            network_scope="private_lan",
+            private_lan_cidr=cidr,
+            expected_gpu_uuid="GPU-x",
+        )
+
+
+def test_private_lan_requires_strong_inference_key():
+    config = LiveServiceConfig(
+        host="10.8.132.76",
+        network_scope="private_lan",
+        private_lan_cidr="10.8.132.0/24",
+        expected_gpu_uuid="GPU-x",
+    )
+    assert config.is_private_lan
+    for key in (None, "short"):
+        with pytest.raises(LiveServiceError, match="at least 32"):
+            require_network_auth(config, key)
+    require_network_auth(config, "x" * 32)
+    require_network_auth(LiveServiceConfig(expected_gpu_uuid="GPU-x"), ServiceSettings().api_key)
 
 
 def test_config_strict_mode_requires_uuid():
@@ -158,7 +196,7 @@ def test_preflight_rejects_busy_port(monkeypatch, tmp_path):
             tmp_root=str(root),
             expected_gpu_uuid="GPU-x",
         )
-        with pytest.raises(LiveServiceError, match="verified-unused loopback port"):
+        with pytest.raises(LiveServiceError, match="verified-unused service port"):
             preflight(config)
     finally:
         shutil.rmtree(root, ignore_errors=True)
@@ -452,11 +490,12 @@ def test_launcher_shm_rejection_is_sanitized_before_service_start():
 def test_launcher_publishes_pid_only_after_exact_entrypoint_ownership():
     launcher = (REPO_ROOT / "scripts" / "serve_local.sh").read_text()
     assert "wait_for_owned_pid" in launcher
-    assert 'wait_healthy "$pid" "$SLAIF_ZAP_IT_PORT"' in launcher
+    assert 'wait_healthy "$pid" "$SLAIF_ZAP_IT_HOST" "$SLAIF_ZAP_IT_PORT"' in launcher
     assert "nohup setsid" not in launcher
     assert "sed -n '2p'" in launcher
     assert "SLAIF_ZAP_IT_PHYSICAL_GPU_INDEX:?" in launcher
     assert 'export CUDA_VISIBLE_DEVICES="$physical_index"' in launcher
+    assert "SLAIF_ZAP_IT_PRIVATE_LAN_CIDR" in launcher
     assert "physical GPU index is fixed at 1" not in launcher
 
 

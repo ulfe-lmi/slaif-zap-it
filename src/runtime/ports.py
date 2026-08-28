@@ -1,4 +1,4 @@
-"""Non-persistent loopback port qualification."""
+"""Non-persistent explicitly scoped port qualification."""
 
 from __future__ import annotations
 
@@ -75,4 +75,4 @@ def select_candidate_port(
         check = verify_port_unused(host, port)
         if check.unused:
             return check
-    raise RuntimeError("no candidate loopback port was verified unused")
+    raise RuntimeError("no candidate service port was verified unused")

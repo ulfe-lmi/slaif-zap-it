@@ -1,12 +1,13 @@
 # Local service runbook
 
 This runbook operates the tested local ZAP-IT service from one host process.
-It binds only to `127.0.0.1` and exposes one explicitly operator-selected
+It defaults to `127.0.0.1` and may use one human-authorized explicit RFC1918
+address with mandatory bearer authentication. It exposes one operator-selected
 physical GPU as logical `cuda:0`. Below 24,576 MiB the historical 11 GB
 RTX 2080 Ti uses the live-qualified sequential stage-boundary lifecycle; at or
 above 24,576 MiB the assigned RTX 3090 uses the live-qualified all-resident
 lifecycle. The Objective 009 matrix covers all four supported profiles. This is
-bounded local research evidence, not a LAN, public, customer-data,
+bounded local research evidence, not a public/WAN, customer-data,
 production-release, SLA, accuracy, or commercial-license runbook. Geometry,
 panoptic, deployment and release gates remain separate.
 
@@ -72,6 +73,40 @@ line matches this checkout, waits for graceful shutdown, removes the pid/log
 files, and leaves the service stopped. `restart` is a controlled stop followed
 by a fresh port/device preflight.
 
+## Authenticated private-LAN activation
+
+This mode requires explicit human authorization. Verify the host's real RFC1918
+interface and subnet, then install the private operator files without printing
+the generated key:
+
+```bash
+.venv/bin/python scripts/install_private_lan_service.py \
+  --host 10.8.132.76 --cidr 10.8.132.0/24 --port 17891 \
+  --physical-gpu-index 0 \
+  --expected-gpu-uuid GPU-a91444df-4e87-011e-3347-9b3a4b9f9575
+systemctl --user daemon-reload
+systemctl --user enable --now zap-it-lan.service
+```
+
+The installer creates or updates
+`~/.config/slaif-zap-it/service.env` as mode 0600 and preserves an existing
+valid `SLAIF_ZAP_IT_API_KEY`; it never prints the key. It installs only the
+user-level `zap-it-lan.service` unit. Inspect status with
+`systemctl --user status zap-it-lan.service` and verify `ss` shows the exact
+host address, never `0.0.0.0`. The persistent LAN profile uses model-control
+mode `none`, so clients cannot load or unload models.
+
+LAN clients receive the fixed key through an appropriately protected operator
+channel and send `Authorization: Bearer <key>`. Requests without it receive
+401. Interactive docs and OpenAPI return 404 on this listener. Health/readiness
+remain content-free and unauthenticated; metrics require the bearer. This mode
+does not supply TLS, WAN/public exposure, per-user identities or firewall policy.
+
+Rollback is `systemctl --user disable --now zap-it-lan.service`; remove only the
+repo-owned user unit/config if the operator also intends to discard the fixed
+key. No system service, firewall, route, GPU driver or shared model cache is
+changed.
+
 For a cold explicit lifecycle activation, set
 `SLAIF_ZAP_IT_MODEL_CONTROL_MODE=explicit` and a private
 `SLAIF_ZAP_IT_MODEL_CONTROL_API_KEY` distinct from the inference key before
@@ -104,7 +139,7 @@ content-free semantic digests and resource facts; it never prints response
 bodies, request content, prompts, answers, credentials or cache paths.
 
 Never use `killall`, GPU reset, `systemctl` on unrelated units, firewall
-commands, or a wildcard/LAN bind. The optional `deploy/zap-it-local.service`
+commands, or a wildcard/public bind. The optional `deploy/zap-it-local.service`
 file is shipped uninstalled; installing or enabling it is a deliberate operator
 choice and is not required by tests.
 
@@ -198,8 +233,9 @@ nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory \
 find /dev/shm/slaif-zap-it -mindepth 1 -maxdepth 2 -printf '%M %p\n'
 ```
 
-Confirm one service PID owns all three resident models, no wildcard/LAN listener
-exists, every unassigned device's process/memory lines are byte-stable, and the root is empty
+Confirm one service PID owns all three resident models and no wildcard listener
+exists; in loopback mode no LAN listener may exist. Every unassigned device's
+process/memory lines are byte-stable, and the root is empty
 after stop. For concurrency, overlap two real requests: one runs, the other
 must receive deterministic `503 service_busy` with `Retry-After` when queue
 depth is zero. Repeat a bounded number of calls and record latency, response
@@ -235,7 +271,7 @@ Remove only this checkout's optional user configuration and, if explicitly
 desired, its repo-owned launcher/unit files. Do not remove shared
 model-cache entries, stop unrelated GPU work, alter NVIDIA/CUDA, firewall/VPN,
 global credentials, or delete persistent user data. The end-of-round state is a
-free loopback port, no ZAP-IT process, the assigned GPU near its pre-round
+free scoped port, no ZAP-IT process, the assigned GPU near its pre-round
 baseline, other devices unchanged, and an empty `/dev/shm/slaif-zap-it` root.
 
 ## Installed candidate and local academic regression
@@ -243,7 +279,7 @@ baseline, other devices unchanged, and an empty `/dev/shm/slaif-zap-it` root.
 The unpublished 0.1.0 wheel exposes the foreground zap-it-service console
 entrypoint. Install it in a clean venv outside the checkout, source a private
 mode-0600 EnvironmentFile, and use the same assigned-GPU UUID, logical cuda:0 and
-loopback-only checks documented above. The optional user-systemd template is
+scope-specific checks documented above. The optional user-systemd template is
 Type=simple, uses that EnvironmentFile and an explicit installed-venv
 placeholder; it is shipped uninstalled. Upgrade is a stopped venv replacement
 followed by the same readiness check. Rollback restores the prior venv. A

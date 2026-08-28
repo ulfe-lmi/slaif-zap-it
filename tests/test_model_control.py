@@ -102,6 +102,23 @@ def test_metric_label_parser_is_linear_and_handles_escapes() -> None:
     assert _parse_metric_labels('state="' + "\\!" * 100_000) == {}
 
 
+def test_private_lan_application_disables_docs_and_protects_metrics() -> None:
+    app = create_app(
+        engine=FakeEngine(),
+        settings=ServiceSettings(api_key="x" * 32),
+        enable_docs=False,
+    )
+    with TestClient(app) as client:
+        assert client.get("/healthz").status_code == 200
+        assert client.get("/docs").status_code == 404
+        assert client.get("/openapi.json").status_code == 404
+        assert client.get("/metrics").status_code == 401
+        assert (
+            client.get("/metrics", headers={"Authorization": f"Bearer {'x' * 32}"}).status_code
+            == 200
+        )
+
+
 def test_settings_explicit_mode_requires_distinct_control_credential() -> None:
     def with_credentials(inference: str, control: str) -> ServiceSettings:
         return ServiceSettings(

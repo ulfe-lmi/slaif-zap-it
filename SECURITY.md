@@ -45,10 +45,13 @@ especially `trust_remote_code`; uploaded config cannot change them.
 
 ## API
 
-Bind loopback by default. Before LAN/gateway exposure require protected API key or
-trusted gateway identity, constant-time comparison, request limits and sanitized
-errors. Never accept caller-asserted trusted identity headers. Do not expose
-debug/docs/metrics publicly without policy.
+Bind loopback by default. Human-authorized `private_lan` mode requires an exact
+RFC1918 host and containing RFC1918 CIDR, rejects wildcard/public/hostname binds,
+and fails startup without a fixed bearer of at least 32 characters. Comparison
+is constant-time; request limits and sanitized errors remain mandatory. API docs
+and OpenAPI are disabled on the LAN listener, and metrics require the bearer.
+Never accept caller-asserted trusted identity headers. TLS, WAN/public exposure,
+and multi-user authorization remain unsupported.
 
 ## Supply chain
 

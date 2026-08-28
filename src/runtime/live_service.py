@@ -4,7 +4,7 @@ This module is the objective 004 activation layer between the measured
 objective 003 runtime and the objective 002 HTTP contract. It owns:
 
 - operator-only launch configuration (strict operator-index masking, pinned
-  GPU UUID, verified loopback port, RAM-backed temp root);
+  GPU UUID, verified scoped port, RAM-backed temp root);
 - a fail-closed preflight that runs before any CUDA library is imported;
 - a resident model registry that loads the supported ``sam2_clip`` profile
   exactly once per process on ``cuda:0`` using the pinned model identities;
@@ -20,9 +20,10 @@ test environments can exercise every seam without them.
 
 from __future__ import annotations
 
-import os
-import gc
 import ctypes
+import gc
+import ipaddress
+import os
 import subprocess
 import threading
 import time
@@ -61,10 +62,15 @@ __all__ = [
     "main",
     "masked_gpu_uuid",
     "preflight",
+    "require_network_auth",
     "wrap_test_injection",
 ]
 
 _LOOPBACK_HOST = "127.0.0.1"
+_NETWORK_SCOPES = frozenset({"loopback", "private_lan"})
+_RFC1918_NETWORKS = tuple(
+    ipaddress.ip_network(value) for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
 _SHM_MIN_FREE_BYTES = 64 * 1024 * 1024
 _MODEL_MEMORY_BOUND_BYTES = 64 * 1024 * 1024
 
@@ -95,6 +101,8 @@ class LiveServiceConfig:
     """Validated operator-owned launch configuration."""
 
     host: str = _LOOPBACK_HOST
+    network_scope: str = "loopback"
+    private_lan_cidr: str | None = None
     port: int = 17891
     tmp_root: str = "/dev/shm/slaif-zap-it"
     model_cache_root: str | None = None
@@ -105,8 +113,33 @@ class LiveServiceConfig:
     strict_gpu: bool = True
 
     def __post_init__(self) -> None:
-        if self.host != _LOOPBACK_HOST:
-            raise LiveServiceError("the local service may only bind 127.0.0.1 in this objective")
+        if self.network_scope not in _NETWORK_SCOPES:
+            raise LiveServiceError("SLAIF_ZAP_IT_NETWORK_SCOPE must be loopback or private_lan")
+        if self.network_scope == "loopback":
+            if self.host != _LOOPBACK_HOST:
+                raise LiveServiceError("loopback scope may only bind 127.0.0.1")
+            if self.private_lan_cidr:
+                raise LiveServiceError("loopback scope must not set a private LAN CIDR")
+        else:
+            try:
+                address = ipaddress.ip_address(self.host)
+                network = ipaddress.ip_network(self.private_lan_cidr or "", strict=True)
+            except ValueError as exc:
+                raise LiveServiceError(
+                    "private_lan requires an explicit RFC1918 IPv4 host and network CIDR"
+                ) from exc
+            if (
+                address.version != 4
+                or network.version != 4
+                or address.is_loopback
+                or address.is_unspecified
+                or not any(address in allowed for allowed in _RFC1918_NETWORKS)
+                or not any(network.subnet_of(allowed) for allowed in _RFC1918_NETWORKS)
+                or address not in network
+            ):
+                raise LiveServiceError(
+                    "private_lan host and CIDR must be matching explicit RFC1918 IPv4 values"
+                )
         if not 1 <= int(self.port) <= 65535:
             raise LiveServiceError("SLAIF_ZAP_IT_PORT must be a valid TCP port")
         if int(self.physical_gpu_index) < 0:
@@ -120,7 +153,7 @@ class LiveServiceConfig:
         raw_port = (env.get("SLAIF_ZAP_IT_PORT") or "").strip()
         if not raw_port:
             raise LiveServiceError(
-                "SLAIF_ZAP_IT_PORT must be set to a verified-unused loopback port"
+                "SLAIF_ZAP_IT_PORT must be set to a verified-unused service port"
             )
         try:
             port = int(raw_port)
@@ -136,12 +169,26 @@ class LiveServiceConfig:
         strict = strict_raw not in {"0", "false", "no", "off"}
         return cls(
             host=(env.get("SLAIF_ZAP_IT_HOST") or _LOOPBACK_HOST).strip(),
+            network_scope=(env.get("SLAIF_ZAP_IT_NETWORK_SCOPE") or "loopback").strip().lower(),
+            private_lan_cidr=(env.get("SLAIF_ZAP_IT_PRIVATE_LAN_CIDR") or None),
             port=port,
             tmp_root=(env.get("SLAIF_ZAP_IT_TMP_ROOT") or "/dev/shm/slaif-zap-it").strip(),
             model_cache_root=(env.get("SLAIF_ZAP_IT_MODEL_CACHE_ROOT") or None),
             expected_gpu_uuid=(env.get("SLAIF_ZAP_IT_EXPECTED_GPU_UUID") or None),
             physical_gpu_index=physical,
             strict_gpu=strict,
+        )
+
+    @property
+    def is_private_lan(self) -> bool:
+        return self.network_scope == "private_lan"
+
+
+def require_network_auth(config: LiveServiceConfig, api_key: str | None) -> None:
+    """Fail closed when private-LAN transport lacks a strong fixed bearer."""
+    if config.is_private_lan and (api_key is None or len(api_key) < 32):
+        raise LiveServiceError(
+            "private_lan requires an inference API key of at least 32 characters"
         )
 
 
@@ -171,7 +218,7 @@ def preflight(config: LiveServiceConfig) -> PreflightReport:
     port_check = verify_port_unused(config.host, config.port)
     if not port_check.unused:
         raise LiveServiceError(
-            f"{config.host}:{config.port} is not a freshly verified-unused loopback port"
+            f"{config.host}:{config.port} is not a freshly verified-unused service port"
         )
     return PreflightReport(
         launch_environment_ok=True,
@@ -978,7 +1025,7 @@ def build_device_provider(
 
 
 def main() -> int:
-    """Run exactly one loopback ZAP-IT service process (operator entrypoint).
+    """Run exactly one scoped ZAP-IT service process (operator entrypoint).
 
     Exit codes: 2 = configuration/preflight failure, 3 = device guard
     failure. Uvicorn serves until SIGTERM/SIGINT triggers graceful shutdown.
@@ -994,7 +1041,8 @@ def main() -> int:
         from src.service.settings import ServiceSettings
 
         settings = ServiceSettings.from_environment()
-    except (TypeError, ValueError) as exc:
+        require_network_auth(config, settings.api_key)
+    except (LiveServiceError, TypeError, ValueError) as exc:
         print(f"serve_local: invalid service settings: {exc}", file=sys.stderr)
         return 2
     if not config.strict_gpu:
@@ -1111,6 +1159,7 @@ def main() -> int:
         runtime_metadata=runtime_metadata,
         shutdown_callback=registry.shutdown,
         model_registry=registry,
+        enable_docs=not config.is_private_lan,
     )
     registry.bind_metrics(app.state.metrics)
 
