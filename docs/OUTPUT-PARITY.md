@@ -40,11 +40,15 @@ module or helper is not evidence that the live service produces its output.
 ## Post-filter diagnostic policy
 
 The canonical filter evaluates `maxsize`, empty mask, `max_w`, and `max_h` in
-that exact precedence. Rejection comparisons are strict; threshold equality is
-retained. Width and height are inclusive pixel extents over the remapped
-segmentation, and aggregate counts satisfy the evaluated/retained invariant.
-L3 records contain only numeric source index, reason, area and bbox dimensions,
-are ordered by candidate input, and are capped at 256 with explicit truncation.
+that exact precedence. The area comparison is terminal and occurs before
+segmentation access; `maxsize` records retain the exact area and carry `0/0` bbox
+dimensions because bbox dimensions were not evaluated. Empty masks also carry
+`0/0` for their distinct reason. Other width and height values are inclusive
+pixel extents over the remapped segmentation. Rejection comparisons are strict;
+threshold equality is retained, and aggregate counts satisfy the
+evaluated/retained invariant. L3 records contain only numeric source index,
+reason, area and bbox dimensions, are ordered by candidate input, and are capped
+at 256 with explicit truncation.
 The field is absent at L0-L2 and is copied unchanged into JSON and ZIP
 manifest responses. The roof/panel regression is generated CPU filter evidence,
 not a real-image or SAM2-recall claim.

@@ -54,9 +54,16 @@ def _evaluate_candidate(
     max_w: Any,
     max_h: Any,
 ) -> tuple[str, int, int, int]:
-    """Evaluate one candidate using the canonical mutually exclusive order."""
+    """Evaluate one candidate using the canonical mutually exclusive order.
+
+    The terminal maxsize branch deliberately returns zero bbox dimensions because
+    segmentation and bbox dimensions have not been evaluated yet.
+    """
     area_value = mask["area"]
     area_px = int(area_value)
+    if area_value > post_maxsize:
+        return "maxsize", area_px, 0, 0
+
     segmentation = mask["segmentation"]
     rr, cc = np.where(segmentation)
     if len(rr) == 0:
@@ -64,8 +71,6 @@ def _evaluate_candidate(
     else:
         bbox_width_px = int(cc.max() - cc.min() + 1)
         bbox_height_px = int(rr.max() - rr.min() + 1)
-    if area_value > post_maxsize:
-        return "maxsize", area_px, bbox_width_px, bbox_height_px
     if len(rr) == 0:
         return "empty_mask", area_px, 0, 0
     if bbox_width_px > max_w:

@@ -180,10 +180,13 @@ Geometry and panoptic visualization remain unsupported.
 
 For L3 post-filter evidence, inspect `service.post_filter_diagnostics` beside
 `candidate_counts`. It reports mutually exclusive `maxsize`, `empty_mask`,
-`max_w`, `max_h`, or retained outcomes in that precedence, with strict
-threshold rejection and inclusive bbox extents. Verify the aggregate equality,
-the candidate-count cross-checks, numeric-only source-indexed records and the
-256-record cap/truncation. Repeat JSON and ZIP requests and compare the
+`max_w`, `max_h`, or retained outcomes in that precedence. The `maxsize` branch
+is decided before segmentation access and its record has the exact area with
+zero bbox dimensions because they were not evaluated; empty masks also have zero
+dimensions for their distinct reason. Other bbox extents are inclusive, and
+threshold rejection is strict. Verify the aggregate equality, the candidate-count
+cross-checks, numeric-only source-indexed records and the 256-record cap/truncation.
+Repeat JSON and ZIP requests and compare the
 diagnostic values in the response and `manifest.json`. The two-wide-candidate
 roof scenario is a programmatic CPU regression and must not be reported as a
 real-image accuracy result.

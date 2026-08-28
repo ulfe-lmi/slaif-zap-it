@@ -185,7 +185,10 @@ bounded base64 descriptors; ZIP uses a deterministic manifest and names.
 
 Post-filter diagnostics are produced by the same short-circuit evaluator as the
 area/bbox filter. They use strict `>` rejection with inclusive threshold
-retention and precedence `maxsize`, `empty_mask`, `max_w`, `max_h`. Aggregate
+retention and precedence `maxsize`, `empty_mask`, `max_w`, `max_h`. The terminal
+`maxsize` comparison occurs before segmentation access, so its numeric rejection
+record keeps the exact area and uses zero bbox dimensions because they were not
+evaluated; empty masks use zero dimensions for their distinct reason. Aggregate
 counts reconcile with evaluated and retained candidates. L3 may include only
 numeric rejection records, in input order, capped at 256 with an explicit
 truncation count; lower response levels do not serialize this sidecar.

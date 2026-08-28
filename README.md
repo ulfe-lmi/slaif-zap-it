@@ -150,15 +150,19 @@ Binary artifacts are base64 descriptors in JSON or files in a bounded ZIP.
 Request bytes and intermediate results remain in RAM or the validated
 `/dev/shm` workspace and are removed after every request.
 
-L3 post-filter diagnostics report one short-circuit outcome per evaluated
-non-empty SAM2 candidate: `maxsize`, `empty_mask`, `max_w`, `max_h`, or retained,
-in that precedence order. Thresholds are strict for rejection and inclusive for
+L3 post-filter diagnostics report one short-circuit outcome per evaluated SAM2
+candidate: `maxsize`, `empty_mask`, `max_w`, `max_h`, or retained, in that
+precedence order. The area comparison is terminal and occurs before segmentation
+access; a `maxsize` rejection records its exact area and `0/0` bbox dimensions
+because bbox dimensions were not evaluated. Empty masks also report `0/0` for
+their distinct reason. Other bbox dimensions are inclusive extents of the
+remapped segmentation. Thresholds are strict for rejection and inclusive for
 retention. Counts satisfy `evaluated = retained + all four removal counts` and
 cross-check `candidate_counts.sam2_candidates` and `after_area_bbox`. Rejection
-records contain only numeric area, inclusive bbox dimensions, and source index;
-at most 256 are retained in input order, with the remainder in
-`rejections_truncated`. This is configured-filter evidence, not a SAM2 recall or
-model-accuracy claim. The two-wide-candidate roof regression is programmatic
+records contain only numeric area, bbox dimensions, and source index; at most
+256 are retained in input order, with the remainder in `rejections_truncated`.
+This is configured-filter evidence, not a SAM2 recall or model-accuracy claim.
+The two-wide-candidate roof regression is programmatic
 CPU filter evidence, not a real roof-image benchmark.
 
 ## Documentation

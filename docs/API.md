@@ -103,11 +103,14 @@ stripped from the effective config with an explicit warning.
 ### L3 post-filter diagnostics
 
 The L3 `service.post_filter_diagnostics` sibling of `candidate_counts` records
-one mutually exclusive outcome per non-empty candidate evaluated by the
-post-SAM2 filter. Precedence is `maxsize`, `empty_mask`, `max_w`, then `max_h`;
-rejection uses strict `>` and equality is retained. `bbox_width_px` and
-`bbox_height_px` are inclusive extents of the exact remapped mask, while empty
-masks report zero dimensions. Counts satisfy
+one mutually exclusive outcome per candidate evaluated by the post-SAM2 filter.
+The area comparison is terminal and occurs before segmentation access, so a
+`maxsize` rejection records its exact `area_px` and zero `bbox_width_px` and
+`bbox_height_px` because bbox dimensions were not evaluated. Precedence is
+`maxsize`, `empty_mask`, `max_w`, then `max_h`; rejection uses strict `>` and
+equality is retained. Empty masks also report zero dimensions for their distinct
+reason; other bbox dimensions are inclusive extents of the exact remapped mask.
+Counts satisfy
 `evaluated = retained + removed_by_maxsize + removed_empty_mask +
 removed_by_max_w + removed_by_max_h`, and the canonical engine cross-checks
 `candidate_counts.sam2_candidates == evaluated` and

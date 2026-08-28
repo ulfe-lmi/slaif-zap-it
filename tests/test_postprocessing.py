@@ -21,6 +21,30 @@ def test_filter_by_area_bbox_rejects_large_area():
     assert kept[0]["area"] == 5
 
 
+def test_filter_diagnostics_maxsize_short_circuits_segmentation_access():
+    class SegmentationAccessRaises(dict):
+        def __getitem__(self, key):
+            if key == "segmentation":
+                raise AssertionError("maxsize must be decided before segmentation access")
+            return super().__getitem__(key)
+
+    candidate = SegmentationAccessRaises(area=101)
+    diagnostics = {}
+
+    assert filter_by_area_bbox([candidate], 100, 10, 10, diagnostics=diagnostics) == []
+    assert diagnostics["evaluated"] == 1
+    assert diagnostics["removed_by_maxsize"] == 1
+    assert diagnostics["rejections"] == [
+        {
+            "source_index": 0,
+            "reason": "maxsize",
+            "area_px": 101,
+            "bbox_width_px": 0,
+            "bbox_height_px": 0,
+        }
+    ]
+
+
 def test_filter_by_area_bbox_enforces_bbox_and_logs():
     messages = []
 
@@ -84,12 +108,12 @@ def test_filter_diagnostics_use_one_precedence_and_preserve_legacy_result():
                 "bbox_height_px": height,
             }
             for index, reason, area, width, height in (
-                (1, "maxsize", 101, 2, 2),
+                (1, "maxsize", 101, 0, 0),
                 (2, "empty_mask", 0, 0, 0),
                 (3, "max_w", 10, 7, 2),
                 (4, "max_h", 10, 2, 7),
                 (5, "max_w", 10, 7, 7),
-                (6, "maxsize", 101, 7, 2),
+                (6, "maxsize", 101, 0, 0),
             )
         ],
         "rejections_truncated": 0,

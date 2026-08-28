@@ -42,12 +42,15 @@ overlap. The identity PNG remains a documented single-valued projection.
 
 The L3 `post_filter_diagnostics` field shares the post-SAM2 filter's exact
 short-circuit evaluator: `maxsize`, `empty_mask`, `max_w`, `max_h`, then
-retained. Values strictly above a limit are rejected and equal values are
-retained; bbox dimensions are inclusive extents on the remapped mask. Counts
-must reconcile evaluated with retained and all four removal counters and must
+retained. The area comparison is terminal and occurs before segmentation access;
+`maxsize` records carry the exact area and zero bbox dimensions because they were
+not evaluated. Empty masks also carry zero dimensions for their distinct reason.
+Values strictly above a limit are rejected and equal values are retained; other
+bbox dimensions are inclusive extents on the remapped mask. Counts must
+reconcile evaluated with retained and all four removal counters and must
 cross-check `candidate_counts.sam2_candidates`/`after_area_bbox`. Rejection
-records contain only numeric source index, reason, area and bbox dimensions,
-are input-ordered and capped at 256 with `rejections_truncated`. This is
+records contain only numeric source index, reason, area and bbox dimensions, are
+input-ordered and capped at 256 with `rejections_truncated`. This is
 configured-filter evidence, not a SAM2 recall or accuracy claim; the roof test
 is programmatic CPU evidence. JSON and ZIP carry the same diagnostic values,
 while L0-L2 omit the field.

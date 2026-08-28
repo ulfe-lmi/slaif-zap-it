@@ -63,13 +63,16 @@ observability data and intentionally excluded from all deterministic payload
 serialization.
 
 The post-SAM2 filter and its diagnostic sidecar share one evaluator. It applies
-the terminal precedence `maxsize` -> `empty_mask` -> `max_w` -> `max_h`, uses
-strict `>` rejection and inclusive threshold retention, and measures inclusive
-pixel bbox extents on the exact remapped mask. Counts reconcile evaluated with
-retained plus the four removal counters. L3 serializes only numeric rejection
-records in input order, at most 256, and reports `rejections_truncated`; lower
-levels do not expose this field. Source indices are the core's pre-filter SAM2
-ordinals, with a trusted legacy ordinal fallback.
+the terminal precedence `maxsize` -> `empty_mask` -> `max_w` -> `max_h`, using
+strict `>` rejection and inclusive threshold retention. The area comparison is
+performed before segmentation access; a `maxsize` record retains the exact area
+and uses `0/0` bbox dimensions because they were not evaluated. Empty masks also
+use `0/0` for their distinct reason. Only later outcomes measure inclusive pixel
+bbox extents on the exact remapped mask. Counts reconcile evaluated with retained
+plus the four removal counters. L3 serializes only numeric rejection records in
+input order, at most 256, and reports `rejections_truncated`; lower levels do not
+expose this field. Source indices are the core's pre-filter SAM2 ordinals, with a
+trusted legacy ordinal fallback.
 
 ## Mask remapping fix (regression evidence)
 
