@@ -71,6 +71,17 @@ The core does not require a filesystem. Debug-capable modules receive an
 artifact sink. The service uses a bounded memory sink; the trusted CLI can use a
 filesystem sink through its compatibility adapter.
 
+BLIP3 composes one bounded verification image per candidate that is actually
+questioned. Its half-open mask-bbox crop adds symmetric context (at least
+128 pixels per dimension), scales uniformly by deterministic nearest-neighbor
+mapping toward a 256-pixel short side with a 768-pixel long-side cap, and
+places untouched context beside a four-pixel divider and an exterior-only
+four-pixel yellow mask contour. Selected right-side pixels remain identical to
+the left view; other exterior pixels retain 40% of each channel. The fixed
+region-specific instruction follows the delimited client question. This
+mask-level evidence improves the input boundary but does not guarantee semantic
+accuracy.
+
 ### Models and residency
 
 Approved SAM2, CLIP, and BLIP3 identities/revisions are fixed in operator code.
@@ -88,7 +99,7 @@ BLIP3 request:   SAM2 -> CLIP on GPU
                     |
                     v
                  SAM2 + CLIP to CPU
-                 BLIP3 to GPU -> verify patches
+                 BLIP3 to GPU -> verify paired mask-aware images
                  BLIP3 to CPU
                  SAM2 + CLIP restored to GPU
 ```

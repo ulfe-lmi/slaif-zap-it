@@ -266,6 +266,49 @@ def test_missing_sink_for_debug_flags_raises_typed_error():
         )
 
 
+def test_blip3_debug_receives_the_core_sink_only_when_requested():
+    captured = {}
+    mask = {"segmentation": seg([(2, 2)], (8, 8)), "clip_label": "goat"}
+
+    def fake_blip3(state, params, image, **kwargs):
+        captured["params"] = params
+        return state or {}, params["masks"], {}
+
+    sink = MemoryArtifactSink()
+    config = base_config(blip3_cfg={"goat": {"question": "is this a goat?", "debug": True}})
+    run(
+        [mask],
+        config,
+        sink=sink,
+        stages=make_stages([mask], blip3_fn=fake_blip3),
+    )
+    assert captured["params"]["artifact_sink"] is sink
+    assert captured["params"]["service_safe_artifact_names"] is False
+
+    captured.clear()
+    no_debug = base_config(blip3_cfg={"goat": {"question": "is this a goat?"}})
+    run(
+        [mask],
+        no_debug,
+        sink=sink,
+        stages=make_stages([mask], blip3_fn=fake_blip3),
+    )
+    assert "artifact_sink" not in captured["params"]
+
+
+def test_blip3_debug_without_a_sink_fails_closed():
+    mask = {"segmentation": seg([(2, 2)], (8, 8)), "clip_label": "goat"}
+    config = base_config(blip3_cfg={"goat": {"question": "is this a goat?", "debug": True}})
+    with pytest.raises(CoreError):
+        run_single_image(
+            np.zeros((8, 8, 3), dtype=np.uint8),
+            config,
+            verbosity=0,
+            artifact_sink=None,
+            stages=make_stages([mask]),
+        )
+
+
 def test_memory_sink_captures_debug_artifacts_without_filesystem_writes(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     before = {p: p.stat().st_size for p in sorted(tmp_path.rglob("*")) if p.is_file()}

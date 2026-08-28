@@ -103,8 +103,22 @@ Each rule supports these fields:
 - `trueresult` / `falseresult`: substrings that signal a positive/negative
   answer (case-insensitive).
 - `newcategory`: optional replacement label applied when the answer is true.
-- `debug`: when `true`, bounded crops and answer artifacts are available only at
-  service verbosity 3; raw answers are never logged or used as metric labels.
+- `debug`: when `true`, service verbosity 3 returns the exact paired
+  mask-aware verification image as a lossless PNG named
+  `blip3-verification-{candidate_index:04d}-{question_index:04d}.png`.
+  The image is not a semantic-accuracy guarantee, and structured answers are
+  returned independently; raw answers are never logged or used as metric labels.
+  At lower service verbosity the nested flag is set to `false` and one
+  aggregate warning is returned.
+
+BLIP3 does not receive the old rectangle-only crop. The verifier derives one
+half-open crop from the complete mask bbox, adds symmetric padding of
+`max(16, ceil(12.5% of the larger bbox dimension))`, and enforces a 128-pixel
+minimum dimension. It scales uniformly by explicit nearest-neighbor mapping
+toward a 256-pixel short side, capped at 768 pixels on the long side. The
+paired image has untouched context on the left, a four-pixel dark divider, and
+an aligned right spotlight with exact selected pixels, 40% integer-channel
+dimming outside the mask, and a yellow exterior four-pixel contour.
 
 The service allows at most 32 nested rules/questions and fixes generation to at
 most 32 new tokens per question. It rejects `model_name`, `revision`, `dtype`,

@@ -100,6 +100,17 @@ Configured filesystem-style debug flags are honored only at verbosity 3
 (where they map to bounded logical artifacts in memory); below that they are
 stripped from the effective config with an explicit warning.
 
+When a BLIP3 rule executes, the verifier passes a deterministic paired RGB image
+to every QA call: a mask-bbox context crop on the left and the same crop on the
+right with only the selected mask preserved, a four-pixel dark divider, and an
+exterior-only four-pixel yellow contour. Crop dimensions are at least 128 before
+uniform nearest-neighbor scaling toward a 256-pixel short side, capped at a
+768-pixel long side. At L3, an effective rule with `debug: true` adds only the
+exact paired image passed to QA as
+`blip3-verification-{candidate_index:04d}-{question_index:04d}.png`; the
+structured answer and label remain independent of that artifact. No user text
+enters the name.
+
 ## Completion envelope
 
 ```json

@@ -178,6 +178,16 @@ fixes BLIP3 to FP16, 32 questions/request and 32 generated tokens per question;
 model IDs, revisions, dtype, paths and runtime controls remain rejected.
 Geometry and panoptic visualization remain unsupported.
 
+For a bounded L3 BLIP3 audit, set `debug: true` on one rule. The verifier passes
+each executed question a paired image: untouched context on the left and an
+exact mask spotlight on the right, separated by four dark pixels and outlined
+only on the exterior by a four-pixel yellow contour. Its dimensions use a
+128-pixel minimum, uniform nearest-neighbor scaling toward a 256-pixel short
+side, and a 768-pixel long-side cap. The service returns the exact lossless
+image as `blip3-verification-####-####.png` at L3 only; it never puts the
+question, label, answer or filename in that logical name. This qualifies the
+image/instruction/artifact integration, not universal BLIP3 accuracy.
+
 The operator-only `scripts/profile_matrix.py` harness sends the exact sanitized
 sequence `sam2, sam2_clip, sam2_blip3, sam2_clip_blip3, sam2_clip_blip3,
 sam2_blip3, sam2_clip, sam2` as authenticated L3 JSON requests. It requires

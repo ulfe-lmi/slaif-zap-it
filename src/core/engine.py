@@ -312,7 +312,13 @@ def run_single_image(
             "masks": masked_after_clip,
             "fname_stem": frame_id,
             "dryrun": dryrun,
+            "service_safe_artifact_names": service_safe_artifact_names,
         }
+        if any(
+            isinstance(rule, Mapping) and rule.get("debug", False)
+            for rule in config.blip3_cfg.values()
+        ):
+            blip3_params["artifact_sink"] = _require_sink("blip3 rule debug")
         if isinstance(blip3_state, dict):
             # These bounds are fixed by the service registry, never by upload.
             if "max_questions" in blip3_state:

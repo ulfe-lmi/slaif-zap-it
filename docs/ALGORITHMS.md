@@ -79,15 +79,24 @@ configured true/false substrings, and optionally assign a replacement class.
 Service requests provide only rule mappings. The model, revision, FP16 dtype,
 tokenizer, processor, device, cache, and residency strategy remain pinned. The
 service limits each request to 32 planned questions and 32 generated tokens per
-question.
+question. Each question receives a deterministic mask-aware paired image rather
+than a rectangle-only patch. The complete mask bbox receives symmetric
+`max(16, ceil(12.5% of the larger bbox dimension))` context and a 128-pixel
+minimum crop extent. The crop is uniformly nearest-neighbor scaled toward a
+256-pixel short side, with a 768-pixel long-side cap, then rendered as
+untouched context, a four-pixel divider, and a spotlight that preserves selected
+pixels, dims other exterior pixels to 40%, and paints only the exterior
+four-pixel dilation ring yellow.
 
 Below 24,576 MiB, BLIP3 lives in host RAM until its stage. SAM2 and CLIP run on
 GPU first; the registry then swaps them out, executes BLIP3 on GPU, and restores
 the baseline. At or above 24,576 MiB, all three pinned FP16 holders remain on
 the assigned GPU and no request-time movement occurs. Objective 009's real
-matrix covers all four supported profiles. Per-mask image patches use the mask
-bounding box with a minimum 128-pixel extent; the pinned processor maps
-arbitrary aspect ratios to a finite 378-pixel tile grid. Both modes expose only
+matrix covers all four supported profiles. The resulting paired images are
+bounded before the pinned processor maps
+arbitrary aspect ratios to a finite 378-pixel tile grid. The verifier's fixed
+instruction follows the delimited client question and asks whether the region
+inside the yellow outline itself is the requested object. Both modes expose only
 logical `cuda:0` after an explicit operator index and UUID pin; the evidence is
 bounded local research, not an SLA, accuracy claim, license clearance, or
 external deployment.

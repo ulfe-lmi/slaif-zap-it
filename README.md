@@ -27,6 +27,12 @@ At L3, `annotated` remains the mask-only overlay. The final-stage
 labels and manifest instance numbers come from the final structured objects;
 structured labels remain available whether or not a visualization is requested.
 
+BLIP3 verification is mask-aware: each executed question receives a deterministic
+side-by-side RGB image with untouched context on the left and an exact
+mask-highlighted candidate on the right. The service's L3 `debug: true` rules
+expose that exact paired image as a fixed-name lossless PNG; this is an audit
+artifact, not a guarantee of semantic accuracy.
+
 Version `0.1.0` is an unpublished release candidate. The current evidence is a
 local research/development qualification, not a production SLA, accuracy
 guarantee, commercial model-use clearance, or public-deployment authorization.
@@ -138,7 +144,7 @@ active inference request.
 | 0 | Completion envelope and normalized five-field YOLO lines |
 | 1 | Deterministic uint16 identity-mask PNG |
 | 2 | Per-object mask-derived geometry and available SAM2/CLIP/BLIP3 metadata |
-| 3 | Bounded timings, stage metadata, RLE masks, overlays, warnings, and provenance |
+| 3 | Bounded timings, stage metadata, RLE masks, overlays, warnings, provenance, and BLIP3 verification PNGs |
 
 Binary artifacts are base64 descriptors in JSON or files in a bounded ZIP.
 Request bytes and intermediate results remain in RAM or the validated

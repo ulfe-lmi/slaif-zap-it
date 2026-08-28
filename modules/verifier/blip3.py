@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import math
+import re
 from typing import Any, Dict, Tuple
 import os
 import numpy as np
@@ -11,6 +14,190 @@ from PIL import Image
 
 MAX_SERVICE_QUESTIONS = 32
 MAX_SERVICE_NEW_TOKENS = 32
+BLIP3_FIXED_INSTRUCTION = (
+    "The left-hand image is the untouched context view. The right-hand image is "
+    "the exact candidate region selected by the segmentation mask.\n"
+    "In the right-hand image, is the region inside the yellow outline itself the "
+    "requested object? Ignore everything outside the outline. Answer exactly Yes "
+    "or No."
+)
+_BLIP3_DIVIDER_WIDTH = 4
+_BLIP3_CONTOUR_RADIUS = 4
+_BLIP3_TARGET_SHORT_SIDE = 256
+_BLIP3_MAX_LONG_SIDE = 768
+_BLIP3_MIN_CROP_EXTENT = 128
+_BLIP3_DARKEN_NUMERATOR = 2
+_BLIP3_DARKEN_DENOMINATOR = 5
+_BLIP3_YELLOW = np.array((255, 224, 0), dtype=np.uint8)
+
+
+@dataclass(frozen=True)
+class Blip3VerificationComposition:
+    """Deterministic paired BLIP3 input and its source-to-display transform."""
+
+    paired: np.ndarray
+    image: Image.Image
+    scaled_mask: np.ndarray
+    contour: np.ndarray
+    crop_box_xyxy: Tuple[int, int, int, int]
+    crop_shape_hw: Tuple[int, int]
+    scaled_shape_hw: Tuple[int, int]
+    scale: float
+    divider_width: int = _BLIP3_DIVIDER_WIDTH
+
+    @property
+    def array(self) -> np.ndarray:
+        """Alias used by callers that refer to the paired image as an array."""
+        return self.paired
+
+    @property
+    def paired_image(self) -> Image.Image:
+        """The exact RGB PIL image represented by paired."""
+        return self.image
+
+    @property
+    def scaled_height(self) -> int:
+        return self.scaled_shape_hw[0]
+
+    @property
+    def scaled_width(self) -> int:
+        return self.scaled_shape_hw[1]
+
+
+def _nearest_indices(source_length: int, target_length: int) -> np.ndarray:
+    """Map target pixel centers to source pixels with deterministic nearest-neighbor."""
+    if source_length <= 0 or target_length <= 0:
+        raise ValueError("nearest-neighbor dimensions must be positive")
+    centers = (np.arange(target_length, dtype=np.float64) + 0.5) * (
+        source_length / float(target_length)
+    ) - 0.5
+    indices = np.floor(centers + 0.5).astype(np.int64)
+    return np.clip(indices, 0, source_length - 1)
+
+
+def _centered_extent(center: int, desired: int, limit: int) -> Tuple[int, int]:
+    """Return a positive centered extent, clamped and back-shifted in limit."""
+    if limit <= 0:
+        raise ValueError("source dimensions must be positive")
+    extent = min(max(int(desired), 1), int(limit))
+    if extent == limit:
+        return 0, int(limit)
+    start = int(center) - extent // 2
+    start = max(0, min(start, int(limit) - extent))
+    return start, start + extent
+
+
+def _square_dilation(mask: np.ndarray, radius: int) -> np.ndarray:
+    """Dilate a boolean mask by a bounded square (Chebyshev) radius."""
+    if radius < 0:
+        raise ValueError("dilation radius must not be negative")
+    if radius == 0:
+        return mask.copy()
+    height, width = mask.shape
+    padded = np.pad(mask, radius, mode="constant", constant_values=False)
+    dilated = np.zeros_like(mask, dtype=bool)
+    for row_delta in range(2 * radius + 1):
+        for col_delta in range(2 * radius + 1):
+            dilated |= padded[
+                row_delta : row_delta + height,
+                col_delta : col_delta + width,
+            ]
+    return dilated
+
+
+def compose_verification_image(
+    image_rgb: np.ndarray, segmentation_mask: np.ndarray
+) -> Blip3VerificationComposition:
+    """Compose a bounded context/spotlight BLIP3 image from one exact mask.
+
+    Crop coordinates are inclusive-bbox-derived and returned as half-open
+    (x0, y0, x1, y1) metadata. The same explicit nearest-neighbor index
+    arrays are used for RGB and mask scaling. Extremely narrow, downscaled
+    views can coalesce subpixel structure; nearest-neighbor preserves selected
+    samples but cannot restore one-to-one source resolution in that case.
+    """
+    if (
+        not isinstance(image_rgb, np.ndarray)
+        or image_rgb.ndim != 3
+        or image_rgb.shape[2] != 3
+        or image_rgb.dtype != np.uint8
+    ):
+        raise TypeError("image_rgb must be a non-empty RGB uint8 numpy array")
+    if image_rgb.shape[0] <= 0 or image_rgb.shape[1] <= 0:
+        raise ValueError("image_rgb dimensions must be positive")
+    if (
+        not isinstance(segmentation_mask, np.ndarray)
+        or segmentation_mask.ndim != 2
+        or segmentation_mask.shape != image_rgb.shape[:2]
+        or segmentation_mask.dtype != np.dtype(bool)
+    ):
+        raise TypeError("segmentation_mask must be a boolean array matching image_rgb")
+    if not np.any(segmentation_mask):
+        raise ValueError("segmentation_mask must contain at least one selected pixel")
+
+    rows, cols = np.nonzero(segmentation_mask)
+    y_min, y_max = int(rows.min()), int(rows.max())
+    x_min, x_max = int(cols.min()), int(cols.max())
+    bbox_width = x_max - x_min + 1
+    bbox_height = y_max - y_min + 1
+    padding = max(16, int(math.ceil(0.125 * max(bbox_width, bbox_height))))
+    desired_width = max(_BLIP3_MIN_CROP_EXTENT, bbox_width + 2 * padding)
+    desired_height = max(_BLIP3_MIN_CROP_EXTENT, bbox_height + 2 * padding)
+    crop_x0, crop_x1 = _centered_extent((x_min + x_max) // 2, desired_width, image_rgb.shape[1])
+    crop_y0, crop_y1 = _centered_extent((y_min + y_max) // 2, desired_height, image_rgb.shape[0])
+
+    context_crop = image_rgb[crop_y0:crop_y1, crop_x0:crop_x1, :]
+    mask_crop = segmentation_mask[crop_y0:crop_y1, crop_x0:crop_x1]
+    crop_height, crop_width = context_crop.shape[:2]
+    short_side = min(crop_height, crop_width)
+    scale = (
+        _BLIP3_TARGET_SHORT_SIDE / float(short_side)
+        if short_side < _BLIP3_TARGET_SHORT_SIDE
+        else 1.0
+    )
+    long_side = max(crop_height, crop_width)
+    if long_side * scale > _BLIP3_MAX_LONG_SIDE:
+        scale = _BLIP3_MAX_LONG_SIDE / float(long_side)
+    scaled_width = max(1, int(math.floor(crop_width * scale + 0.5)))
+    scaled_height = max(1, int(math.floor(crop_height * scale + 0.5)))
+    row_indices = _nearest_indices(crop_height, scaled_height)
+    col_indices = _nearest_indices(crop_width, scaled_width)
+    indexer = np.ix_(row_indices, col_indices)
+    context_scaled = context_crop[indexer]
+    scaled_mask = mask_crop[indexer]
+    contour = _square_dilation(scaled_mask, _BLIP3_CONTOUR_RADIUS) & ~scaled_mask
+
+    spotlight = context_scaled.copy()
+    exterior = ~scaled_mask & ~contour
+    spotlight[exterior] = (
+        spotlight[exterior].astype(np.uint16) * _BLIP3_DARKEN_NUMERATOR // _BLIP3_DARKEN_DENOMINATOR
+    ).astype(np.uint8)
+    spotlight[contour] = _BLIP3_YELLOW
+
+    paired = np.zeros((scaled_height, 2 * scaled_width + _BLIP3_DIVIDER_WIDTH, 3), dtype=np.uint8)
+    paired[:, :scaled_width, :] = context_scaled
+    paired[:, scaled_width + _BLIP3_DIVIDER_WIDTH :, :] = spotlight
+    return Blip3VerificationComposition(
+        paired=paired,
+        image=Image.fromarray(paired),
+        scaled_mask=scaled_mask,
+        contour=contour,
+        crop_box_xyxy=(crop_x0, crop_y0, crop_x1, crop_y1),
+        crop_shape_hw=(crop_height, crop_width),
+        scaled_shape_hw=(scaled_height, scaled_width),
+        scale=float(scale),
+    )
+
+
+# Descriptive alias for callers that prefer the BLIP3-specific name.
+compose_blip3_verification_image = compose_verification_image
+
+
+def compose_verification_query(target_question: str) -> str:
+    """Keep the bounded client question before the fixed region task."""
+    if not isinstance(target_question, str):
+        raise TypeError("BLIP3 target question must be a string")
+    return f"[TARGET QUESTION]\n{target_question}\n[/TARGET QUESTION]\n{BLIP3_FIXED_INSTRUCTION}"
 
 
 class Blip3ResourceLimitError(ValueError):
@@ -348,26 +535,53 @@ class _Blip3Filter:
             max_new_tokens=max_new_tokens,
         )
 
-    def _write_debug_artifacts(
-        self, patch, out_dir, fname_stem, safe_lbl, idx, answer, artifact_sink
-    ):
-        """Write one debug JPEG plus answer text via sink or legacy files."""
-        patch_file = f"{fname_stem}_blip3_{idx:04d}_{safe_lbl}.jpg"
-        text_name = patch_file.replace(".jpg", ".txt")
-        if artifact_sink is not None:
-            artifact_sink.store_image(patch_file, patch)
-            artifact_sink.store_text(text_name, answer)
-        else:
-            Image.fromarray(patch).save(os.path.join(out_dir, patch_file), "JPEG")
-            with open(os.path.join(out_dir, text_name), "w") as f:
-                f.write(answer)
-        self.log_print(f"[_Blip3Filter debug] => wrote {patch_file}", 2, self.verbosity)
+    @staticmethod
+    def _legacy_frame_stem(fname_stem: Any) -> str:
+        """Keep trusted CLI names bounded and independent of user rule text."""
+        stem = str(fname_stem).replace("\\", "/").rsplit("/", 1)[-1]
+        stem = re.sub(r"[^A-Za-z0-9_.-]", "_", stem).strip("._")
+        return stem[:96] or "image"
 
-    def filter_masks(self, masks, image_np, out_dir, fname_stem, artifact_sink=None):
+    def _write_debug_artifact(
+        self,
+        paired: np.ndarray,
+        out_dir,
+        fname_stem,
+        candidate_index: int,
+        question_index: int,
+        artifact_sink,
+        *,
+        service_safe_artifact_names: bool,
+    ):
+        """Write only the exact paired lossless image passed to BLIP3."""
+        if service_safe_artifact_names:
+            image_name = f"blip3-verification-{candidate_index:04d}-{question_index:04d}.png"
+        else:
+            image_name = (
+                f"{self._legacy_frame_stem(fname_stem)}-blip3-verification-"
+                f"{candidate_index:04d}-{question_index:04d}.png"
+            )
+        if artifact_sink is not None:
+            artifact_sink.store_image(image_name, paired, fmt="png")
+        else:
+            if out_dir is None:
+                raise ValueError("BLIP3 debug requires an artifact sink or output directory")
+            Image.fromarray(paired).save(os.path.join(out_dir, image_name), format="PNG")
+        self.log_print(f"[_Blip3Filter debug] => wrote {image_name}", 2, self.verbosity)
+
+    def filter_masks(
+        self,
+        masks,
+        image_np,
+        out_dir,
+        fname_stem,
+        artifact_sink=None,
+        *,
+        service_safe_artifact_names: bool = False,
+    ):
         if not self.label_cfg:
             return masks, []
 
-        H, W = image_np.shape[:2]
         any_rules, label_rules = [], {}
         for key, rule in self.label_cfg.items():
             if isinstance(key, str) and key.startswith("any,"):
@@ -394,56 +608,50 @@ class _Blip3Filter:
                 )
 
         answers = []
+        question_index = 0
 
         for idx, m in enumerate(masks):
             lbl = m.get("clip_label")
             score = float(m.get("clip_score", 0.0))
+            verification = None
 
-            seg = m.get("segmentation")
-            rr, cc = np.where(seg)
-            if len(rr) == 0:
-                continue
-            y_min, y_max = rr.min(), rr.max()
-            x_min, x_max = cc.min(), cc.max()
-            cx = (x_min + x_max) // 2
-            cy = (y_min + y_max) // 2
-            w_box = x_max - x_min + 1
-            h_box = y_max - y_min + 1
-            patch_w = max(w_box, 128)
-            patch_h = max(h_box, 128)
-            x0 = max(0, cx - patch_w // 2)
-            y0 = max(0, cy - patch_h // 2)
-            x1 = min(W, x0 + patch_w)
-            y1 = min(H, y0 + patch_h)
-            x0 = max(0, x1 - patch_w)
-            y0 = max(0, y1 - patch_h)
-            patch = image_np[y0:y1, x0:x1, :]
+            def ask(cfg):
+                nonlocal question_index, verification
+                if verification is None:
+                    verification = compose_verification_image(image_np, m["segmentation"])
+                current_question_index = question_index
+                question_index += 1
+                question = cfg.get("question", "")
+                query = compose_verification_query(question)
+                debug_array = verification.paired.copy() if cfg.get("debug", False) else None
+                answer = self.qa.answer(
+                    verification.image,
+                    query,
+                    max_new_tokens=(
+                        self.max_new_tokens if self.max_new_tokens is not None else 768
+                    ),
+                )
+                if cfg.get("debug", False):
+                    self._write_debug_artifact(
+                        debug_array,
+                        out_dir,
+                        fname_stem,
+                        idx,
+                        current_question_index,
+                        artifact_sink,
+                        service_safe_artifact_names=service_safe_artifact_names,
+                    )
+                return answer
 
             processed = False
 
             # "any,<thr>" rules: only ask BLIP3 if CLIP score is <= thr
-            for thr, key, cfg in any_rules:
+            for thr, _key, cfg in any_rules:
                 if score > thr:
                     continue
-                question = cfg.get("question", "")
-                answer = self.qa.answer(
-                    Image.fromarray(patch),
-                    question,
-                    max_new_tokens=self.max_new_tokens or 768,
-                )
+                answer = ask(cfg)
                 m["blip3_answer"] = answer
                 answers.append(answer)
-
-                if cfg.get("debug", False):
-                    self._write_debug_artifacts(
-                        patch,
-                        out_dir,
-                        fname_stem,
-                        key.replace(" ", "_"),
-                        idx,
-                        answer,
-                        artifact_sink,
-                    )
 
                 ans_l = answer.lower()
                 true_s = str(cfg.get("trueresult", "")).lower()
@@ -466,19 +674,9 @@ class _Blip3Filter:
             if not cfg:
                 continue
 
-            question = cfg.get("question", "")
-            answer = self.qa.answer(
-                Image.fromarray(patch),
-                question,
-                max_new_tokens=self.max_new_tokens or 768,
-            )
+            answer = ask(cfg)
             m["blip3_answer"] = answer
             answers.append(answer)
-
-            if cfg.get("debug", False):
-                self._write_debug_artifacts(
-                    patch, out_dir, fname_stem, lbl.replace(" ", "_"), idx, answer, artifact_sink
-                )
 
             ans_l = answer.lower()
             true_s = str(cfg.get("trueresult", "")).lower()
@@ -568,13 +766,15 @@ def run(
     out_dir = params.get("out_dir")
     fname_stem = params.get("fname_stem", "image")
     artifact_sink = params.get("artifact_sink")
-
+    filter_kwargs = {}
     if artifact_sink is not None:
-        updated_masks, answers = blip_filter.filter_masks(
-            masks, image_np, out_dir, fname_stem, artifact_sink=artifact_sink
-        )
-    else:
-        updated_masks, answers = blip_filter.filter_masks(masks, image_np, out_dir, fname_stem)
+        filter_kwargs["artifact_sink"] = artifact_sink
+    if isinstance(blip_filter, _Blip3Filter) and "service_safe_artifact_names" in params:
+        filter_kwargs["service_safe_artifact_names"] = bool(params["service_safe_artifact_names"])
+
+    updated_masks, answers = blip_filter.filter_masks(
+        masks, image_np, out_dir, fname_stem, **filter_kwargs
+    )
     meta = {
         "answers": answers,
         "num_masks": len(updated_masks) if updated_masks is not None else 0,
@@ -635,8 +835,13 @@ def initialize_holder(
 
 __all__ = [
     "Blip3ResourceLimitError",
+    "BLIP3_FIXED_INSTRUCTION",
     "MAX_SERVICE_NEW_TOKENS",
     "MAX_SERVICE_QUESTIONS",
+    "Blip3VerificationComposition",
+    "compose_blip3_verification_image",
+    "compose_verification_image",
+    "compose_verification_query",
     "initialize",
     "initialize_holder",
     "run",
