@@ -5,10 +5,12 @@ from __future__ import annotations
 from collections import Counter
 import io
 import json
+import math
 import zipfile
 
 import numpy as np
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -65,6 +67,7 @@ SAM2_NUMBER_FIELDS = (
     "crop_overlap_ratio",
 )
 SAM2_BOOLEAN_FIELDS = ("use_m2m", "multimask_output")
+SAM2_NONFINITE_YAML_SCALARS = (".nan", ".inf", "-.inf")
 
 
 def _yaml_literal(value):
@@ -79,6 +82,10 @@ def _yaml_literal(value):
 
 def _sam2_config(field: str, value) -> bytes:
     return _config(f"mask_generator:\n  {field}: {_yaml_literal(value)}\n")
+
+
+def _sam2_yaml_scalar_config(field: str, scalar: str) -> bytes:
+    return _config(f"mask_generator:\n  {field}: {scalar}\n")
 
 
 def _unrestricted_sam2_settings() -> ServiceSettings:
@@ -335,16 +342,74 @@ def test_sam2_numeric_intrinsic_range_failures(field, value):
     + [(field, "8") for field in SAM2_INTEGER_FIELDS]
     + [(field, "0.5") for field in SAM2_NUMBER_FIELDS]
     + [(field, None) for field in SAM2_FIELDS]
-    + [(field, "NaN") for field in SAM2_NUMBER_FIELDS]
-    + [(field, ".inf") for field in SAM2_NUMBER_FIELDS]
-    + [(field, "-.inf") for field in SAM2_NUMBER_FIELDS]
     + [("profile", None), ("debug", None)],
 )
-def test_sam2_strict_types_and_nonfinite_numbers_are_rejected(field, value):
+def test_sam2_parser_strict_types_are_rejected(field, value):
     with pytest.raises(ServiceError) as excinfo:
         parse_hostile_config(_sam2_config(field, value), verbosity=0)
     assert excinfo.value.code == "invalid_config"
     assert field in str(excinfo.value)
+
+
+@pytest.mark.parametrize("field", SAM2_NUMBER_FIELDS)
+@pytest.mark.parametrize("value", ("NaN", ".inf", "-.inf"))
+def test_sam2_quoted_nonfinite_strings_are_rejected_as_strings(field, value):
+    raw = _sam2_config(field, value)
+    parsed = yaml.safe_load(raw.decode("utf-8"))
+    assert type(parsed["mask_generator"][field]) is str
+
+    with pytest.raises(ServiceError) as excinfo:
+        parse_hostile_config(raw, verbosity=0)
+    assert excinfo.value.code == "invalid_config"
+    assert field in str(excinfo.value)
+
+
+@pytest.mark.parametrize("field", SAM2_NUMBER_FIELDS)
+@pytest.mark.parametrize("scalar", SAM2_NONFINITE_YAML_SCALARS)
+def test_sam2_actual_yaml_nonfinite_numbers_are_rejected(field, scalar):
+    raw = _sam2_yaml_scalar_config(field, scalar)
+    parsed = yaml.safe_load(raw.decode("utf-8"))
+    value = parsed["mask_generator"][field]
+    assert type(value) is float
+    assert not math.isfinite(value)
+
+    with pytest.raises(ServiceError) as excinfo:
+        parse_hostile_config(raw, verbosity=0)
+    assert excinfo.value.code == "invalid_config"
+    assert field in str(excinfo.value)
+
+
+@pytest.mark.parametrize("field", SAM2_NUMBER_FIELDS)
+@pytest.mark.parametrize("scalar", SAM2_NONFINITE_YAML_SCALARS)
+def test_api_rejects_actual_yaml_nonfinite_sam2_numbers_before_inference(field, scalar):
+    raw = _sam2_yaml_scalar_config(field, scalar)
+    parsed = yaml.safe_load(raw.decode("utf-8"))
+    value = parsed["mask_generator"][field]
+    assert type(value) is float
+    assert not math.isfinite(value)
+
+    engine = FakeEngine()
+    readiness_calls = []
+
+    def readiness():
+        readiness_calls.append(True)
+        return ReadyState(True, "ready")
+
+    client = TestClient(create_app(engine=engine, readiness_provider=readiness))
+    response = client.post(
+        "/v1/completions",
+        files={
+            "image": ("frame.png", _png(), "image/png"),
+            "config": ("config.yaml", raw, "application/yaml"),
+        },
+    )
+    assert response.status_code == 400
+    body = response.json()
+    assert body["error"]["code"] == "invalid_config"
+    assert field in body["error"]["message"]
+    assert scalar not in response.text
+    assert engine.calls == []
+    assert readiness_calls == []
 
 
 @pytest.mark.parametrize(
