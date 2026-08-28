@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Operator entrypoint for the single-process loopback ZAP-IT service.
+"""Operator entrypoint for the single-process scoped ZAP-IT service.
 
 Launch environment (see docs/RUNBOOK.md):
 
@@ -8,6 +8,7 @@ Launch environment (see docs/RUNBOOK.md):
     CUDA_VISIBLE_DEVICES=<assigned-physical-index>  # launcher derives this
     SLAIF_ZAP_IT_EXPECTED_GPU_UUID=GPU-...   # live-verified UUID for that index
     SLAIF_ZAP_IT_HOST=127.0.0.1
+    SLAIF_ZAP_IT_NETWORK_SCOPE=loopback
     SLAIF_ZAP_IT_PORT=<freshly verified unused port>
     SLAIF_ZAP_IT_TMP_ROOT=/dev/shm/slaif-zap-it
 

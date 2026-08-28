@@ -152,6 +152,7 @@ def create_app(
     shutdown_callback: Optional[Callable[[], None]] = None,
     model_registry: Any | None = None,
     lifecycle_controller: Any | None = None,
+    enable_docs: bool = True,
 ) -> FastAPI:
     """Build the service app around an explicitly injected engine.
 
@@ -227,8 +228,9 @@ def create_app(
         title="SLAIF ZAP-IT API",
         version=SCHEMA_VERSION,
         lifespan=lifespan,
-        docs_url="/docs",
+        docs_url="/docs" if enable_docs else None,
         redoc_url=None,
+        openapi_url="/openapi.json" if enable_docs else None,
     )
     app.state.settings = resolved_settings
     app.state.gate = gate

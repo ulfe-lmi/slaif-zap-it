@@ -40,8 +40,9 @@ filesystem adapters                    request/auth/resource guards
           CLI writers/YOLO          JSON/ZIP renderers
 ```
 
-The HTTP service binds to loopback, runs one worker and one active inference,
-and exposes exactly one operator-pinned physical GPU as logical `cuda:0`. An
+The HTTP service defaults to loopback and may bind one explicit RFC1918 address
+only in authenticated `private_lan` mode. It runs one worker and one active
+inference and exposes exactly one operator-pinned physical GPU as logical `cuda:0`. An
 optional explicit model controller keeps that process/listener live while its
 fixed model is cold.
 
@@ -183,7 +184,7 @@ disk and never writes client-controlled paths.
 | Uploaded YAML | Allowlisted bounded algorithm rules | Paths, models, devices, network, code, secrets |
 | Model assets | Pinned local snapshots and reviewed remote code | Request-selected repositories/downloads |
 | Request data | In-memory processing within one call | Persistence, raw-body logs, content metric labels |
-| Network | Loopback local client | LAN/public exposure without separate authorization |
+| Network | Loopback, or human-authorized explicit RFC1918 host/CIDR with fixed bearer | Wildcard, public/WAN, unauthenticated LAN |
 
 ## Supported versus legacy-only
 

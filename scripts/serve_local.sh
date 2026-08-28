@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Operator launcher for exactly one loopback ZAP-IT service process.
+# Operator launcher for exactly one scoped ZAP-IT service process.
 #
 # Usage: scripts/serve_local.sh {start|stop|status|logs|restart}
 #
@@ -7,7 +7,7 @@
 # and UUID. If no port
 # is exported, the helper selects 17891, then 23654, then a verified free port
 # in 20000..40000. The service repeats the ss+bind preflight immediately before
-# opening its listener, so selection is never treated as a reservation.
+# opening its explicitly scoped listener, so selection is never treated as a reservation.
 #
 # Runtime pid/log files are private, ephemeral operator artifacts below
 # SLAIF_ZAP_IT_TMP_ROOT. The script only signals a PID whose command line is
@@ -116,7 +116,23 @@ require_launch_env() {
   done
   export CUDA_DEVICE_ORDER=PCI_BUS_ID
   export CUDA_VISIBLE_DEVICES="$physical_index"
-  export SLAIF_ZAP_IT_HOST=127.0.0.1
+  local network_scope="${SLAIF_ZAP_IT_NETWORK_SCOPE:-loopback}"
+  case "$network_scope" in
+    loopback)
+      export SLAIF_ZAP_IT_HOST=127.0.0.1
+      unset SLAIF_ZAP_IT_PRIVATE_LAN_CIDR
+      ;;
+    private_lan)
+      : "${SLAIF_ZAP_IT_HOST:?private_lan requires an explicit SLAIF_ZAP_IT_HOST}"
+      : "${SLAIF_ZAP_IT_PRIVATE_LAN_CIDR:?private_lan requires SLAIF_ZAP_IT_PRIVATE_LAN_CIDR}"
+      : "${SLAIF_ZAP_IT_API_KEY:?private_lan requires SLAIF_ZAP_IT_API_KEY}"
+      ;;
+    *)
+      echo "serve_local: network scope must be loopback or private_lan" >&2
+      return 1
+      ;;
+  esac
+  export SLAIF_ZAP_IT_NETWORK_SCOPE="$network_scope"
   export SLAIF_ZAP_IT_TMP_ROOT="$TMP_ROOT"
 }
 
@@ -126,13 +142,15 @@ select_port_if_needed() {
   fi
   export SLAIF_ZAP_IT_PORT
   SLAIF_ZAP_IT_PORT="$(run_python - <<'PY'
+import os
+
 from src.runtime.ports import select_candidate_port
 
-print(select_candidate_port().port)
+print(select_candidate_port(host=os.environ["SLAIF_ZAP_IT_HOST"]).port)
 PY
 )"
   [ -n "$SLAIF_ZAP_IT_PORT" ] || {
-    echo "serve_local: no verified-unused loopback port was found" >&2
+    echo "serve_local: no verified-unused service port was found" >&2
     return 1
   }
 }
@@ -147,18 +165,20 @@ verify_port_free() {
 }
 
 wait_healthy() {
-  local pid="$1" port="$2" waited=0
+  local pid="$1" host="$2" port="$3" waited=0
   while [ "$waited" -lt "$HEALTH_TIMEOUT_S" ]; do
     if ! owned_pid "$pid"; then
       echo "serve_local: process exited during startup; see $LOGFILE" >&2
       return 1
     fi
-    if "$(python_bin)" - "$port" <<'PY' 2>/dev/null
+    if "$(python_bin)" - "$host" "$port" <<'PY' 2>/dev/null
 import sys
 import urllib.request
 
 try:
-    with urllib.request.urlopen(f"http://127.0.0.1:{sys.argv[1]}/healthz", timeout=2) as response:
+    with urllib.request.urlopen(
+        f"http://{sys.argv[1]}:{sys.argv[2]}/healthz", timeout=2
+    ) as response:
         raise SystemExit(0 if response.status == 200 else 1)
 except Exception:
     raise SystemExit(1)
@@ -200,8 +220,8 @@ cmd_start() {
   umask 077
   printf '%s\n' "$pid" > "$PIDFILE"
   chmod 600 -- "$PIDFILE"
-  if wait_healthy "$pid" "$SLAIF_ZAP_IT_PORT"; then
-    echo "serve_local: started pid $pid on 127.0.0.1:$SLAIF_ZAP_IT_PORT"
+  if wait_healthy "$pid" "$SLAIF_ZAP_IT_HOST" "$SLAIF_ZAP_IT_PORT"; then
+    echo "serve_local: started pid $pid on $SLAIF_ZAP_IT_HOST:$SLAIF_ZAP_IT_PORT"
     echo "serve_local: log: $LOGFILE"
     return 0
   fi

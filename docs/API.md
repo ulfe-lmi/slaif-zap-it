@@ -214,6 +214,14 @@ Strict-loopback deployments default to NO key. Setting
 constant-time comparison. Keys are never logged or echoed; health endpoints
 stay open.
 
+Human-authorized private-LAN deployment sets
+`SLAIF_ZAP_IT_NETWORK_SCOPE=private_lan`, one explicit RFC1918 host and a
+containing RFC1918 CIDR. Startup fails unless the inference key is at least 32
+characters. Wildcard, public, hostname and scope-mismatched binds are rejected.
+`/docs` and `/openapi.json` are disabled on that listener;
+`/v1/completions` and `/metrics` require the fixed bearer. TLS/WAN and
+multi-user authorization are not provided by this mode.
+
 ## Errors
 
 Stable sanitized envelope on every failure:

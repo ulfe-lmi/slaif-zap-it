@@ -38,7 +38,8 @@ guarantee, commercial model-use clearance, or public-deployment authorization.
 | Image-directory and video processing | Yes | No |
 | Canny/Hough geometry helpers | Legacy integrations | No |
 | Panoptic/Detectron2 rendering | Optional legacy helper | No |
-| LAN, public, multi-worker, or multi-tenant deployment | No | No |
+| Authenticated fixed-host private-LAN deployment | No | Yes |
+| Public/WAN, multi-worker, or multi-tenant deployment | No | No |
 
 ### GPU residency
 
@@ -120,8 +121,10 @@ curl --fail-with-body \
   http://127.0.0.1:${SLAIF_ZAP_IT_PORT}/v1/completions
 ```
 
-Stop the service with `scripts/serve_local.sh stop`. Keep it loopback-only and
-use exactly one worker and one active inference request.
+Stop the service with `scripts/serve_local.sh stop`. Loopback remains the
+default. A human-authorized fixed-host private-LAN deployment is documented in
+the runbook and requires a strong on-disk bearer. Use exactly one worker and one
+active inference request.
 
 ## Output levels
 

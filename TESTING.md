@@ -29,8 +29,9 @@ an unrelated mock.
   cycles, metrics labels and OpenAPI routes.
 - T3 GPU integration: explicit opt-in; physical GPU1 only; pinned models; one
   test at a time; before/after UUID/process/VRAM evidence; redistributable image.
-- T4 local deployment: verified free loopback port, health/readiness, all levels,
-  repeated calls, no residue/GPU0 process, rollback/restart.
+- T4 local deployment: verified free scoped port, health/readiness, all levels,
+  repeated calls, authentication and docs policy, no residue on the assigned
+  GPU, rollback/restart.
 
 GitHub-hosted CI runs T0–T2 only. GPU tests must be markers and skip honestly
 without required host/model assets. A self-hosted GPU check is not required until

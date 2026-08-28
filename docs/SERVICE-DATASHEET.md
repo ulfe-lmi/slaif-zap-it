@@ -7,11 +7,12 @@ or claim of leak-proof operation.
 ## Purpose and non-goals
 
 The service accepts one image and one hostile-but-validated YAML document and
-returns deterministic segmentation/classification artifacts through a loopback
-`POST /v1/completions` endpoint. It is a ZAP-IT multimodal contract, not generic
+returns deterministic segmentation/classification artifacts through loopback or
+an explicitly authorized authenticated RFC1918 `POST /v1/completions` endpoint.
+It is a ZAP-IT multimodal contract, not generic
 OpenAI text-completion compatibility.
 
-It does not provide LAN/public exposure, TLS, gateway integration, async jobs,
+It does not provide public/WAN exposure, TLS, gateway integration, async jobs,
 history, persistence, training, multi-worker CUDA, geometry activation,
 Detectron2 panoptic output, or customer-data handling.
 
@@ -146,6 +147,7 @@ cleanup. The current resident service has no request persistence.
 
 Use the pinned GPU lock, freshly verify the selected physical GPU's
 UUID/process/memory state, set `CUDA_DEVICE_ORDER=PCI_BUS_ID` and the matching
-`CUDA_VISIBLE_DEVICES`, and select a verified-unused loopback port. Protected
-GPUs must remain unchanged. Gateway integration, LAN exposure, and final release
+`CUDA_VISIBLE_DEVICES`, and select a verified-unused scoped port. Private-LAN
+mode additionally requires an exact RFC1918 host/CIDR and strong fixed bearer.
+Protected GPUs must remain unchanged. Gateway integration and final release
 remain separately governed.

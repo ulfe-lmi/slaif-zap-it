@@ -92,7 +92,7 @@ install -m 600 deploy/service.env.example \
   ~/.config/slaif-zap-it/service.env
 ```
 
-The private file supplies the expected GPU UUID, physical index, loopback port,
+The private file supplies the expected GPU UUID, physical index, scoped port,
 model-cache root, shared-memory root, API key, and fixed resource limits. Set a
 specific port after verifying that it is unused when subsequent commands need
 to reference `$SLAIF_ZAP_IT_PORT`. Source the file before launching:
@@ -157,6 +157,14 @@ signal a protected GPU or change drivers, CUDA, firewall, or system services.
 manual installation, replace the executable placeholder, verify the private
 environment file, and keep the bind address loopback-only. Package verification
 does not install, enable, reload, or start systemd units.
+
+For an explicitly authorized private-LAN installation, use
+`scripts/install_private_lan_service.py`. It writes a mode-0600 operator file,
+generates or preserves a fixed bearer without printing it, and installs a
+user-unit definition. LAN mode accepts only an exact RFC1918 host inside the
+configured RFC1918 CIDR; wildcard/public binds fail closed. Review the generated
+files, then run `systemctl --user daemon-reload` and enable
+`zap-it-lan.service`.
 
 ## Batch CLI
 
