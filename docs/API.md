@@ -91,7 +91,9 @@ rejected with stable codes before any expensive work.
   answer when present, geometry hook when present).
 - **L3**: L2 + stage statuses, candidate counts, timings, provenance,
   aggregate warnings, bounded annotated/debug artifacts, and one exact
-  per-object uncompressed column-major COCO-style mask RLE.
+  per-object uncompressed column-major COCO-style mask RLE. `annotated` remains
+  mask-only; the optional `annotated-labelled` stream is final-stage, labelled,
+  deterministic and Detectron2-free.
 
 Lower levels never trigger extra optional stages solely to enrich output.
 Configured filesystem-style debug flags are honored only at verbosity 3
@@ -170,6 +172,25 @@ commands, imports, Python symbols, devices, model repositories/revisions or
 deployment settings. Legacy `visualization.alpha` hoisting matches CLI
 normalization (default `0.6`). CLIP `labels` keys define the class mapping in
 document order.
+
+### Visualization streams
+
+The service accepts bounded RGB streams only at L3. `annotated` and its legacy
+`alpha-overlay` spelling draw masks without text. `annotated-labelled` is
+accepted only under `visualization.blip3`; it draws the sanitized final
+structured label and exact `ObjectResult.instance_id`. `show_confidence` is a
+strict boolean and adds a finite two-decimal CLIP suffix when true. It never
+changes structured labels, object ordering, masks, class mapping, or artifact
+paths. `panoptic` remains unsupported.
+
+```yaml
+visualization:
+  blip3:
+    - id: labelled-result
+      renderer: annotated-labelled
+      alpha: 0.55
+      show_confidence: true
+```
 
 ## Limits (operator-overridable at startup only)
 
@@ -307,5 +328,7 @@ measured evidence and deployment prerequisites.
   question. Model identity, revision, dtype, device and residency are fixed
   operator policy; they cannot be selected by YAML or multipart fields.
 - Geometry and panoptic visualization remain explicitly unsupported service
-  capabilities; geometry activation requires a separate scientific-stage order.
+  capabilities; `annotated-labelled` is the supported final-object labelled
+  visualization and geometry activation requires a separate scientific-stage
+  order.
 - `geometry`/`blip2` config sections are rejected until the core consumes them.

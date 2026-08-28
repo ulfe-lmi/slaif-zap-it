@@ -169,7 +169,9 @@ At each verbosity, verify the normalized five-field YOLO lines. L1 contains a
 16-bit `identity-mask.png` with original dimensions, background `0`, and IDs
 `1..N`; L2 contains only produced object/SAM/CLIP fields; L3 adds bounded stage
 status, timings, pinned model/device provenance, warnings, annotated/debug
-artifacts, and exact per-object column-major RLE. ZIP contains `manifest.json`,
+artifacts, and exact per-object column-major RLE. `annotated` remains mask-only;
+the L3-only `annotated-labelled` stream uses final structured labels and exact
+instance IDs with deterministic bounded placement. ZIP contains `manifest.json`,
 `detections.yolo.txt`, and the same level-gated artifact names. A request
 containing bounded nested BLIP3 verification rules is supported. The service
 fixes BLIP3 to FP16, 32 questions/request and 32 generated tokens per question;

@@ -123,7 +123,7 @@ _DEBUG_FLAG_PATHS = (
 
 _VISUALIZATION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _VISUALIZATION_STAGES = frozenset({"sam2", "clip", "blip3"})
-_VISUALIZATION_ENTRY_KEYS = frozenset({"id", "renderer", "alpha"})
+_VISUALIZATION_ENTRY_KEYS = frozenset({"id", "renderer", "alpha", "show_confidence"})
 
 
 _ALLOWED_SCALAR_TAGS = frozenset(
@@ -316,10 +316,13 @@ def _validate_visualization_policy(mapping: Mapping[str, Any], *, max_streams: i
                 raise ServiceError(
                     "visualization ids must be bounded safe identifiers", code="unsafe_config"
                 )
-            if not isinstance(renderer, str) or renderer.lower() not in {
-                "annotated",
-                "alpha-overlay",
-            }:
+            renderer_name = renderer.lower() if isinstance(renderer, str) else ""
+            if renderer_name == "annotated-labelled" and stage_name != "blip3":
+                raise ServiceError(
+                    "annotated-labelled visualization is only supported under visualization.blip3",
+                    code="unsupported_field",
+                )
+            if renderer_name not in {"annotated", "alpha-overlay", "annotated-labelled"}:
                 raise ServiceError(
                     "only the annotated visualization renderer is supported",
                     code="unsupported_field",
@@ -333,6 +336,17 @@ def _validate_visualization_policy(mapping: Mapping[str, Any], *, max_streams: i
                 ):
                     raise ServiceError(
                         "visualization entry alpha must be from 0 to 1", code="invalid_config"
+                    )
+            if "show_confidence" in entry:
+                if not isinstance(entry["show_confidence"], bool):
+                    raise ServiceError(
+                        "visualization entry show_confidence must be a boolean",
+                        code="invalid_config",
+                    )
+                if renderer_name != "annotated-labelled":
+                    raise ServiceError(
+                        "show_confidence is only supported by annotated-labelled",
+                        code="unsupported_field",
                     )
 
 

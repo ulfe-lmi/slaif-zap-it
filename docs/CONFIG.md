@@ -124,7 +124,7 @@ separate governed scientific-stage order and an in-memory refactor.
 
 ## `visualization`
 
-Controls which intermediate results are rendered. The loader copies
+Controls which intermediate and final results are rendered. The loader copies
 `visualization.alpha` into a top-level `alpha` field (default `0.6`) used by the
 composite builder. Additional keys:
 
@@ -139,8 +139,24 @@ The service renderer policy exposes only bounded in-memory annotated streams:
 - `annotated` (the legacy spelling `alpha-overlay` is accepted): draws masks on
   top of the original image with an optional alpha override. At most eight safe
   ID streams execute, and only at service verbosity 3.
+- `annotated-labelled`: a deterministic, Detectron2-free L3 stream accepted
+  only under `visualization.blip3`. It begins with the same mask overlay and
+  draws each final object's sanitized label and exact instance number. The
+  optional strict-boolean `show_confidence` adds a finite two-decimal CLIP
+  suffix. Structured labels remain available independently of rendering.
 - `panoptic`, composite/file/video rules, unknown renderers and unsafe IDs are
   rejected by the service. The trusted CLI retains its compatibility writers.
+
+Supported API request shape:
+
+```yaml
+visualization:
+  blip3:
+    - id: labelled-result
+      renderer: annotated-labelled
+      alpha: 0.55
+      show_confidence: true
+```
 
 ## `images`
 

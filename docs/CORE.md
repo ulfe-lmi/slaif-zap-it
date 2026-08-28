@@ -52,8 +52,8 @@ The chain matches the historical behavior:
 ```text
 ROI crop -> optional resize -> SAM2 masks -> area/bbox filter
         -> optional CLIP labeling -> optional BLIP3 verification
-        -> keep-label filter -> optional visualization arrays
-        -> deterministic final-object ordering + id assignment
+        -> keep-label filter -> deterministic final-object ordering + id assignment
+        -> optional visualization arrays
 ```
 
 Stage statuses, candidate counts and wall-clock timings are recorded on the
@@ -168,8 +168,11 @@ equivalent when configured.
   unchanged.
 - Final objects are now emitted in the deterministic order defined above
   rather than raw arrival order.
-- Service annotated overlays use a stable bounded palette. Legacy composite and
-  writer behavior remains a trusted CLI concern.
+- Service annotated overlays use a stable bounded palette. The service's
+  `annotated` stream is mask-only; `annotated-labelled` is an L3-only
+  final-object renderer that uses sanitized labels and exact instance IDs
+  without changing structured results. Legacy composite and writer behavior
+  remains a trusted CLI concern.
 
 ## Geometry drift resolution
 

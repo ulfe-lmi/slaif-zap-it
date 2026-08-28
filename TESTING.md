@@ -55,7 +55,8 @@ an explicit operational order creates and secures it.
   idempotency, readiness/admission race, active drain and cold-memory proof;
 - selected physical GPU visibility and no protected-GPU allocation in live tier;
 - bounded artifact count/per-item/total/base64/ZIP budget and no-truncation checks;
-- visualization execution policy, geometry pre-inference rejection, metrics
+- visualization execution policy, final-object labelled pixel/placement/
+  sanitization/confidence checks, geometry pre-inference rejection, metrics
   privacy/cardinality and A/B/A state-isolation checks;
 
 The explicit lifecycle test tier remains CPU/fake-only unless an order grants a
