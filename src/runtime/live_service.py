@@ -71,6 +71,7 @@ _NETWORK_SCOPES = frozenset({"loopback", "private_lan"})
 _RFC1918_NETWORKS = tuple(
     ipaddress.ip_network(value) for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 )
+_DOCKER_DEFAULT_NETWORK = ipaddress.ip_network("172.17.0.0/16")
 _SHM_MIN_FREE_BYTES = 64 * 1024 * 1024
 _MODEL_MEMORY_BOUND_BYTES = 64 * 1024 * 1024
 
@@ -135,6 +136,7 @@ class LiveServiceConfig:
                 or address.is_unspecified
                 or not any(address in allowed for allowed in _RFC1918_NETWORKS)
                 or not any(network.subnet_of(allowed) for allowed in _RFC1918_NETWORKS)
+                or address in _DOCKER_DEFAULT_NETWORK
                 or address not in network
             ):
                 raise LiveServiceError(

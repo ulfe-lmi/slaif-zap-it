@@ -69,6 +69,7 @@ def test_config_rejects_non_loopback_host_without_private_scope():
         ("hinton2", "10.8.132.0/24"),
         ("10.8.132.76", "192.168.1.0/24"),
         ("172.17.0.1", "10.8.132.0/24"),
+        ("172.17.0.1", "172.17.0.0/16"),
     ],
 )
 def test_private_lan_rejects_wildcard_public_hostname_and_scope_mismatch(host, cidr):
