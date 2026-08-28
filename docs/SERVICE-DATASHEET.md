@@ -55,6 +55,15 @@ configured-filter evidence, not a SAM2 recall or accuracy claim; the roof test
 is programmatic CPU evidence. JSON and ZIP carry the same diagnostic values,
 while L0-L2 omit the field.
 
+Every level also includes `service.sam2`. The service keeps the pinned SAM2
+model resident and constructs exactly one fresh automatic-mask generator around
+it per request. The manifest reports the requested safe scalars, all effective
+values, independent `explicit`/`profile`/`default` sources, selected profile,
+exact prompt and mask-prediction estimates, raw generator candidate count,
+three-decimal SAM2 duration and deterministic resource warnings. Timing is
+excluded from content-determinism comparisons; JSON and ZIP metadata otherwise
+agree.
+
 BLIP3 debug is an L3-only lossless PNG of the exact image passed to QA, named
 `blip3-verification-{candidate_index:04d}-{question_index:04d}.png`. The
 image is a deterministic pair of untouched context and mask spotlight views:
@@ -102,6 +111,10 @@ separate for reasons other than GPU memory, as documented in
 | `/dev/shm` free floor | 64 MiB | `SLAIF_ZAP_IT_MIN_SHM_FREE_BYTES` |
 | Deadline / queue | 120 s / 0 | `SLAIF_ZAP_IT_REQUEST_DEADLINE_SECONDS`, `SLAIF_ZAP_IT_QUEUE_DEPTH` |
 | BLIP3 questions / generated tokens | 32 / 32 | Fixed service policy; not uploaded controls |
+| SAM2 points per side / batch | 64 / 64 | `SLAIF_ZAP_IT_SAM2_MAX_POINTS_PER_SIDE`, `SLAIF_ZAP_IT_SAM2_MAX_POINTS_PER_BATCH` |
+| SAM2 crop layers | 2 | `SLAIF_ZAP_IT_SAM2_MAX_CROP_N_LAYERS` |
+| SAM2 estimated prompts / predictions | 8,192 / 24,576 | `SLAIF_ZAP_IT_SAM2_MAX_ESTIMATED_PROMPTS`, `SLAIF_ZAP_IT_SAM2_MAX_ESTIMATED_MASK_PREDICTIONS` |
+| SAM2 minimum region area | 1,000,000 | `SLAIF_ZAP_IT_SAM2_MAX_MIN_MASK_REGION_AREA` |
 
 Budgets are validated at startup and cannot be changed by request YAML. For L3,
 each supported annotated stream reserves exactly `height * width * 3` raw bytes
@@ -111,6 +124,20 @@ render or reserve visualization arrays. Raw artifacts are checked before
 retention/encoding; JSON checks base64 expansion before encoding, and ZIP writes
 prepared raw bytes directly. RLE and every serialization loop check the absolute
 120-second request deadline. There is no post-hoc artifact truncation.
+
+## SAM2 capability policy
+
+The authenticated `GET /v1/capabilities` route is static policy metadata. It
+does not require readiness or acquire the inference gate. It documents the
+strict public ranges, exact defaults/profiles, formula
+`sum(4^layer * int(points_per_side / downscale_factor^layer)^2)` and the
+multimask multiplier. Fixed model revision, logical device, dtype, residency,
+cache/checkpoint/config paths, output destinations, `point_grids`,
+`output_mode=binary_mask` and arbitrary kwargs are operator-owned; sensitive
+path, credential, topology and process values are withheld. Invalid intrinsic
+values return `invalid_config` 400. Exceeding an operator field or estimate cap
+returns non-retryable `resource_limit` 413 before readiness, gate acquisition,
+generator construction or inference.
 
 Nested BLIP3 debug flags are stripped to false below L3 with one bounded
 aggregate warning. At L3 no duplicate answer-text debug artifact is generated;

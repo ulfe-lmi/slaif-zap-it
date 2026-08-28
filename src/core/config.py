@@ -107,6 +107,9 @@ class CoreConfig:
     post_maxsize: int = 999_999_999
     max_w: int = 999_999_999
     max_h: int = 999_999_999
+    # Service-only SAM2 provenance is kept separate from constructor scalars so
+    # the core can carry it without forwarding metadata to a model adapter.
+    sam2_metadata: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_mapping(cls, config: Mapping[str, Any]) -> "CoreConfig":
@@ -119,7 +122,12 @@ class CoreConfig:
         prep = config.get("preprocessing", {}) or {}
         clip_cfg = config.get("clip", {}) or {}
         blip3_cfg = config.get("blip3", {}) or {}
-        sam2_cfg = config.get("mask_generator", {}) or {}
+        raw_sam2_cfg = config.get("mask_generator", {}) or {}
+        sam2_cfg = (
+            {key: value for key, value in raw_sam2_cfg.items() if not str(key).startswith("_")}
+            if isinstance(raw_sam2_cfg, Mapping)
+            else raw_sam2_cfg
+        )
         postsam2_cfg = config.get("postsam2processing", {}) or {}
         vis_cfg = config.get("visualization", {}) or {}
 

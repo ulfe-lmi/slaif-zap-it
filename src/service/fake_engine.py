@@ -221,6 +221,11 @@ class FakeEngine:
                 notes=("deterministic fake engine",),
             ),
             post_filter_diagnostics=post_filter_diagnostics,
+            sam2_metadata={
+                **dict(config.sam2_metadata or {}),
+                "actual_candidate_count": len(specs),
+                "execution_time_ms": 0.5,
+            },
         )
         return SingleImageOutcome(
             result=result,

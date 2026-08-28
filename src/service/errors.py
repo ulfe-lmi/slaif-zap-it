@@ -34,6 +34,7 @@ ERROR_STATUS_CODES: Mapping[str, int] = {
     "unauthorized": 401,
     "payload_too_large": 413,
     "image_too_large": 413,
+    "resource_limit": 413,
     "response_too_large": 413,
     "cancelled": 499,
     "inference_failure": 500,

@@ -21,6 +21,7 @@ __all__ = [
     "TMP_ROOT_ENV_VAR",
     "DEFAULT_TMP_ROOT",
     "SERVICE_MODEL_ID",
+    "SAM2_LIMIT_ENV_VARS",
     "ServiceSettings",
 ]
 
@@ -35,6 +36,15 @@ DEFAULT_TMP_ROOT = "/dev/shm/slaif-zap-it"
 
 #: Fixed public service/model identifier for this contract version.
 SERVICE_MODEL_ID = "zap-it-1"
+
+SAM2_LIMIT_ENV_VARS = {
+    "SLAIF_ZAP_IT_SAM2_MAX_POINTS_PER_SIDE": "sam2_max_points_per_side",
+    "SLAIF_ZAP_IT_SAM2_MAX_POINTS_PER_BATCH": "sam2_max_points_per_batch",
+    "SLAIF_ZAP_IT_SAM2_MAX_CROP_N_LAYERS": "sam2_max_crop_n_layers",
+    "SLAIF_ZAP_IT_SAM2_MAX_ESTIMATED_PROMPTS": "sam2_max_estimated_prompts",
+    "SLAIF_ZAP_IT_SAM2_MAX_ESTIMATED_MASK_PREDICTIONS": ("sam2_max_estimated_mask_predictions"),
+    "SLAIF_ZAP_IT_SAM2_MAX_MIN_MASK_REGION_AREA": "sam2_max_min_mask_region_area",
+}
 
 _MIB = 1024 * 1024
 
@@ -84,6 +94,12 @@ class ServiceSettings:
     model_control_operation_seconds: float = 600.0
     model_id: str = SERVICE_MODEL_ID
     tmp_root: str = DEFAULT_TMP_ROOT
+    sam2_max_points_per_side: int = 64
+    sam2_max_points_per_batch: int = 64
+    sam2_max_crop_n_layers: int = 2
+    sam2_max_estimated_prompts: int = 8192
+    sam2_max_estimated_mask_predictions: int = 24576
+    sam2_max_min_mask_region_area: int = 1_000_000
 
     def __post_init__(self) -> None:
         if self.max_image_upload_bytes <= 0:
@@ -133,6 +149,42 @@ class ServiceSettings:
                 raise ValueError("model control and inference credentials must be different")
         if not self.model_id or not self.model_id.strip():
             raise ValueError("model_id must be a non-empty identifier")
+        intrinsic_maxima = {
+            "sam2_max_points_per_side": 1024,
+            "sam2_max_points_per_batch": 1024,
+            "sam2_max_crop_n_layers": 8,
+            "sam2_max_min_mask_region_area": 64_000_000,
+        }
+        for field_name, intrinsic_maximum in intrinsic_maxima.items():
+            value = getattr(self, field_name)
+            if type(value) is not int or value < 0 or value > intrinsic_maximum:
+                raise ValueError(f"{field_name} must be an integer from 0 to {intrinsic_maximum}")
+        for field_name in (
+            "sam2_max_points_per_side",
+            "sam2_max_points_per_batch",
+            "sam2_max_estimated_prompts",
+            "sam2_max_estimated_mask_predictions",
+            "sam2_max_min_mask_region_area",
+        ):
+            value = getattr(self, field_name)
+            if type(value) is not int or value <= 0:
+                raise ValueError(f"{field_name} must be a positive integer")
+        if self.sam2_max_crop_n_layers < 0:
+            raise ValueError("sam2_max_crop_n_layers must be non-negative")
+        if self.sam2_max_min_mask_region_area < 0:
+            raise ValueError("sam2_max_min_mask_region_area must be non-negative")
+
+    @property
+    def sam2_operator_caps(self) -> dict[str, int]:
+        """Return the immutable public SAM2 admission caps."""
+        return {
+            "points_per_side": self.sam2_max_points_per_side,
+            "points_per_batch": self.sam2_max_points_per_batch,
+            "crop_n_layers": self.sam2_max_crop_n_layers,
+            "estimated_prompt_count": self.sam2_max_estimated_prompts,
+            "estimated_mask_prediction_count": self.sam2_max_estimated_mask_predictions,
+            "min_mask_region_area": self.sam2_max_min_mask_region_area,
+        }
 
     @property
     def max_request_bytes(self) -> int:
@@ -166,6 +218,13 @@ class ServiceSettings:
             raw = env.get(env_name)
             if raw is not None and raw != "":
                 kwargs[field_name] = _positive_int(raw, env_name)
+        for env_name, field_name in SAM2_LIMIT_ENV_VARS.items():
+            raw = env.get(env_name)
+            if raw is not None and raw != "":
+                if field_name == "sam2_max_crop_n_layers":
+                    kwargs[field_name] = _nonnegative_int(raw, env_name)
+                else:
+                    kwargs[field_name] = _positive_int(raw, env_name)
         raw_queue = env.get("SLAIF_ZAP_IT_QUEUE_DEPTH")
         if raw_queue is not None and raw_queue != "":
             kwargs["queue_depth"] = _nonnegative_int(raw_queue, "SLAIF_ZAP_IT_QUEUE_DEPTH")

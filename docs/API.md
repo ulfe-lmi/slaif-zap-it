@@ -23,6 +23,7 @@ gates remain separate. No persistent listener is started by the package factory.
 | Path | Method | Purpose |
 |---|---|---|
 | `/v1/completions` | POST | one image + one YAML config -> one result |
+| `/v1/capabilities` | GET | authenticated static SAM2 policy and schema |
 | `/healthz` | GET | process/event-loop health (always unauthenticated) |
 | `/readyz` | GET | engine readiness via injected provider; honest `not_ready` |
 | `/metrics` | GET | process-local finite-cardinality Prometheus text |
@@ -81,7 +82,8 @@ rejected with stable codes before any expensive work.
 ## Verbosity levels (monotonic information)
 
 - **L0**: completion envelope + normalized YOLO lines in `choices[0].text`
-  + minimal metadata (request id, image dims, class mapping, config digest).
+  + minimal metadata (request id, image dims, class mapping, config digest) and
+  the complete `service.sam2` configuration/provenance object.
 - **L1**: L0 + lossless uint16 identity PNG artifact (`identity-mask.png`,
   background `0`, instance ids `1..N`). Overlaps use the larger-area winner;
   if that would fully occlude an object, the service reserves a deterministic
@@ -177,6 +179,31 @@ At L3 each object has:
 
 Counts begin with background and round-trip the complete source mask, including
 disconnected components and overlap.
+
+### SAM2 response manifest
+
+Every JSON response and ZIP `manifest.json` contains `service.sam2`. Its
+`effective` and `sources` mappings contain all 14 safe generator scalars plus
+`use_m2m`; `requested` contains only supplied `profile` and safe scalar values.
+`actual_candidate_count` is the raw count returned by the automatic generator,
+before empty-mask removal, remapping, filtering or classification. It is
+distinct from L3 `candidate_counts.sam2_candidates`. The measured
+`execution_time_ms` includes request-local generator construction and
+generation, is rounded to three decimals, and is observability data rather
+than a deterministic-content field. No debug flag, unknown field, raw YAML or
+operator control is echoed.
+
+### Capabilities
+
+`GET /v1/capabilities` uses the ordinary inference bearer and is available
+without model readiness or inference-gate admission. It returns an explicit
+OpenAPI schema for strict field types/ranges, defaults, exact profile
+overrides, current operator maxima and estimation formulas. Fixed model,
+device, dtype, residency, cache/checkpoint/config and artifact-destination
+controls are described as policy; sensitive operator paths, credentials,
+topology and process state are not disclosed. `/docs` and `/openapi.json`
+remain disabled on the private-LAN listener, while this authenticated route
+remains available.
 
 ## Configuration policy (hostile uploads)
 
@@ -302,6 +329,7 @@ Stable sanitized envelope on every failure:
 | `unauthorized` | 401 | missing/wrong bearer key |
 | `payload_too_large` | 413 | upload/body byte limits |
 | `image_too_large` | 413 | decoded pixels over cap |
+| `resource_limit` | 413 | SAM2 field or estimated-work cap exceeded; non-retryable |
 | `response_too_large` | 413 | assembled JSON/ZIP over response cap |
 | `cancelled` | 499* | cancelled before completion |
 | `inference_failure` | 500 | engine failure (sanitized) |

@@ -32,7 +32,6 @@ from src.runtime.live_service import (
 from src.service.settings import ServiceSettings
 from src.runtime.ports import PortCheck
 from src.runtime.strategy import RuntimeReadiness
-from src.service.errors import ServiceError
 
 
 def _free_port_check(host: str, port: int) -> PortCheck:
@@ -391,16 +390,11 @@ def test_engine_adapter_forwards_resident_states_and_device():
     assert captured["class_labels"] == ("red", "green")
 
 
-def test_engine_adapter_rejects_request_level_generator_params():
+def test_engine_adapter_accepts_request_level_generator_params():
     registry = ResidentRegistry(loader=lambda: {"segmenter": {}, "clip": {}})
     registry.load()
     engine = live_engine_callable(registry, runner=lambda *a, **k: "x")
-    with pytest.raises(ServiceError) as excinfo:
-        engine("img", _StubConfig(sam2_cfg={"points_per_side": 16}), verbosity=0)
-    assert excinfo.value.code == "unsupported_field"
-    message = str(excinfo.value)
-    assert "points_per_side" in message
-    assert "resident" in message
+    assert engine("img", _StubConfig(sam2_cfg={"points_per_side": 16}), verbosity=0) == "x"
 
 
 def test_engine_adapter_requires_loaded_registry():

@@ -13,6 +13,7 @@ module or helper is not evidence that the live service produces its output.
 | Image decode, RGB conversion, dimensions | JPEG/PNG/WebP, bounded header and pixel decode | Public L0-L3 metadata and input guard |
 | ROI crop and resize | Core preprocessing; masks are remapped to original coordinates | Public L3 stage status/provenance; object coordinates at L2 |
 | SAM2 candidate masks and quality fields | Candidate masks are filtered and ordered | Public L2 fields when produced; bounded L3 counts/status |
+| Request-local SAM2 generator policy | Resident model is reused; a fresh generator is built from strict effective scalars per request | `service.sam2` at every level and in ZIP manifest; raw candidate count is separate from post-remap L3 count |
 | Post-SAM2 area/bbox filter | Removes candidates before optional classification; one deterministic short-circuit reason and bounded numeric records are retained | Public L3 candidate counts/status and `post_filter_diagnostics` |
 | CLIP labels, scores and class map | Request labels refresh resident CLIP prompts | Public L0 class mapping, L2 label/score, L3 provenance |
 | BLIP3 verification | Pinned FP16 holder; each QA call receives one deterministic mask-aware context/spotlight pair with exact selected-pixel preservation, exterior dimming and contour; residency remains capacity-selected | Public L2/L3 fields when executed; L3 debug returns the exact paired PNG under a fixed numeric name; this is not an accuracy guarantee |

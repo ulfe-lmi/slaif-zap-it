@@ -8,6 +8,7 @@ KServe/Triton repository-extension subset, not V2 tensor inference.
 """
 
 from .app import ReadyState, create_app, create_default_app
+from .capabilities import CapabilitiesResponse
 from .errors import ERROR_STATUS_CODES, ServiceError
 from .fake_engine import FakeEngine
 from .gate import InferenceGate
@@ -18,6 +19,7 @@ from .rle import MaskRLEError, decode_mask_rle, encode_mask_rle
 __all__ = [
     "create_app",
     "create_default_app",
+    "CapabilitiesResponse",
     "ReadyState",
     "FakeEngine",
     "InferenceGate",

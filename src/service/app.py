@@ -17,6 +17,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from dataclasses import replace as dataclass_replace
 from typing import Any, AsyncIterator, Callable, Dict, List, Mapping, Optional
 
 from fastapi import Depends, FastAPI, Request
@@ -31,6 +32,7 @@ from src.core.sinks import ArtifactBudget, ArtifactSinkError, BoundedMemoryArtif
 from src.runtime.strategy import RuntimePolicy, UnsupportedProfileError
 
 from .auth import verify_bearer_key
+from .capabilities import CapabilitiesResponse, build_capabilities
 from .envelope import (
     SCHEMA_VERSION,
     ResponseContext,
@@ -209,6 +211,13 @@ def create_app(
             return
         verify_bearer_key(request.headers.get("authorization"), expected)
 
+    def require_capabilities_key(request: Request) -> None:
+        """Capabilities are always an authenticated operator-policy view."""
+        expected = resolved_settings.api_key
+        if expected is None:
+            raise ServiceError("missing or invalid API credentials", code="unauthorized")
+        verify_bearer_key(request.headers.get("authorization"), expected)
+
     def record_error(request: Request, code: str) -> None:
         if getattr(request.state, "metrics_recorded", False):
             return
@@ -281,6 +290,16 @@ def create_app(
     async def healthz() -> Dict[str, str]:
         uptime = time.monotonic() - app.state.started_monotonic
         return {"status": "ok", "uptime_s": f"{uptime:.3f}"}
+
+    @app.get(
+        "/v1/capabilities",
+        response_model=CapabilitiesResponse,
+        tags=["capabilities"],
+        dependencies=[Depends(require_capabilities_key)],
+    )
+    async def capabilities() -> Dict[str, Any]:
+        """Return static operator policy without readiness or inference admission."""
+        return build_capabilities(resolved_settings)
 
     def repository_error(status_code: int, message: str) -> JSONResponse:
         """Return the KServe/Triton repository-extension error shape."""
@@ -543,9 +562,11 @@ def create_app(
             parsed.config_bytes,
             verbosity=parsed.verbosity,
             max_visualization_streams=settings_local.max_visualization_streams,
+            settings=settings_local,
         )
         check_deadline()
         core_config = CoreConfig.from_mapping(validated.effective_mapping)
+        core_config = dataclass_replace(core_config, sam2_metadata=validated.sam2_metadata)
         if runtime_policy is not None:
             try:
                 runtime_policy.validate_config(core_config)

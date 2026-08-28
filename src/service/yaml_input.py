@@ -27,12 +27,19 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Tuple
 import yaml
 
+from modules.segmenter.sam2 import (
+    SAM2_DEFAULTS,
+    SAM2_GENERATOR_FIELDS,
+    SAM2_PROFILES,
+    estimated_prompt_count,
+)
 from src.core.config import (
     ALGORITHMIC_TOP_LEVEL_FIELDS,
     classify_config_fields,
 )
 
 from .errors import ServiceError
+from .settings import ServiceSettings
 
 __all__ = [
     "MAX_CONFIG_DEPTH",
@@ -41,6 +48,8 @@ __all__ = [
     "MAX_SCALAR_CHARS",
     "DEFAULT_ALPHA",
     "MAX_BLIP3_QUESTIONS",
+    "SAM2_INTRINSIC_RANGES",
+    "SAM2_INTRINSIC_TYPES",
     "ValidatedConfig",
     "parse_hostile_config",
 ]
@@ -51,6 +60,40 @@ MAX_COLLECTION_ITEMS = 512
 MAX_SCALAR_CHARS = 16_384
 DEFAULT_ALPHA = 0.6
 MAX_BLIP3_QUESTIONS = 32
+
+SAM2_INTRINSIC_RANGES = {
+    "points_per_side": (1, 1024),
+    "points_per_batch": (1, 1024),
+    "pred_iou_thresh": (0.0, 1.0),
+    "stability_score_thresh": (0.0, 1.0),
+    "stability_score_offset": (0.0, 10.0),
+    "mask_threshold": (-32.0, 32.0),
+    "box_nms_thresh": (0.0, 1.0),
+    "crop_n_layers": (0, 8),
+    "crop_nms_thresh": (0.0, 1.0),
+    "crop_overlap_ratio": (0.0, 1.0),
+    "crop_n_points_downscale_factor": (1, 32),
+    "min_mask_region_area": (0, 64_000_000),
+    "use_m2m": (False, True),
+    "multimask_output": (False, True),
+}
+SAM2_INTRINSIC_TYPES = {
+    "points_per_side": "integer",
+    "points_per_batch": "integer",
+    "pred_iou_thresh": "number",
+    "stability_score_thresh": "number",
+    "stability_score_offset": "number",
+    "mask_threshold": "number",
+    "box_nms_thresh": "number",
+    "crop_n_layers": "integer",
+    "crop_nms_thresh": "number",
+    "crop_overlap_ratio": "number",
+    "crop_n_points_downscale_factor": "integer",
+    "min_mask_region_area": "integer",
+    "use_m2m": "boolean",
+    "multimask_output": "boolean",
+}
+_SAM2_PUBLIC_KEYS = frozenset((*SAM2_GENERATOR_FIELDS, "profile", "debug"))
 
 _FORBIDDEN_KEYS = frozenset(
     {
@@ -286,6 +329,144 @@ def _strip_debug_flags(mapping: Dict[str, Any], warnings: List[str]) -> None:
         warnings.append(_BLIP3_DEBUG_WARNING)
 
 
+def _sam2_invalid(field: str, constraint: str) -> ServiceError:
+    return ServiceError(f"mask_generator.{field} must satisfy {constraint}", code="invalid_config")
+
+
+def _validate_sam2_scalar(field: str, value: Any) -> None:
+    if value is None:
+        raise _sam2_invalid(field, "a non-null public value")
+    kind = SAM2_INTRINSIC_TYPES[field]
+    if kind == "integer":
+        if type(value) is not int:
+            raise _sam2_invalid(field, "an integer")
+    elif kind == "number":
+        if type(value) not in (int, float) or not math.isfinite(float(value)):
+            raise _sam2_invalid(field, "a finite number")
+    elif type(value) is not bool:
+        raise _sam2_invalid(field, "a boolean")
+
+    lower, upper = SAM2_INTRINSIC_RANGES[field]
+    if kind == "boolean":
+        return
+    if not lower <= value <= upper:
+        raise _sam2_invalid(field, f"a value from {lower} to {upper}")
+
+
+def _validate_sam2_policy(
+    value: Any, *, settings: ServiceSettings | None
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Validate and resolve one request-local SAM2 policy before model work."""
+    if value is None:
+        raise ServiceError("mask_generator must be a mapping", code="invalid_config")
+    if not isinstance(value, Mapping):
+        raise ServiceError("mask_generator must be a mapping", code="invalid_config")
+
+    unknown = sorted(set(value).difference(_SAM2_PUBLIC_KEYS), key=str)
+    if unknown:
+        raise ServiceError(
+            "unsupported mask_generator field(s): " + ", ".join(map(str, unknown)),
+            code="unsupported_field",
+        )
+
+    profile = value.get("profile")
+    if profile is not None and (type(profile) is not str or profile not in SAM2_PROFILES):
+        raise _sam2_invalid("profile", "one of fast, balanced or quality")
+    if "profile" in value and profile is None:
+        raise _sam2_invalid("profile", "one of fast, balanced or quality")
+
+    for scalar_name in SAM2_GENERATOR_FIELDS:
+        if scalar_name in value:
+            _validate_sam2_scalar(scalar_name, value[scalar_name])
+    if "debug" in value and type(value["debug"]) is not bool:
+        raise _sam2_invalid("debug", "a boolean")
+
+    effective: Dict[str, Any] = {}
+    sources: Dict[str, str] = {}
+    profile_values = SAM2_PROFILES.get(profile, {})
+    for scalar_name in SAM2_GENERATOR_FIELDS:
+        if scalar_name in value:
+            effective[scalar_name] = value[scalar_name]
+            sources[scalar_name] = "explicit"
+        elif scalar_name in profile_values:
+            effective[scalar_name] = profile_values[scalar_name]
+            sources[scalar_name] = "profile"
+        else:
+            effective[scalar_name] = SAM2_DEFAULTS[scalar_name]
+            sources[scalar_name] = "default"
+
+    deepest_points = int(
+        effective["points_per_side"]
+        / (effective["crop_n_points_downscale_factor"] ** effective["crop_n_layers"])
+    )
+    if deepest_points < 1:
+        raise _sam2_invalid(
+            "crop_n_points_downscale_factor",
+            "at least one point per side in every crop layer",
+        )
+
+    caps = (settings or ServiceSettings()).sam2_operator_caps
+    field_caps = {
+        "points_per_side": caps["points_per_side"],
+        "points_per_batch": caps["points_per_batch"],
+        "crop_n_layers": caps["crop_n_layers"],
+        "min_mask_region_area": caps["min_mask_region_area"],
+    }
+    for cap_field, cap in field_caps.items():
+        if effective[cap_field] > cap:
+            raise ServiceError(
+                f"mask_generator.{cap_field} exceeds the operator capacity limit",
+                code="resource_limit",
+            )
+
+    prompts = estimated_prompt_count(
+        effective["points_per_side"],
+        effective["crop_n_layers"],
+        effective["crop_n_points_downscale_factor"],
+    )
+    predictions = prompts * (3 if effective["multimask_output"] else 1)
+    if prompts > caps["estimated_prompt_count"]:
+        raise ServiceError(
+            "estimated SAM2 prompt count exceeds the operator capacity limit",
+            code="resource_limit",
+        )
+    if predictions > caps["estimated_mask_prediction_count"]:
+        raise ServiceError(
+            "estimated SAM2 mask prediction count exceeds the operator capacity limit",
+            code="resource_limit",
+        )
+
+    requested = {}
+    if "profile" in value:
+        requested["profile"] = profile
+    requested.update({field: value[field] for field in SAM2_GENERATOR_FIELDS if field in value})
+    resource_warnings: List[str] = []
+    if prompts * 100 >= caps["estimated_prompt_count"] * 80:
+        resource_warnings.append("estimated_prompt_count is at least 80% of its operator cap")
+    if predictions * 100 >= caps["estimated_mask_prediction_count"] * 80:
+        resource_warnings.append(
+            "estimated_mask_prediction_count is at least 80% of its operator cap"
+        )
+
+    metadata = {
+        "requested": requested,
+        "effective": dict(effective),
+        "sources": sources,
+        "selected_profile": profile,
+        "estimated_prompt_count": prompts,
+        "estimated_mask_prediction_count": predictions,
+        "actual_candidate_count": 0,
+        "execution_time_ms": 0.0,
+        "resource_warnings": resource_warnings,
+    }
+    # ``debug`` remains a service-only engine flag and is intentionally absent
+    # from both the constructor mapping and the public request provenance.
+    constructor_config = dict(effective)
+    if "debug" in value:
+        constructor_config["debug"] = value["debug"]
+    return constructor_config, metadata
+
+
 def _validate_visualization_policy(mapping: Mapping[str, Any], *, max_streams: int) -> None:
     """Validate only the bounded in-memory renderer exposed by the service."""
     if not mapping:
@@ -416,10 +597,15 @@ class ValidatedConfig:
     class_labels: Tuple[str, ...]
     ignored_fields: Tuple[str, ...]
     warnings: Tuple[str, ...] = field(default_factory=tuple)
+    sam2_metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 def parse_hostile_config(
-    raw_bytes: bytes, *, verbosity: int, max_visualization_streams: int = 8
+    raw_bytes: bytes,
+    *,
+    verbosity: int,
+    max_visualization_streams: int = 8,
+    settings: ServiceSettings | None = None,
 ) -> ValidatedConfig:
     """Parse, bound, allowlist and sanitize one uploaded config document."""
     loaded = _compose_and_load(raw_bytes)
@@ -442,6 +628,11 @@ def parse_hostile_config(
         key: value for key, value in loaded.items() if key in ALGORITHMIC_TOP_LEVEL_FIELDS
     }
     _scan_hostile(effective, "")
+
+    sam2_config, sam2_metadata = _validate_sam2_policy(
+        effective.get("mask_generator", {}), settings=settings
+    )
+    effective["mask_generator"] = sam2_config
 
     vis_cfg = effective.get("visualization")
     if vis_cfg is not None and not isinstance(vis_cfg, Mapping):
@@ -468,4 +659,5 @@ def parse_hostile_config(
         class_labels=class_labels,
         ignored_fields=tuple(sorted(classification.batch_only_fields)),
         warnings=tuple(warnings),
+        sam2_metadata=sam2_metadata,
     )

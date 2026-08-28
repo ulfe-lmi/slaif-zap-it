@@ -843,6 +843,7 @@ def default_resident_loader(
             device=device,
             verbosity=0,
             local_files_only=True,
+            model_only=True,
         )
         clip_state = initialize_clip(
             {
@@ -904,14 +905,6 @@ def live_engine_callable(
         from src.service.errors import ServiceError
 
         del segmenter_state, clip_state, blip3_state, device  # replaced by resident values
-        sam2_cfg = getattr(config, "sam2_cfg", None) or {}
-        mutable_generator_keys = sorted(str(key) for key in sam2_cfg if key != "debug")
-        if mutable_generator_keys:
-            raise ServiceError(
-                "request-level SAM2 generator parameters are fixed by the resident "
-                "runtime: " + ", ".join(mutable_generator_keys),
-                code="unsupported_field",
-            )
         if stages is not None:
             raise ServiceError(
                 "custom stage sets are not accepted by the resident runtime",

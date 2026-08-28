@@ -21,6 +21,7 @@ __all__ = [
     "PostFilterLimits",
     "PostFilterRejection",
     "PostFilterDiagnostics",
+    "Sam2Metadata",
     "ServiceMetadata",
     "Choice",
     "CompletionResponse",
@@ -89,6 +90,20 @@ class PostFilterDiagnostics(BaseModel):
     rejections_truncated: int = Field(ge=0)
 
 
+class Sam2Metadata(BaseModel):
+    """Request-local SAM2 configuration and execution facts."""
+
+    requested: Dict[str, Any]
+    effective: Dict[str, Any]
+    sources: Dict[str, Literal["explicit", "profile", "default"]]
+    selected_profile: Optional[Literal["fast", "balanced", "quality"]] = None
+    estimated_prompt_count: int = Field(ge=0)
+    estimated_mask_prediction_count: int = Field(ge=0)
+    actual_candidate_count: int = Field(ge=0)
+    execution_time_ms: float = Field(ge=0)
+    resource_warnings: List[str]
+
+
 class ServiceMetadata(BaseModel):
     request_id: str
     verbosity: int = Field(ge=0, le=3)
@@ -96,6 +111,7 @@ class ServiceMetadata(BaseModel):
     image: Dict[str, int]
     class_mapping: Dict[str, int]
     config_digest: str
+    sam2: Sam2Metadata
     artifacts: Optional[List[ArtifactDescriptor]] = None
     objects: Optional[List[ObjectRecord]] = None
     stage_statuses: Optional[List[Dict[str, Any]]] = None

@@ -18,6 +18,23 @@ inference-admitting state. The controller and `InferenceGate` share the
 authoritative admission boundary, so a readiness check racing an unload cannot
 start a new call after admission is paused.
 
+## Request-local SAM2 lifecycle
+
+The resident segmenter holder contains the pinned SAM2 model only. For every
+accepted completion, the service validates and resolves the safe generator
+scalars, checks field and estimated-work caps, and constructs exactly one fresh
+`SAM2AutomaticMaskGenerator` around that model. The generator uses fixed
+`point_grids: null` and `output_mode: binary_mask`; its predictor/image state is
+never written into the registry or reused by another request. Changing
+`points_per_side`, crop layers or another safe scalar therefore does not call a
+model builder, checkpoint/cache lookup, device move or dtype conversion.
+
+The response's `service.sam2` object records explicit/profile/default sources,
+the exact prompt and mask-prediction estimates, raw candidate count, measured
+SAM2 duration and deterministic resource warnings at every verbosity. The raw
+count precedes empty-mask removal and is intentionally distinct from the L3
+post-remap candidate count.
+
 Management work runs on one bounded control executor. Unload first rejects new
 and queued inference, waits for the already active synchronous call, then
 drops every registry holder, runs garbage collection/CUDA cleanup, and proves

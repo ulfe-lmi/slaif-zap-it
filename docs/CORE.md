@@ -62,6 +62,13 @@ are recorded on the result (`stage_statuses`, `candidate_counts`,
 observability data and intentionally excluded from all deterministic payload
 serialization.
 
+The result also carries a typed SAM2 service manifest. It records requested
+values, the explicit/profile/default source of every effective scalar, the
+exact crop/grid prompt and mask-prediction estimates, the raw generator count,
+resource warnings and measured `stage.sam2` duration. The live adapter creates
+one fresh generator around its resident model for each request; it does not
+thread that generator through reusable model state.
+
 The post-SAM2 filter and its diagnostic sidecar share one evaluator. It applies
 the terminal precedence `maxsize` -> `empty_mask` -> `max_w` -> `max_h`, using
 strict `>` rejection and inclusive threshold retention. The area comparison is
