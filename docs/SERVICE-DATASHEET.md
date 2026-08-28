@@ -33,12 +33,24 @@ startup loading.
 | 0 | Envelope, five-field normalized YOLO text, dimensions, class map and config digest |
 | 1 | Level 0 plus uint16 `identity-mask.png` |
 | 2 | Level 1 plus produced object bbox/area/centroid/SAM/CLIP/BLIP/geometry fields |
-| 3 | Level 2 plus stage metadata, timings, warnings, provenance, bounded debug/annotated artifacts and exact per-object mask RLE |
+| 3 | Level 2 plus stage metadata, post-filter diagnostics, timings, warnings, provenance, bounded debug/annotated artifacts and exact per-object mask RLE |
 
 L3 RLE uses `coco_rle_uncompressed`, `size: [height, width]`,
 `order: column-major`, and alternating background/foreground counts. It is
 round-trippable source-mask truth, including disconnected components and
 overlap. The identity PNG remains a documented single-valued projection.
+
+The L3 `post_filter_diagnostics` field shares the post-SAM2 filter's exact
+short-circuit evaluator: `maxsize`, `empty_mask`, `max_w`, `max_h`, then
+retained. Values strictly above a limit are rejected and equal values are
+retained; bbox dimensions are inclusive extents on the remapped mask. Counts
+must reconcile evaluated with retained and all four removal counters and must
+cross-check `candidate_counts.sam2_candidates`/`after_area_bbox`. Rejection
+records contain only numeric source index, reason, area and bbox dimensions,
+are input-ordered and capped at 256 with `rejections_truncated`. This is
+configured-filter evidence, not a SAM2 recall or accuracy claim; the roof test
+is programmatic CPU evidence. JSON and ZIP carry the same diagnostic values,
+while L0-L2 omit the field.
 
 BLIP3 debug is an L3-only lossless PNG of the exact image passed to QA, named
 `blip3-verification-{candidate_index:04d}-{question_index:04d}.png`. The

@@ -19,6 +19,7 @@ import time
 from dataclasses import dataclass
 from contextlib import nullcontext
 from contextlib import AbstractContextManager
+from inspect import Parameter, signature
 from typing import Any, Callable, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
@@ -27,6 +28,7 @@ from modules.visualizer import generate_visualizations as _generate_visualizatio
 from .config import CoreConfig, config_digest
 from .errors import CoreError
 from .ordering import order_final_objects
+from ..postprocessing import filter_by_area_bbox as _canonical_filter_by_area_bbox
 from .results import ObjectResult, PipelineResult, Provenance, SingleImageOutcome, StageStatus
 from .sinks import ArtifactSink
 
@@ -61,6 +63,18 @@ def default_stage_functions() -> StageFunctions:
         filter_by_area_bbox=filter_by_area_bbox,
         run_clip=run_clip,
         run_blip3=run_blip3,
+    )
+
+
+def _accepts_keyword(callable_obj: Callable[..., Any], name: str) -> bool:
+    """Keep injected legacy stage callables compatible with new diagnostics."""
+    try:
+        parameters = signature(callable_obj).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        parameter.name == name or parameter.kind == Parameter.VAR_KEYWORD
+        for parameter in parameters
     )
 
 
@@ -257,17 +271,39 @@ def run_single_image(
             sink.store_image(f"{frame_id}_sam2-patch{idx:04d}.jpg", patch)
             log(f"  => captured {frame_id}_sam2-patch{idx:04d}.jpg", 2, verbosity)
 
-    filtered_for_clip = timed(
-        "stage.postsam2_filter",
-        lambda: stages.filter_by_area_bbox(
+    post_filter_diagnostics: dict[str, Any] = {}
+
+    def _run_post_filter():
+        filter_func = stages.filter_by_area_bbox
+        filter_kwargs: dict[str, Any] = {
+            "verbosity": verbosity,
+            "log_print_func": log,
+        }
+        if _accepts_keyword(filter_func, "diagnostics"):
+            filter_kwargs["diagnostics"] = post_filter_diagnostics
+        if _accepts_keyword(filter_func, "collect_rejections"):
+            filter_kwargs["collect_rejections"] = verbosity >= 3
+        filtered = filter_func(
             all_masks_pre,
             config.post_maxsize,
             config.max_w,
             config.max_h,
-            verbosity=verbosity,
-            log_print_func=log,
-        ),
-    )
+            **filter_kwargs,
+        )
+        if not post_filter_diagnostics:
+            # Old injected fakes may not know about the sidecar. Derive an honest
+            # standard-filter view without changing their legacy list result.
+            _canonical_filter_by_area_bbox(
+                all_masks_pre,
+                config.post_maxsize,
+                config.max_w,
+                config.max_h,
+                diagnostics=post_filter_diagnostics,
+                collect_rejections=verbosity >= 3,
+            )
+        return filtered
+
+    filtered_for_clip = timed("stage.postsam2_filter", _run_post_filter)
     candidate_counts["after_area_bbox"] = len(filtered_for_clip)
 
     # -- classification ------------------------------------------------------
@@ -523,6 +559,7 @@ def run_single_image(
         warnings=tuple(aggregate_warnings),
         timings=dict(timings),
         provenance=provenance,
+        post_filter_diagnostics=post_filter_diagnostics,
     )
     return SingleImageOutcome(
         result=result,

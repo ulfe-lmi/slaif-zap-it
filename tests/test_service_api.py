@@ -164,6 +164,7 @@ def test_l0_minimal_metadata_and_yolo_text(level_bodies):
     assert "artifacts" not in service
     assert "objects" not in service
     assert "stage_statuses" not in service
+    assert "post_filter_diagnostics" not in service
 
 
 def test_l1_adds_identity_mask_artifact(level_bodies):
@@ -183,6 +184,7 @@ def test_l1_adds_identity_mask_artifact(level_bodies):
     assert decoded.dtype == np.uint16
     assert decoded.shape == (24, 32)
     assert set(np.unique(decoded)) == {0, 1, 2}
+    assert "post_filter_diagnostics" not in l1["service"]
 
 
 def test_l2_adds_object_records(level_bodies):
@@ -200,6 +202,7 @@ def test_l2_adds_object_records(level_bodies):
     for field in ("predicted_iou", "stability_score", "clip_score"):
         assert field in first
     assert "blip3_answer" not in first
+    assert "post_filter_diagnostics" not in l2["service"]
 
 
 def test_l3_adds_stage_provenance_and_warnings(level_bodies):
@@ -211,6 +214,25 @@ def test_l3_adds_stage_provenance_and_warnings(level_bodies):
     assert service["provenance"]["core_version"]
     assert any("fake" in warning for warning in service["warnings"])
     assert "candidate_counts" in service
+    diagnostics = service["post_filter_diagnostics"]
+    assert set(diagnostics) == {
+        "limits",
+        "evaluated",
+        "removed_by_maxsize",
+        "removed_empty_mask",
+        "removed_by_max_w",
+        "removed_by_max_h",
+        "retained",
+        "reason_precedence",
+        "rejections",
+        "rejections_truncated",
+    }
+    assert diagnostics["reason_precedence"] == ["maxsize", "empty_mask", "max_w", "max_h"]
+    assert diagnostics["evaluated"] == diagnostics["retained"]
+    assert diagnostics["rejections"] == []
+    assert diagnostics["rejections_truncated"] == 0
+    assert service["candidate_counts"]["sam2_candidates"] == diagnostics["evaluated"]
+    assert service["candidate_counts"]["after_area_bbox"] == diagnostics["retained"]
 
 
 # ---------------------------------------------------------------------------
@@ -449,6 +471,61 @@ def test_json_and_zip_share_detection_semantics():
     manifest = json.loads(archive.read("manifest.json"))
     assert document["choices"][0]["text"] == manifest["choices"][0]["text"]
     assert document["service"]["objects"] == manifest["service"]["objects"]
+
+
+def test_l3_post_filter_diagnostics_have_closed_numeric_contract_and_zip_parity():
+    config = VALID_CONFIG + (
+        b"postsam2processing:\n  maxsize: 100000\n  max_w: 0\n  max_h: 100000\n"
+    )
+    files = {
+        "image": ("frame.png", png_bytes(), "image/png"),
+        "config": ("config.yaml", config, "application/yaml"),
+    }
+    client, _ = make_client()
+    json_response = client.post("/v1/completions", files=files, data={"verbosity": "3"})
+    repeat_response = client.post("/v1/completions", files=files, data={"verbosity": "3"})
+    zip_response = client.post(
+        "/v1/completions",
+        files=files,
+        data={"verbosity": "3", "response_format": "zip"},
+    )
+    assert (
+        json_response.status_code == repeat_response.status_code == zip_response.status_code == 200
+    )
+    document = json_response.json()
+    repeat = repeat_response.json()
+    with zipfile.ZipFile(io.BytesIO(zip_response.content)) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+
+    diagnostics = document["service"]["post_filter_diagnostics"]
+    assert diagnostics == repeat["service"]["post_filter_diagnostics"]
+    assert diagnostics == manifest["service"]["post_filter_diagnostics"]
+    assert diagnostics["evaluated"] >= 1
+    assert diagnostics["retained"] == 0
+    assert diagnostics["removed_by_max_w"] == diagnostics["evaluated"]
+    assert (
+        sum(
+            diagnostics[key]
+            for key in (
+                "retained",
+                "removed_by_maxsize",
+                "removed_empty_mask",
+                "removed_by_max_w",
+                "removed_by_max_h",
+            )
+        )
+        == diagnostics["evaluated"]
+    )
+    assert diagnostics["rejections_truncated"] == 0
+    assert all(
+        set(record) == {"source_index", "reason", "area_px", "bbox_width_px", "bbox_height_px"}
+        and record["reason"] == "max_w"
+        and record["bbox_width_px"] > 0
+        for record in diagnostics["rejections"]
+    )
+
+    l2 = client.post("/v1/completions", files=files, data={"verbosity": "2"}).json()
+    assert "post_filter_diagnostics" not in l2["service"]
 
 
 def test_empty_detections_produce_empty_text_and_zero_mask():
@@ -695,7 +772,21 @@ def test_openapi_documents_contract():
     assert "CompletionResponse" in refs
     assert "ErrorEnvelope" in refs
     component_models = schema["components"]["schemas"]
-    assert {"CompletionResponse", "ErrorEnvelope", "ObjectRecord"} <= set(component_models)
+    assert {
+        "CompletionResponse",
+        "ErrorEnvelope",
+        "ObjectRecord",
+        "PostFilterLimits",
+        "PostFilterRejection",
+        "PostFilterDiagnostics",
+    } <= set(component_models)
+    assert component_models["PostFilterRejection"]["properties"]["reason"]["enum"] == [
+        "maxsize",
+        "empty_mask",
+        "max_w",
+        "max_h",
+    ]
+    assert component_models["PostFilterDiagnostics"]["properties"]["rejections"]["maxItems"] == 256
 
 
 def test_openapi_schema_is_deterministic_across_instances():

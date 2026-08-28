@@ -178,6 +178,16 @@ fixes BLIP3 to FP16, 32 questions/request and 32 generated tokens per question;
 model IDs, revisions, dtype, paths and runtime controls remain rejected.
 Geometry and panoptic visualization remain unsupported.
 
+For L3 post-filter evidence, inspect `service.post_filter_diagnostics` beside
+`candidate_counts`. It reports mutually exclusive `maxsize`, `empty_mask`,
+`max_w`, `max_h`, or retained outcomes in that precedence, with strict
+threshold rejection and inclusive bbox extents. Verify the aggregate equality,
+the candidate-count cross-checks, numeric-only source-indexed records and the
+256-record cap/truncation. Repeat JSON and ZIP requests and compare the
+diagnostic values in the response and `manifest.json`. The two-wide-candidate
+roof scenario is a programmatic CPU regression and must not be reported as a
+real-image accuracy result.
+
 For a bounded L3 BLIP3 audit, set `debug: true` on one rule. The verifier passes
 each executed question a paired image: untouched context on the left and an
 exact mask spotlight on the right, separated by four dark pixels and outlined

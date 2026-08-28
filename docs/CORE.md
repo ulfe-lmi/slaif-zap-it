@@ -56,10 +56,20 @@ ROI crop -> optional resize -> SAM2 masks -> area/bbox filter
         -> optional visualization arrays
 ```
 
-Stage statuses, candidate counts and wall-clock timings are recorded on the
-result (`stage_statuses`, `candidate_counts`, `timings`). Timings are
+Stage statuses, candidate counts, post-filter diagnostics and wall-clock timings
+are recorded on the result (`stage_statuses`, `candidate_counts`,
+`post_filter_diagnostics`, `timings`). Timings are
 observability data and intentionally excluded from all deterministic payload
 serialization.
+
+The post-SAM2 filter and its diagnostic sidecar share one evaluator. It applies
+the terminal precedence `maxsize` -> `empty_mask` -> `max_w` -> `max_h`, uses
+strict `>` rejection and inclusive threshold retention, and measures inclusive
+pixel bbox extents on the exact remapped mask. Counts reconcile evaluated with
+retained plus the four removal counters. L3 serializes only numeric rejection
+records in input order, at most 256, and reports `rejections_truncated`; lower
+levels do not expose this field. Source indices are the core's pre-filter SAM2
+ordinals, with a trusted legacy ordinal fallback.
 
 ## Mask remapping fix (regression evidence)
 
@@ -97,8 +107,8 @@ centroid). A `geometry()` hook exists but the canonical path never executes
 the geometry stage, so no geometry fields are ever fabricated.
 
 `PipelineResult` carries image dimensions, ROI box, resize info, ordered
-objects, stage statuses, candidate counts, rendered visualization arrays,
-warnings, timings and provenance. `serialized_metadata()` produces the
+objects, stage statuses, candidate counts, post-filter diagnostics, rendered
+visualization arrays, warnings, timings and provenance. `serialized_metadata()` produces the
 deterministic JSON-friendly view (arrays skipped, NumPy scalars converted);
 byte-stability across repeated identical runs is tested.
 

@@ -8,7 +8,7 @@ dynamic level-gated fields stays honest without duplicating the logic.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +17,10 @@ from .settings import SERVICE_MODEL_ID
 __all__ = [
     "ArtifactDescriptor",
     "ObjectRecord",
+    "PostFilterReason",
+    "PostFilterLimits",
+    "PostFilterRejection",
+    "PostFilterDiagnostics",
     "ServiceMetadata",
     "Choice",
     "CompletionResponse",
@@ -55,6 +59,36 @@ class ObjectRecord(BaseModel):
     warnings: Optional[List[str]] = None
 
 
+PostFilterReason = Literal["maxsize", "empty_mask", "max_w", "max_h"]
+
+
+class PostFilterLimits(BaseModel):
+    maxsize: int = Field(ge=0)
+    max_w: int = Field(ge=0)
+    max_h: int = Field(ge=0)
+
+
+class PostFilterRejection(BaseModel):
+    source_index: int = Field(ge=0)
+    reason: PostFilterReason
+    area_px: int = Field(ge=0)
+    bbox_width_px: int = Field(ge=0)
+    bbox_height_px: int = Field(ge=0)
+
+
+class PostFilterDiagnostics(BaseModel):
+    limits: PostFilterLimits
+    evaluated: int = Field(ge=0)
+    removed_by_maxsize: int = Field(ge=0)
+    removed_empty_mask: int = Field(ge=0)
+    removed_by_max_w: int = Field(ge=0)
+    removed_by_max_h: int = Field(ge=0)
+    retained: int = Field(ge=0)
+    reason_precedence: List[PostFilterReason] = Field(min_length=4, max_length=4)
+    rejections: List[PostFilterRejection] = Field(max_length=256)
+    rejections_truncated: int = Field(ge=0)
+
+
 class ServiceMetadata(BaseModel):
     request_id: str
     verbosity: int = Field(ge=0, le=3)
@@ -66,6 +100,7 @@ class ServiceMetadata(BaseModel):
     objects: Optional[List[ObjectRecord]] = None
     stage_statuses: Optional[List[Dict[str, Any]]] = None
     candidate_counts: Optional[Dict[str, int]] = None
+    post_filter_diagnostics: Optional[PostFilterDiagnostics] = None
     timings_ms: Optional[Dict[str, float]] = None
     provenance: Optional[Dict[str, Any]] = None
     warnings: Optional[List[str]] = None

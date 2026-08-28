@@ -169,6 +169,7 @@ class PipelineResult:
     warnings: Tuple[str, ...]
     timings: Mapping[str, float]
     provenance: Provenance
+    post_filter_diagnostics: Mapping[str, Any] = field(default_factory=dict)
 
     def object_by_id(self, instance_id: int) -> ObjectResult:
         for obj in self.objects:

@@ -176,11 +176,19 @@ One deterministic object order drives every representation:
 4. ascending source candidate index.
 
 The service produces normalized five-field YOLO lines, a uint16 identity-mask
-PNG, per-object metadata, overlap-preserving RLE, annotated overlays, warnings,
-timings, and provenance according to verbosity. `annotated` is mask-only;
+PNG, per-object metadata, overlap-preserving RLE, post-filter diagnostics,
+annotated overlays, warnings, timings, and provenance according to verbosity.
+`annotated` is mask-only;
 `annotated-labelled` is an L3-only, deterministic, Detectron2-free final-object
 overlay with sanitized labels and exact instance IDs. JSON binary data uses
 bounded base64 descriptors; ZIP uses a deterministic manifest and names.
+
+Post-filter diagnostics are produced by the same short-circuit evaluator as the
+area/bbox filter. They use strict `>` rejection with inclusive threshold
+retention and precedence `maxsize`, `empty_mask`, `max_w`, `max_h`. Aggregate
+counts reconcile with evaluated and retained candidates. L3 may include only
+numeric rejection records, in input order, capped at 256 with an explicit
+truncation count; lower response levels do not serialize this sidecar.
 
 ### Ephemeral storage
 

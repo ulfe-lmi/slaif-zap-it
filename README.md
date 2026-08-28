@@ -144,11 +144,22 @@ active inference request.
 | 0 | Completion envelope and normalized five-field YOLO lines |
 | 1 | Deterministic uint16 identity-mask PNG |
 | 2 | Per-object mask-derived geometry and available SAM2/CLIP/BLIP3 metadata |
-| 3 | Bounded timings, stage metadata, RLE masks, overlays, warnings, provenance, and BLIP3 verification PNGs |
+| 3 | Bounded timings, stage metadata, post-filter diagnostics, RLE masks, overlays, warnings, provenance, and BLIP3 verification PNGs |
 
 Binary artifacts are base64 descriptors in JSON or files in a bounded ZIP.
 Request bytes and intermediate results remain in RAM or the validated
 `/dev/shm` workspace and are removed after every request.
+
+L3 post-filter diagnostics report one short-circuit outcome per evaluated
+non-empty SAM2 candidate: `maxsize`, `empty_mask`, `max_w`, `max_h`, or retained,
+in that precedence order. Thresholds are strict for rejection and inclusive for
+retention. Counts satisfy `evaluated = retained + all four removal counts` and
+cross-check `candidate_counts.sam2_candidates` and `after_area_bbox`. Rejection
+records contain only numeric area, inclusive bbox dimensions, and source index;
+at most 256 are retained in input order, with the remainder in
+`rejections_truncated`. This is configured-filter evidence, not a SAM2 recall or
+model-accuracy claim. The two-wide-candidate roof regression is programmatic
+CPU filter evidence, not a real roof-image benchmark.
 
 ## Documentation
 
