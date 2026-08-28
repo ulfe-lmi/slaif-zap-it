@@ -34,7 +34,8 @@ Optional region-of-interest cropping and resizing. All keys are optional.
 ## `mask_generator`
 
 The service resolves a fresh request-local `SAM2AutomaticMaskGenerator` around
-the resident pinned model. It accepts only the following strict scalars;
+the resident pinned model. It accepts 14 total safe generator scalars,
+including `use_m2m`, and only the following strict scalars;
 booleans are not integers, numeric strings and nulls are invalid, and values
 are never coerced or silently clamped:
 

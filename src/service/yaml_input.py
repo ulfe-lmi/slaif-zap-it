@@ -126,6 +126,7 @@ _FORBIDDEN_KEYS = frozenset(
         "modules_path",
         "device",
         "devices",
+        "dtype",
         "cuda_device",
         "gpu",
         "gpu_id",

@@ -57,7 +57,8 @@ while L0-L2 omit the field.
 
 Every level also includes `service.sam2`. The service keeps the pinned SAM2
 model resident and constructs exactly one fresh automatic-mask generator around
-it per request. The manifest reports the requested safe scalars, all effective
+it per request. The manifest reports the requested safe scalars, all 14 total
+safe generator scalars including `use_m2m`, all effective
 values, independent `explicit`/`profile`/`default` sources, selected profile,
 exact prompt and mask-prediction estimates, raw generator candidate count,
 three-decimal SAM2 duration and deterministic resource warnings. Timing is

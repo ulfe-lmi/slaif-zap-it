@@ -48,7 +48,8 @@ an explicit operational order creates and secures it.
 - absent optional stages do not fabricate fields;
 - lower verbosity does not execute extra expensive stages;
 - YAML rejects unsafe/path/device/model fields and resource attacks;
-- SAM2 request-local generator construction forwards only the 14 safe scalars,
+- SAM2 request-local generator construction forwards only the 14 total safe
+  generator scalars, including `use_m2m`,
   uses fixed binary-mask controls, and proves model identity/state isolation;
 - SAM2 strict types/ranges, profile precedence, exact crop prompt estimates,
   operator caps, equality-at-cap acceptance and deterministic 80% warnings;

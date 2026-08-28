@@ -183,8 +183,9 @@ disconnected components and overlap.
 ### SAM2 response manifest
 
 Every JSON response and ZIP `manifest.json` contains `service.sam2`. Its
-`effective` and `sources` mappings contain all 14 safe generator scalars plus
-`use_m2m`; `requested` contains only supplied `profile` and safe scalar values.
+`effective` and `sources` mappings contain the 14 total safe generator scalars,
+including `use_m2m`; `requested` contains only supplied `profile` and safe
+scalar values.
 `actual_candidate_count` is the raw count returned by the automatic generator,
 before empty-mask removal, remapping, filtering or classification. It is
 distinct from L3 `candidate_counts.sam2_candidates`. The measured
