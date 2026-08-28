@@ -33,21 +33,54 @@ Optional region-of-interest cropping and resizing. All keys are optional.
 
 ## `mask_generator`
 
-Parameters forwarded to the SAM2 automatic mask generator. Any omitted value
-uses the library default (`None` in the constructor call).
+The service resolves a fresh request-local `SAM2AutomaticMaskGenerator` around
+the resident pinned model. It accepts 14 total safe generator scalars,
+including `use_m2m`, and only the following strict scalars;
+booleans are not integers, numeric strings and nulls are invalid, and values
+are never coerced or silently clamped:
 
-- `model_name` (string, default `facebook/sam2-hiera-large`)
-- `points_per_side`
-- `pred_iou_thresh`
-- `stability_score_thresh`
-- `min_mask_region_area`
-- `crop_n_layers`
-- `crop_n_points_downscale_factor`
-- `crop_overlap_ratio`
-- `box_nms_thresh`
-- `multimask_output`
-- `debug` (bool) – when enabled ZAP-IT saves each SAM2 patch to disk for
-  inspection before any filtering.
+| Key | Type | Public range |
+|---|---|---|
+| `points_per_side`, `points_per_batch` | integer | 1..1024 |
+| `pred_iou_thresh`, `stability_score_thresh`, `box_nms_thresh`, `crop_nms_thresh`, `crop_overlap_ratio` | number | 0..1 |
+| `stability_score_offset` | number | 0..10 |
+| `mask_threshold` | number | -32..32 |
+| `crop_n_layers` | integer | 0..8 |
+| `crop_n_points_downscale_factor` | integer | 1..32 |
+| `min_mask_region_area` | integer | 0..64,000,000 |
+| `use_m2m`, `multimask_output`, `debug` | boolean | `true` or `false` |
+
+The exact server defaults are `points_per_side: 8`, `points_per_batch: 8`,
+`pred_iou_thresh: 0.5`, `stability_score_thresh: 0.5`,
+`stability_score_offset: 1.0`, `mask_threshold: 0.0`, `box_nms_thresh: 0.7`,
+`crop_n_layers: 0`, `crop_nms_thresh: 0.7`, `crop_overlap_ratio: 512 / 1500`,
+`crop_n_points_downscale_factor: 1`, `min_mask_region_area: 0`,
+`use_m2m: false`, and `multimask_output: true`.
+
+The case-sensitive profiles `fast`, `balanced`, and `quality` override only
+their documented fields; explicit request values take precedence over profile
+values, which take precedence over defaults. The response records that source
+independently for every scalar. Every configured crop layer must retain at
+least one point per side after downscaling.
+
+Operator caps are startup-only: `SLAIF_ZAP_IT_SAM2_MAX_POINTS_PER_SIDE=64`,
+`SLAIF_ZAP_IT_SAM2_MAX_POINTS_PER_BATCH=64`,
+`SLAIF_ZAP_IT_SAM2_MAX_CROP_N_LAYERS=2`,
+`SLAIF_ZAP_IT_SAM2_MAX_ESTIMATED_PROMPTS=8192`,
+`SLAIF_ZAP_IT_SAM2_MAX_ESTIMATED_MASK_PREDICTIONS=24576`, and
+`SLAIF_ZAP_IT_SAM2_MAX_MIN_MASK_REGION_AREA=1000000`. A request over a field
+cap or estimate cap returns non-retryable `resource_limit` (HTTP 413).
+Estimated prompts are the sum of `4**layer * int(points_per_side /
+downscale_factor**layer)**2` over layers `0..crop_n_layers`; estimated mask
+predictions multiply that sum by 3 for `multimask_output: true`, otherwise 1.
+An accepted estimate at or above 80% of its cap adds a deterministic warning.
+
+`profile` and `debug` are service controls and are not sent to SAM2. The
+service fixes model identity/revision, checkpoint/config and cache locations,
+logical `cuda:0`, dtype, residency, `point_grids: null`,
+`output_mode: binary_mask`, and arbitrary constructor kwargs. These values
+cannot be selected by uploaded YAML. The trusted batch path retains its
+legacy model initialization and configured generator behavior.
 
 ## `postsam2processing`
 

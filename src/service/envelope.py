@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import numpy as np
 
+from modules.segmenter.sam2 import SAM2_DEFAULTS, SAM2_GENERATOR_FIELDS, estimated_prompt_count
+
 try:
     from PIL import Image
 except ImportError:  # pragma: no cover - Pillow is a required dependency
@@ -142,6 +144,49 @@ def _object_record(
     if obj.warnings:
         record["warnings"] = list(obj.warnings)
     return record
+
+
+def _sam2_manifest(result: Any) -> Dict[str, Any]:
+    """Return the complete typed SAM2 manifest, including legacy outcomes."""
+    defaults = dict(SAM2_DEFAULTS)
+    metadata = dict(getattr(result, "sam2_metadata", {}) or {})
+    effective = dict(defaults)
+    effective.update(metadata.get("effective", {}))
+    sources = {field: "default" for field in SAM2_GENERATOR_FIELDS}
+    sources.update(metadata.get("sources", {}))
+    prompts = int(
+        metadata.get(
+            "estimated_prompt_count",
+            estimated_prompt_count(
+                effective["points_per_side"],
+                effective["crop_n_layers"],
+                effective["crop_n_points_downscale_factor"],
+            ),
+        )
+    )
+    predictions = int(
+        metadata.get(
+            "estimated_mask_prediction_count",
+            prompts * (3 if effective["multimask_output"] else 1),
+        )
+    )
+    return {
+        "requested": dict(metadata.get("requested", {})),
+        "effective": effective,
+        "sources": sources,
+        "selected_profile": metadata.get("selected_profile"),
+        "estimated_prompt_count": prompts,
+        "estimated_mask_prediction_count": predictions,
+        "actual_candidate_count": int(
+            metadata.get(
+                "actual_candidate_count", result.candidate_counts.get("sam2_candidates", 0)
+            )
+        ),
+        "execution_time_ms": round(
+            float(metadata.get("execution_time_ms", result.timings.get("stage.sam2", 0.0))), 3
+        ),
+        "resource_warnings": list(metadata.get("resource_warnings", [])),
+    }
 
 
 def _stored_sink_artifact(stored: StoredArtifact) -> _RawArtifact:
@@ -290,6 +335,7 @@ def _prepare(
         "class_mapping": dict(context.class_mapping),
         "config_digest": context.config_digest,
         "package_version": __version__,
+        "sam2": _sam2_manifest(result),
     }
     if context.verbosity >= 1:
         service_meta["artifacts"] = [

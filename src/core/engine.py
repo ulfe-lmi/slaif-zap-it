@@ -223,6 +223,7 @@ def run_single_image(
     segmenter_params = {
         "alpha": config.alpha,
         "dryrun": dryrun,
+        "mask_generator_config": dict(config.sam2_cfg),
     }
     if "mask_generator" in segmenter_state:
         segmenter_params["mask_generator"] = segmenter_state["mask_generator"]
@@ -241,6 +242,17 @@ def run_single_image(
         segmenter_state = staged_segmenter_state
 
     candidate_counts: dict[str, int] = {}
+
+    # ``partial_masks`` is the raw automatic-generator result.  Keep that
+    # count separate from the historical L3 candidate count, which counts only
+    # non-empty masks after remapping to original-image coordinates.
+    sam2_metadata = dict(config.sam2_metadata or {})
+    raw_candidate_count = len(partial_masks)
+    if isinstance(_sam2_meta, Mapping):
+        raw_candidate_count = int(_sam2_meta.get("num_masks", raw_candidate_count))
+    sam2_metadata["actual_candidate_count"] = raw_candidate_count
+    sam2_metadata["execution_time_ms"] = round(timings.get("stage.sam2", 0.0), 3)
+    sam2_metadata.setdefault("resource_warnings", [])
 
     all_masks_pre: List[dict] = []
     for candidate_index, mask in enumerate(partial_masks):
@@ -560,6 +572,7 @@ def run_single_image(
         timings=dict(timings),
         provenance=provenance,
         post_filter_diagnostics=post_filter_diagnostics,
+        sam2_metadata=sam2_metadata,
     )
     return SingleImageOutcome(
         result=result,

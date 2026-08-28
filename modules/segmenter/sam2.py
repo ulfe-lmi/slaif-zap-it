@@ -2,9 +2,75 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple
+from typing import Any, Callable, Dict, Mapping, Tuple
 
 import numpy as np
+
+
+# This is the intentionally small public SAM2 surface.  The service validator
+# owns the untrusted-input policy; this module keeps the constructor seam
+# equally fail-closed so a caller cannot accidentally forward arbitrary YAML
+# mappings to the upstream class.
+SAM2_GENERATOR_FIELDS = (
+    "points_per_side",
+    "points_per_batch",
+    "pred_iou_thresh",
+    "stability_score_thresh",
+    "stability_score_offset",
+    "mask_threshold",
+    "box_nms_thresh",
+    "crop_n_layers",
+    "crop_nms_thresh",
+    "crop_overlap_ratio",
+    "crop_n_points_downscale_factor",
+    "min_mask_region_area",
+    "use_m2m",
+    "multimask_output",
+)
+
+SAM2_DEFAULTS = {
+    "points_per_side": 8,
+    "points_per_batch": 8,
+    "pred_iou_thresh": 0.5,
+    "stability_score_thresh": 0.5,
+    "stability_score_offset": 1.0,
+    "mask_threshold": 0.0,
+    "box_nms_thresh": 0.7,
+    "crop_n_layers": 0,
+    "crop_nms_thresh": 0.7,
+    "crop_overlap_ratio": 512 / 1500,
+    "crop_n_points_downscale_factor": 1,
+    "min_mask_region_area": 0,
+    "use_m2m": False,
+    "multimask_output": True,
+}
+
+SAM2_PROFILES = {
+    "fast": {
+        "points_per_side": 8,
+        "points_per_batch": 8,
+        "pred_iou_thresh": 0.5,
+        "stability_score_thresh": 0.5,
+        "crop_n_layers": 0,
+    },
+    "balanced": {
+        "points_per_side": 16,
+        "points_per_batch": 16,
+        "pred_iou_thresh": 0.7,
+        "stability_score_thresh": 0.8,
+        "crop_n_layers": 0,
+    },
+    "quality": {
+        "points_per_side": 32,
+        "points_per_batch": 32,
+        "pred_iou_thresh": 0.75,
+        "stability_score_thresh": 0.85,
+        "crop_n_layers": 1,
+        "crop_n_points_downscale_factor": 2,
+        "min_mask_region_area": 50,
+        "multimask_output": True,
+    },
+}
 
 
 class _DryRunMaskGenerator:
@@ -41,20 +107,43 @@ class _DryRunMaskGenerator:
         return masks
 
 
-def _generator_kwargs(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Keep SAM2 defaults intact when an option is absent from YAML."""
-    values = {
-        "points_per_side": config.get("points_per_side"),
-        "pred_iou_thresh": config.get("pred_iou_thresh"),
-        "stability_score_thresh": config.get("stability_score_thresh"),
-        "min_mask_region_area": config.get("min_mask_region_area"),
-        "crop_n_layers": config.get("crop_n_layers"),
-        "crop_n_points_downscale_factor": config.get("crop_n_points_downscale_factor"),
-        "crop_overlap_ratio": config.get("crop_overlap_ratio"),
-        "box_nms_thresh": config.get("box_nms_thresh"),
-        "multimask_output": config.get("multimask_output"),
-    }
-    return {key: value for key, value in values.items() if value is not None}
+def _generator_kwargs(config: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return only explicitly supplied safe constructor scalar values."""
+    return {key: config[key] for key in SAM2_GENERATOR_FIELDS if key in config}
+
+
+def estimated_prompt_count(
+    points_per_side: int, crop_n_layers: int, crop_n_points_downscale_factor: int
+) -> int:
+    """Estimate upstream prompt points using SAM2's crop/grid construction."""
+    return sum(
+        4**layer * int(points_per_side / (crop_n_points_downscale_factor**layer)) ** 2
+        for layer in range(crop_n_layers + 1)
+    )
+
+
+def _default_generator_factory(model: Any, **kwargs: Any) -> Any:
+    from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
+
+    return SAM2AutomaticMaskGenerator(model, **kwargs)
+
+
+def build_request_generator(
+    model: Any,
+    config: Mapping[str, Any],
+    *,
+    factory: Callable[..., Any] | None = None,
+) -> Any:
+    """Construct one request-local generator around an already resident model.
+
+    ``point_grids`` and ``output_mode`` are fixed operator controls.  The
+    request mapping is filtered a second time at this boundary, which keeps
+    this seam safe even when used without the HTTP validator in a test or
+    future adapter.
+    """
+    kwargs = _generator_kwargs(config)
+    kwargs.update(point_grids=None, output_mode="binary_mask")
+    return (factory or _default_generator_factory)(model, **kwargs)
 
 
 def initialize(
@@ -65,6 +154,7 @@ def initialize(
     verbosity: int = 1,
     log_print_func=None,
     local_files_only: bool = False,
+    model_only: bool = False,
 ) -> Dict[str, Any]:
     """Prepare the SAM2 runtime objects and return the initial state."""
 
@@ -111,9 +201,14 @@ def initialize(
     ):
         model.half()
 
-    # Passing explicit ``None`` overrides SAM2's constructor defaults and, for
-    # example, makes ``crop_n_points_downscale_factor ** layer`` fail.  Only
-    # operator-specified values belong in the upstream kwargs.
+    if model_only:
+        # The live service deliberately keeps only this pinned model object in
+        # its resident registry.  Request generator state must never become a
+        # resident holder or be written back into this dictionary.
+        return {"model": model}
+
+    # Legacy CLI callers retain their historical configured generator.  The
+    # service uses ``model_only=True`` and the request seam below instead.
     generator_kwargs = _generator_kwargs(config)
 
     mask_generator = SAM2AutomaticMaskGenerator(model, **generator_kwargs)
@@ -137,9 +232,17 @@ def run(
     dryrun_mode = bool(params.get("dryrun", False))
 
     mask_generator = state.get("mask_generator")
+    request_local_generator = False
+    if mask_generator is None and state.get("model") is not None:
+        mask_generator = build_request_generator(
+            state["model"],
+            params.get("mask_generator_config", {}),
+            factory=state.get("generator_factory"),
+        )
+        request_local_generator = True
     if mask_generator is None:
         mask_generator = params.get("mask_generator")
-        if mask_generator is not None:
+        if mask_generator is not None and not request_local_generator:
             state["mask_generator"] = mask_generator
 
     if mask_generator is None:
@@ -154,8 +257,7 @@ def run(
         if dryrun_mode:
             log("[segmenter.sam2] Generating dry-run masks...", 2, verbosity)
             if not isinstance(mask_generator, _DryRunMaskGenerator):
-                state["mask_generator"] = _DryRunMaskGenerator()
-                return state["mask_generator"].generate(image_np)
+                return _DryRunMaskGenerator().generate(image_np)
             return mask_generator.generate(image_np)
 
         # SAM2's image transform returns float32 tensors.  The operator's
@@ -184,7 +286,6 @@ def run(
         # Ensure we are using the lightweight generator.
         if not isinstance(mask_generator, _DryRunMaskGenerator):
             mask_generator = _DryRunMaskGenerator()
-            state["mask_generator"] = mask_generator
         masks = generate_masks()
     else:
         masks = generate_masks()
@@ -200,4 +301,12 @@ def run(
     return state, masks, meta
 
 
-__all__ = ["initialize", "run"]
+__all__ = [
+    "SAM2_DEFAULTS",
+    "SAM2_GENERATOR_FIELDS",
+    "SAM2_PROFILES",
+    "build_request_generator",
+    "estimated_prompt_count",
+    "initialize",
+    "run",
+]

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
 from src.runtime import live_service
 from src.runtime.ports import PortCheck
 from src.runtime.strategy import (
@@ -119,8 +117,9 @@ def test_live_engine_uses_resident_states_and_logical_cuda0():
     assert captured["clip_state"] == "clip"
     assert captured["device"] == "cuda:0"
 
-    with pytest.raises(Exception, match="fixed"):
-        engine("image", SimpleNamespace(sam2_cfg={"points_per_side": 8}, blip3_cfg={}))
+    assert (
+        engine("image", SimpleNamespace(sam2_cfg={"points_per_side": 8}, blip3_cfg={})) == "outcome"
+    )
 
 
 def test_operator_profile_constants_are_the_qualified_strategy():

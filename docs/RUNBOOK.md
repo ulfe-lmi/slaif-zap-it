@@ -154,6 +154,22 @@ image=<one JPEG/PNG/WebP>  config=<one UTF-8 YAML>  verbosity=0|1|2|3
 response_format=json|zip  model=zap-it-1 (optional)  stream=false (optional)
 ```
 
+Inspect the authenticated static policy before sending requests:
+
+```bash
+curl --fail-with-body \
+  -H "Authorization: Bearer $SLAIF_ZAP_IT_API_KEY" \
+  http://127.0.0.1:"$SLAIF_ZAP_IT_PORT"/v1/capabilities
+```
+
+The capabilities response documents the exact request-local SAM2 defaults and
+case-sensitive `fast`, `balanced`, and `quality` profiles, strict intrinsic
+ranges, startup operator caps and prompt/prediction estimation formulas. It
+also describes fixed model/revision, logical device, dtype, residency,
+cache/checkpoint/config and artifact-destination policy without disclosing
+credentials, sensitive paths, GPU topology or process state. The route is
+authenticated but does not require readiness or consume the inference slot.
+
 Use a small redistributable image and safe algorithm-only YAML. A representative
 configuration is:
 
@@ -177,6 +193,17 @@ containing bounded nested BLIP3 verification rules is supported. The service
 fixes BLIP3 to FP16, 32 questions/request and 32 generated tokens per question;
 model IDs, revisions, dtype, paths and runtime controls remain rejected.
 Geometry and panoptic visualization remain unsupported.
+
+The `mask_generator` section may select only the documented safe scalars. The
+service resolves each field as explicit value, then profile override, then
+server default, and records that source in `service.sam2`. It constructs one
+fresh generator around the resident model for each accepted request; weights
+are not reloaded when these scalars change. Intrinsic/type failures return
+`invalid_config` 400. Operator field or estimated-work violations return the
+non-retryable `resource_limit` 413 before generator construction and inference.
+The manifest's `actual_candidate_count` is the raw generator count, while the
+existing L3 `candidate_counts.sam2_candidates` remains the post-remap,
+non-empty count.
 
 For L3 post-filter evidence, inspect `service.post_filter_diagnostics` beside
 `candidate_counts`. It reports mutually exclusive `maxsize`, `empty_mask`,

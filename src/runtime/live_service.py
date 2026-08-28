@@ -27,6 +27,7 @@ import os
 import subprocess
 import threading
 import time
+import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -74,6 +75,20 @@ _RFC1918_NETWORKS = tuple(
 _DOCKER_DEFAULT_NETWORK = ipaddress.ip_network("172.17.0.0/16")
 _SHM_MIN_FREE_BYTES = 64 * 1024 * 1024
 _MODEL_MEMORY_BOUND_BYTES = 64 * 1024 * 1024
+_TIMM_LAYERS_WARNING = r"^Importing from timm\.models\.layers is deprecated\b"
+_TIMM_LAYERS_MODULE = r"^timm\.models\.layers$"
+
+
+def _install_reviewed_startup_warning_filter() -> None:
+    """Hide only TIMM's reviewed path-bearing deprecation warning."""
+    # Prevent Python's warning formatter from disclosing the absolute installed
+    # filename for this already-reviewed deprecation only.
+    warnings.filterwarnings(
+        "ignore",
+        message=_TIMM_LAYERS_WARNING,
+        category=FutureWarning,
+        module=_TIMM_LAYERS_MODULE,
+    )
 
 
 def _trim_process_heap() -> bool:
@@ -843,6 +858,7 @@ def default_resident_loader(
             device=device,
             verbosity=0,
             local_files_only=True,
+            model_only=True,
         )
         clip_state = initialize_clip(
             {
@@ -904,14 +920,6 @@ def live_engine_callable(
         from src.service.errors import ServiceError
 
         del segmenter_state, clip_state, blip3_state, device  # replaced by resident values
-        sam2_cfg = getattr(config, "sam2_cfg", None) or {}
-        mutable_generator_keys = sorted(str(key) for key in sam2_cfg if key != "debug")
-        if mutable_generator_keys:
-            raise ServiceError(
-                "request-level SAM2 generator parameters are fixed by the resident "
-                "runtime: " + ", ".join(mutable_generator_keys),
-                code="unsupported_field",
-            )
         if stages is not None:
             raise ServiceError(
                 "custom stage sets are not accepted by the resident runtime",
@@ -1033,6 +1041,8 @@ def main() -> int:
     failure. Uvicorn serves until SIGTERM/SIGINT triggers graceful shutdown.
     """
     import sys
+
+    _install_reviewed_startup_warning_filter()
 
     try:
         config = LiveServiceConfig.from_environment()

@@ -120,6 +120,12 @@ curl --fail-with-body http://127.0.0.1:${SLAIF_ZAP_IT_PORT}/healthz
 curl --fail-with-body http://127.0.0.1:${SLAIF_ZAP_IT_PORT}/readyz
 ```
 
+The authenticated `GET /v1/capabilities` route documents the strict
+request-local SAM2 generator policy without requiring readiness. It exposes the
+exact defaults, `fast`/`balanced`/`quality` profiles, intrinsic ranges,
+startup operator caps and bounded estimation formulas; it never exposes
+credentials, operator paths, GPU topology or mutable request state.
+
 Example completion request:
 
 ```bash
@@ -141,7 +147,7 @@ active inference request.
 
 | Verbosity | Response additions |
 | ---: | --- |
-| 0 | Completion envelope and normalized five-field YOLO lines |
+| 0 | Completion envelope, normalized five-field YOLO lines, and `service.sam2` |
 | 1 | Deterministic uint16 identity-mask PNG |
 | 2 | Per-object mask-derived geometry and available SAM2/CLIP/BLIP3 metadata |
 | 3 | Bounded timings, stage metadata, post-filter diagnostics, RLE masks, overlays, warnings, provenance, and BLIP3 verification PNGs |

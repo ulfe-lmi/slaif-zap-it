@@ -41,8 +41,11 @@ task-specific training. The trusted CLI may tune generator parameters such as
 point density, crop layers, intersection-over-union thresholds, and stability
 thresholds.
 
-The local service uses an operator-fixed resident generator. Uploaded YAML
-cannot change generator construction, model identity, revision, or device.
+The local service keeps the pinned SAM2 model resident and builds one fresh
+generator per request from the strict safe scalar/profile contract. Uploaded
+YAML cannot change generator construction controls, model identity, revision,
+or device. Field and exact estimated-work caps are checked before inference;
+the response records the source and raw candidate count in `service.sam2`.
 
 SAM2 provides masks and available quality values; ZAP-IT does not reinterpret
 those values as calibrated object confidence.
