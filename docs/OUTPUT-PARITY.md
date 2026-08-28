@@ -15,7 +15,7 @@ module or helper is not evidence that the live service produces its output.
 | SAM2 candidate masks and quality fields | Candidate masks are filtered and ordered | Public L2 fields when produced; bounded L3 counts/status |
 | Post-SAM2 area/bbox filter | Removes candidates before optional classification | Public L3 candidate counts/status |
 | CLIP labels, scores and class map | Request labels refresh resident CLIP prompts | Public L0 class mapping, L2 label/score, L3 provenance |
-| BLIP3 verification | Pinned FP16 holder; below 24,576 MiB the live-qualified service swaps SAM2+CLIP and BLIP3 at the stage boundary, while at or above 24,576 MiB all three remain resident | Public L2/L3 fields when executed; Objective 009's real matrix covers all four supported profiles |
+| BLIP3 verification | Pinned FP16 holder; each QA call receives one deterministic mask-aware context/spotlight pair with exact selected-pixel preservation, exterior dimming and contour; residency remains capacity-selected | Public L2/L3 fields when executed; L3 debug returns the exact paired PNG under a fixed numeric name; this is not an accuracy guarantee |
 | Geometry Canny/Hough helpers | Helpers and tests exist, but canonical core does not call them; helpers may write TSV/debug files | Not supported by the service; legacy compatibility only where explicitly wired |
 | `annotated`/`alpha-overlay` in-memory streams | Bounded RGB mask-only overlays; service executes them only at L3 | Bounded operator/service diagnostic |
 | `annotated-labelled` in-memory stream | Final-object RGB overlay with sanitized label and exact instance ID; deterministic, L3-only and Detectron2-free | Bounded operator/service diagnostic |
@@ -29,7 +29,7 @@ module or helper is not evidence that the live service produces its output.
 | JSON envelope and artifact descriptors | Level-gated, base64 binary artifacts with hashes and sizes | Public L0-L3 |
 | ZIP manifest and raw artifacts | Data-free manifest plus the same raw artifacts and YOLO text | Public L0-L3 `zip` response |
 | ROI/SAM2/post-filter/CLIP debug patches | In-memory only at L3, opaque names, bounded sink | Bounded operator/service diagnostic |
-| BLIP3 debug answers | Bounded in-memory artifacts only at L3; answers are not metric labels or logs | Public L2/L3 fields when produced; request rules only |
+| BLIP3 debug images | Bounded in-memory lossless PNGs only at L3, named `blip3-verification-####-####.png`; the exact paired image passed to QA is retained and no answer-text duplicate is made | Public L3 artifact; structured answers/labels remain independent |
 | Legacy image writer | Writes configured image sequences through the trusted batch adapter | Legacy CLI-only |
 | Legacy video/MJPEG writer | Writes configured video streams through the trusted batch adapter | Legacy CLI-only |
 | `images` and `video` batch output mappings | API parser ignores them with a warning | Legacy CLI-only; unsafe/inappropriate for service |

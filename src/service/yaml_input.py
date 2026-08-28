@@ -120,6 +120,7 @@ _DEBUG_FLAG_PATHS = (
     ("postsam2processing", "debug"),
     ("clip", "debug"),
 )
+_BLIP3_DEBUG_WARNING = "BLIP3 debug flags ignored at verbosity below 3"
 
 _VISUALIZATION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _VISUALIZATION_STAGES = frozenset({"sam2", "clip", "blip3"})
@@ -265,6 +266,24 @@ def _strip_debug_flags(mapping: Dict[str, Any], warnings: List[str]) -> None:
             sanitized[flag] = False
             mapping[section] = sanitized
             warnings.append(f"debug flag {section}.{flag} ignored at verbosity below 3")
+
+    blip3 = mapping.get("blip3")
+    if not isinstance(blip3, Mapping):
+        return
+    sanitized_rules: Dict[str, Any] = {}
+    changed = False
+    for rule_name, rule in blip3.items():
+        if not isinstance(rule, Mapping):
+            sanitized_rules[rule_name] = rule
+            continue
+        sanitized_rule = dict(rule)
+        if sanitized_rule.get("debug") is True:
+            sanitized_rule["debug"] = False
+            changed = True
+        sanitized_rules[rule_name] = sanitized_rule
+    if changed:
+        mapping["blip3"] = sanitized_rules
+        warnings.append(_BLIP3_DEBUG_WARNING)
 
 
 def _validate_visualization_policy(mapping: Mapping[str, Any], *, max_streams: int) -> None:

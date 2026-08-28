@@ -55,6 +55,12 @@ an explicit operational order creates and secures it.
   idempotency, readiness/admission race, active drain and cold-memory proof;
 - selected physical GPU visibility and no protected-GPU allocation in live tier;
 - bounded artifact count/per-item/total/base64/ZIP budget and no-truncation checks;
+- BLIP3 mask-aware crop coordinates, scale metadata, disconnected-component
+  preservation, exact selected-pixel identity, 40% exterior dimming, exterior
+  four-pixel contour, fixed instruction ordering, same-crop hard-negative and
+  positive regressions;
+- BLIP3 L3 fixed `blip3-verification-####-####.png` names, exact QA/debug
+  image parity, JSON/ZIP hash parity, and nested debug stripping at L0-L2;
 - visualization execution policy, final-object labelled pixel/placement/
   sanitization/confidence checks, geometry pre-inference rejection, metrics
   privacy/cardinality and A/B/A state-isolation checks;

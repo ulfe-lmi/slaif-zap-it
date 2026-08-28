@@ -7,7 +7,12 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from modules.verifier.blip3 import Blip3ResourceLimitError, _Blip3Filter, _Blip3QA
+from modules.verifier.blip3 import (
+    Blip3ResourceLimitError,
+    _Blip3Filter,
+    _Blip3QA,
+    compose_verification_query,
+)
 from src.core import CoreConfig, MemoryArtifactSink, StageFunctions, run_single_image
 from src.runtime.device import (
     DeviceGuardError,
@@ -389,7 +394,7 @@ def test_blip3_rules_are_request_local_and_question_budget_is_preflighted() -> N
         qa, {"goat": {"question": "two", "trueresult": "yes"}}, max_questions=32, max_new_tokens=32
     )
     filter_two.filter_masks([mask], np.zeros((2, 2, 3), dtype=np.uint8), None, "image")
-    assert qa.questions == ["one", "two"]
+    assert qa.questions == [compose_verification_query("one"), compose_verification_query("two")]
 
     with pytest.raises(Blip3ResourceLimitError):
         filter_one.filter_masks(

@@ -40,6 +40,16 @@ L3 RLE uses `coco_rle_uncompressed`, `size: [height, width]`,
 round-trippable source-mask truth, including disconnected components and
 overlap. The identity PNG remains a documented single-valued projection.
 
+BLIP3 debug is an L3-only lossless PNG of the exact image passed to QA, named
+`blip3-verification-{candidate_index:04d}-{question_index:04d}.png`. The
+image is a deterministic pair of untouched context and mask spotlight views:
+the crop uses the complete mask bbox plus symmetric bounded context, a
+128-pixel minimum, uniform nearest-neighbor scaling toward a 256-pixel short
+side, and a 768-pixel long-side cap. A four-pixel divider separates the views;
+selected right pixels are unchanged, other exterior pixels retain 40% of each
+channel, and the exterior four-pixel dilation ring is yellow. The artifact
+documents the verifier input but does not guarantee semantic accuracy.
+
 ## Supported stages
 
 ROI/resize, SAM2 candidate filtering, CLIP label refresh, deterministic ordering,
@@ -86,6 +96,10 @@ render or reserve visualization arrays. Raw artifacts are checked before
 retention/encoding; JSON checks base64 expansion before encoding, and ZIP writes
 prepared raw bytes directly. RLE and every serialization loop check the absolute
 120-second request deadline. There is no post-hoc artifact truncation.
+
+Nested BLIP3 debug flags are stripped to false below L3 with one bounded
+aggregate warning. At L3 no duplicate answer-text debug artifact is generated;
+structured BLIP3 answers and labels remain normal response metadata.
 
 ## Hardware and software matrix
 

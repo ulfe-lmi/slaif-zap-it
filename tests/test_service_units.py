@@ -1,13 +1,23 @@
 """Unit tests for the service boundary modules (no HTTP transport)."""
 
 import asyncio
+import base64
+import io
+import json
+import zipfile
 
 import numpy as np
 import pytest
 from PIL import Image
 
-from src.core import ObjectResult, PipelineResult, Provenance, SingleImageOutcome
-from src.service.envelope import ResponseContext, build_completion_json
+from src.core import (
+    BoundedMemoryArtifactSink,
+    ObjectResult,
+    PipelineResult,
+    Provenance,
+    SingleImageOutcome,
+)
+from src.service.envelope import ResponseContext, build_completion_json, build_completion_zip
 from src.service.errors import ERROR_STATUS_CODES, ServiceError, error_envelope
 from src.service.fake_engine import FakeEngine
 from src.service.gate import InferenceGate
@@ -137,6 +147,65 @@ def test_identity_projection_failure_maps_to_stable_sanitized_service_error():
     assert str(excinfo.value) == (
         "identity representation cannot preserve a distinct source pixel for every object"
     )
+
+
+def test_json_and_zip_debug_artifacts_share_exact_png_bytes_and_descriptor():
+    mask = np.zeros((16, 16), dtype=bool)
+    mask[3:9, 4:11] = True
+    obj = ObjectResult(
+        instance_id=1,
+        source_index=0,
+        mask=mask,
+        metadata={"clip_label": "goat"},
+        class_id=0,
+        class_id_source="mapping",
+    )
+    result = PipelineResult(
+        image_height=16,
+        image_width=16,
+        roi_box=(0, 0, 16, 16),
+        resize_info={"mode": "native"},
+        objects=(obj,),
+        stage_statuses=(),
+        candidate_counts={},
+        rendered={},
+        warnings=(),
+        timings={},
+        provenance=Provenance(config_digest="digest"),
+    )
+    outcome = SingleImageOutcome(result, None, None, None)
+    paired = np.zeros((32, 68, 3), dtype=np.uint8)
+    paired[:, :, 1] = 7
+    sink = BoundedMemoryArtifactSink()
+    sink.store_image("blip3-verification-0000-0000.png", paired, fmt="png")
+    context = ResponseContext(
+        request_id="req-debug",
+        model_id="zap-it-1",
+        verbosity=3,
+        response_format="json",
+        config_digest="digest",
+        class_mapping={"goat": 0},
+    )
+
+    document = build_completion_json(outcome, context, sink=sink)
+    descriptor = next(
+        item
+        for item in document["service"]["artifacts"]
+        if item["name"] == "blip3-verification-0000-0000.png"
+    )
+    json_bytes = base64.b64decode(descriptor["data"])
+    zip_bytes = build_completion_zip(outcome, context, sink=sink, max_bytes=10_000_000)
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+        member_bytes = archive.read("blip3-verification-0000-0000.png")
+        manifest = json.loads(archive.read("manifest.json"))
+    zip_descriptor = next(
+        item
+        for item in manifest["service"]["artifacts"]
+        if item["name"] == "blip3-verification-0000-0000.png"
+    )
+    assert json_bytes == member_bytes
+    assert descriptor["size"] == zip_descriptor["size"] == len(json_bytes)
+    assert descriptor["sha256"] == zip_descriptor["sha256"]
 
 
 # ---------------------------------------------------------------------------
@@ -493,6 +562,32 @@ def test_debug_flags_stripped_below_verbosity_three():
     kept = parse_hostile_config(raw, verbosity=3)
     assert kept.effective_mapping["preprocessing"]["debug"] is True
     assert not [w for w in kept.warnings if "debug" in w]
+
+
+def test_nested_blip3_debug_flags_are_aggregated_and_stripped_below_l3():
+    raw = (
+        "alpha: 0.5\n"
+        "blip3:\n"
+        "  goat:\n"
+        "    question: 'is this a goat?'\n"
+        "    debug: true\n"
+        "  any,0.2:\n"
+        "    question: 'is this an object?'\n"
+        "    debug: true\n"
+    ).encode()
+    result = parse_hostile_config(raw, verbosity=2)
+    rules = result.effective_mapping["blip3"]
+    assert rules["goat"]["debug"] is False
+    assert rules["any,0.2"]["debug"] is False
+    debug_warnings = [warning for warning in result.warnings if "BLIP3" in warning]
+    assert debug_warnings == ["BLIP3 debug flags ignored at verbosity below 3"]
+    assert "goat" not in debug_warnings[0]
+    assert "is this" not in debug_warnings[0]
+
+    kept = parse_hostile_config(raw, verbosity=3)
+    assert kept.effective_mapping["blip3"]["goat"]["debug"] is True
+    assert kept.effective_mapping["blip3"]["any,0.2"]["debug"] is True
+    assert not [warning for warning in kept.warnings if "BLIP3" in warning]
 
 
 # ---------------------------------------------------------------------------
