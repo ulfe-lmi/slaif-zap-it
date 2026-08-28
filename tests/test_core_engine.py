@@ -77,7 +77,16 @@ def labeling_clip_fn(labels):
     return clip_fn
 
 
-def run(masks, config=None, *, image_shape=(8, 8, 3), class_labels=(), sink=None, stages=None):
+def run(
+    masks,
+    config=None,
+    *,
+    image_shape=(8, 8, 3),
+    class_labels=(),
+    sink=None,
+    stages=None,
+    verbosity=0,
+):
     image = np.zeros(image_shape, dtype=np.uint8)
     return run_single_image(
         image,
@@ -86,7 +95,7 @@ def run(masks, config=None, *, image_shape=(8, 8, 3), class_labels=(), sink=None
         segmenter_state=None,
         clip_state={} if (config and config.clip_cfg) else None,
         blip3_state=None,
-        verbosity=0,
+        verbosity=verbosity,
         artifact_sink=sink if sink is not None else MemoryArtifactSink(),
         stages=stages or make_stages(masks),
         class_labels=class_labels,
@@ -235,6 +244,13 @@ def test_keep_labels_filters_before_identity_assignment():
         "after_clip": 2,
         "final": 1,
     }
+    diagnostics = outcome.result.post_filter_diagnostics
+    assert diagnostics["evaluated"] == diagnostics["retained"] == 2
+    assert diagnostics["rejections"] == []
+    assert diagnostics["removed_by_maxsize"] == 0
+    assert diagnostics["removed_empty_mask"] == 0
+    assert diagnostics["removed_by_max_w"] == 0
+    assert diagnostics["removed_by_max_h"] == 0
     assert len(outcome.result.objects) == 1
     assert outcome.result.objects[0].label == "keep"
     assert outcome.result.candidate_counts == {
@@ -392,6 +408,34 @@ def test_stage_statuses_are_recorded():
     assert clip_status.duration_ms is not None
     assert outcome.result.stage_status("blip3").status == "not_configured"
     assert outcome.result.provenance.core_version == "001-a"
+
+
+def test_core_post_filter_diagnostics_use_remapped_source_index_and_do_not_leak():
+    empty = {"segmentation": np.zeros((2, 2), dtype=bool)}
+    wide = {"segmentation": np.ones((1, 2), dtype=bool), "prompt": "private"}
+    outcome = run(
+        [empty, wide],
+        base_config(max_w=1, max_h=1),
+        image_shape=(2, 2, 3),
+        verbosity=3,
+    )
+
+    diagnostics = outcome.result.post_filter_diagnostics
+    assert diagnostics["evaluated"] == 1
+    assert diagnostics["retained"] == 0
+    assert diagnostics["removed_by_max_w"] == 1
+    assert diagnostics["rejections"] == [
+        {
+            "source_index": 1,
+            "reason": "max_w",
+            "area_px": 4,
+            "bbox_width_px": 2,
+            "bbox_height_px": 2,
+        }
+    ]
+    assert "prompt" not in repr(diagnostics)
+    assert outcome.result.candidate_counts["sam2_candidates"] == diagnostics["evaluated"]
+    assert outcome.result.candidate_counts["after_area_bbox"] == diagnostics["retained"]
 
 
 def test_engine_rejects_non_array_input():

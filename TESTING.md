@@ -55,6 +55,12 @@ an explicit operational order creates and secures it.
   idempotency, readiness/admission race, active drain and cold-memory proof;
 - selected physical GPU visibility and no protected-GPU allocation in live tier;
 - bounded artifact count/per-item/total/base64/ZIP budget and no-truncation checks;
+- post-filter precedence, area-first segmentation short-circuiting with
+  not-evaluated `0/0` maxsize bbox dimensions, inclusive later bbox dimensions,
+  aggregate reconciliation, source-indexed numeric-only rejection records,
+  256-record truncation and the programmatic two-wide-candidate roof regression;
+- L3-only post-filter diagnostics, closed reason schema, L0-L2 omission and
+  JSON/ZIP diagnostic parity;
 - BLIP3 mask-aware crop coordinates, scale metadata, disconnected-component
   preservation, exact selected-pixel identity, 40% exterior dimming, exterior
   four-pixel contour, fixed instruction ordering, same-crop hard-negative and

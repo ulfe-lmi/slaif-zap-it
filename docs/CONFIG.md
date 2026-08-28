@@ -60,6 +60,21 @@ value is missing the code uses a very large default so that nothing is removed.
 - `debug`: when `true`, the final mask patches that survive filtering are saved
   as JPEGs.
 
+At service verbosity 3, the response reports the filter's deterministic
+short-circuit decisions in `post_filter_diagnostics`. The area comparison is
+terminal and occurs before segmentation access: a `maxsize` rejection carries
+the exact area and zero bbox dimensions because those dimensions were not
+evaluated. Empty masks also carry zero dimensions for their distinct reason.
+Rejection precedence is `maxsize`, empty mask, `max_w`, then `max_h`; each
+comparison rejects only when the measured value is strictly greater, so equality
+is retained. Width and height use inclusive extents of the remapped
+segmentation. Aggregate counts reconcile evaluated, retained and each removal
+reason. Numeric-only rejection records are ordered by source candidate and capped
+at 256, with
+`rejections_truncated` for rejected candidates not represented. These records
+describe configured filtering and do not establish SAM2 recall or semantic
+accuracy.
+
 ## `clip` (optional)
 
 Enables the CLIP-based zero-shot classifier. When the section is absent the

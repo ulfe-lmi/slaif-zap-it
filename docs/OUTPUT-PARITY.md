@@ -13,7 +13,7 @@ module or helper is not evidence that the live service produces its output.
 | Image decode, RGB conversion, dimensions | JPEG/PNG/WebP, bounded header and pixel decode | Public L0-L3 metadata and input guard |
 | ROI crop and resize | Core preprocessing; masks are remapped to original coordinates | Public L3 stage status/provenance; object coordinates at L2 |
 | SAM2 candidate masks and quality fields | Candidate masks are filtered and ordered | Public L2 fields when produced; bounded L3 counts/status |
-| Post-SAM2 area/bbox filter | Removes candidates before optional classification | Public L3 candidate counts/status |
+| Post-SAM2 area/bbox filter | Removes candidates before optional classification; one deterministic short-circuit reason and bounded numeric records are retained | Public L3 candidate counts/status and `post_filter_diagnostics` |
 | CLIP labels, scores and class map | Request labels refresh resident CLIP prompts | Public L0 class mapping, L2 label/score, L3 provenance |
 | BLIP3 verification | Pinned FP16 holder; each QA call receives one deterministic mask-aware context/spotlight pair with exact selected-pixel preservation, exterior dimming and contour; residency remains capacity-selected | Public L2/L3 fields when executed; L3 debug returns the exact paired PNG under a fixed numeric name; this is not an accuracy guarantee |
 | Geometry Canny/Hough helpers | Helpers and tests exist, but canonical core does not call them; helpers may write TSV/debug files | Not supported by the service; legacy compatibility only where explicitly wired |
@@ -36,6 +36,22 @@ module or helper is not evidence that the live service produces its output.
 | `export_yolo_det` dataset export | Trusted batch adapter writes dataset annotations | Legacy CLI-only |
 | Raw request/config/result persistence | Not used by the service | Unsafe/inappropriate for service |
 | Goat academic fixture E2E | Local central-50% crop only; sanitized aliases/digests and bounded resource evidence | Rights confirmed; ignored operator inputs, excluded from packages as defense in depth |
+
+## Post-filter diagnostic policy
+
+The canonical filter evaluates `maxsize`, empty mask, `max_w`, and `max_h` in
+that exact precedence. The area comparison is terminal and occurs before
+segmentation access; `maxsize` records retain the exact area and carry `0/0` bbox
+dimensions because bbox dimensions were not evaluated. Empty masks also carry
+`0/0` for their distinct reason. Other width and height values are inclusive
+pixel extents over the remapped segmentation. Rejection comparisons are strict;
+threshold equality is retained, and aggregate counts satisfy the
+evaluated/retained invariant. L3 records contain only numeric source index,
+reason, area and bbox dimensions, are ordered by candidate input, and are capped
+at 256 with explicit truncation.
+The field is absent at L0-L2 and is copied unchanged into JSON and ZIP
+manifest responses. The roof/panel regression is generated CPU filter evidence,
+not a real-image or SAM2-recall claim.
 
 ## Renderer policy
 

@@ -25,6 +25,7 @@ from src.core.results import (
     SingleImageOutcome,
     StageStatus,
 )
+from src.postprocessing import filter_by_area_bbox
 
 from .settings import SERVICE_MODEL_ID
 
@@ -137,14 +138,34 @@ class FakeEngine:
         if self.object_count >= 2 and not config.keep_labels:
             specs.append((0.50, 0.80, 0.60, 0.90))
 
-        ordered: List[np.ndarray] = []
+        candidates = []
         for top, bottom, left, right in specs:
-            ordered.append(_rect_mask(height, width, top, bottom, left, right))
-        ordered.sort(key=lambda mask: int(np.count_nonzero(mask)), reverse=True)
+            mask = _rect_mask(height, width, top, bottom, left, right)
+            candidates.append(
+                {
+                    "segmentation": mask,
+                    "area": int(np.count_nonzero(mask)),
+                }
+            )
+        post_filter_diagnostics: Dict[str, Any] = {}
+        filtered = filter_by_area_bbox(
+            candidates,
+            config.post_maxsize,
+            config.max_w,
+            config.max_h,
+            diagnostics=post_filter_diagnostics,
+            collect_rejections=verbosity >= 3,
+        )
+        ordered = sorted(
+            filtered,
+            key=lambda mask: int(np.count_nonzero(mask["segmentation"])),
+            reverse=True,
+        )
 
         labels_cycle = list(class_labels) or ["object"]
         objects: List[ObjectResult] = []
-        for instance_id, mask in enumerate(ordered, start=1):
+        for instance_id, mask_record in enumerate(ordered, start=1):
+            mask = mask_record["segmentation"]
             label = labels_cycle[(instance_id - 1) % len(labels_cycle)]
             metadata = {
                 "clip_label": str(label),
@@ -185,7 +206,12 @@ class FakeEngine:
             resize_info={"mode": "native"},
             objects=tuple(objects),
             stage_statuses=stage_statuses,
-            candidate_counts={"final": len(objects)},
+            candidate_counts={
+                "sam2_candidates": len(specs),
+                "after_area_bbox": len(filtered),
+                "after_clip": len(filtered),
+                "final": len(objects),
+            },
             rendered={},
             warnings=("fake engine output; not a model prediction",),
             timings={"stage.sam2": 0.5},
@@ -194,6 +220,7 @@ class FakeEngine:
                 core_version="002-a-fake",
                 notes=("deterministic fake engine",),
             ),
+            post_filter_diagnostics=post_filter_diagnostics,
         )
         return SingleImageOutcome(
             result=result,

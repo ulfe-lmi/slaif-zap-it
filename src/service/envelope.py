@@ -316,6 +316,8 @@ def _prepare(
         _check_deadline(context)
         service_meta["stage_statuses"] = [status.as_dict() for status in result.stage_statuses]
         service_meta["candidate_counts"] = dict(result.candidate_counts)
+        if result.post_filter_diagnostics:
+            service_meta["post_filter_diagnostics"] = dict(result.post_filter_diagnostics)
         service_meta["timings_ms"] = {
             key: round(value, 3) for key, value in sorted(result.timings.items())
         }

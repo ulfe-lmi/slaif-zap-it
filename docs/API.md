@@ -89,7 +89,7 @@ rejected with stable codes before any expensive work.
 - **L2**: L1 + per-object records containing only fields actually produced
   (bbox pixel+normalized, area, centroid, SAM quality, CLIP score, BLIP3
   answer when present, geometry hook when present).
-- **L3**: L2 + stage statuses, candidate counts, timings, provenance,
+- **L3**: L2 + stage statuses, candidate counts, post-filter diagnostics, timings, provenance,
   aggregate warnings, bounded annotated/debug artifacts, and one exact
   per-object uncompressed column-major COCO-style mask RLE. `annotated` remains
   mask-only; the optional `annotated-labelled` stream is final-stage, labelled,
@@ -99,6 +99,29 @@ Lower levels never trigger extra optional stages solely to enrich output.
 Configured filesystem-style debug flags are honored only at verbosity 3
 (where they map to bounded logical artifacts in memory); below that they are
 stripped from the effective config with an explicit warning.
+
+### L3 post-filter diagnostics
+
+The L3 `service.post_filter_diagnostics` sibling of `candidate_counts` records
+one mutually exclusive outcome per candidate evaluated by the post-SAM2 filter.
+The area comparison is terminal and occurs before segmentation access, so a
+`maxsize` rejection records its exact `area_px` and zero `bbox_width_px` and
+`bbox_height_px` because bbox dimensions were not evaluated. Precedence is
+`maxsize`, `empty_mask`, `max_w`, then `max_h`; rejection uses strict `>` and
+equality is retained. Empty masks also report zero dimensions for their distinct
+reason; other bbox dimensions are inclusive extents of the exact remapped mask.
+Counts satisfy
+`evaluated = retained + removed_by_maxsize + removed_empty_mask +
+removed_by_max_w + removed_by_max_h`, and the canonical engine cross-checks
+`candidate_counts.sam2_candidates == evaluated` and
+`candidate_counts.after_area_bbox == retained`.
+
+Rejections contain only `source_index`, closed `reason`, `area_px`,
+`bbox_width_px`, and `bbox_height_px`. They are ordered by filter input and
+capped at 256; `rejections_truncated` reports rejected candidates beyond the
+cap. The field is absent at L0-L2, has no artifact of its own, and is shared by
+the JSON response and ZIP manifest. The two-wide-candidate roof case is a
+programmatic CPU filter regression, not a real-image SAM2 accuracy benchmark.
 
 When a BLIP3 rule executes, the verifier passes a deterministic paired RGB image
 to every QA call: a mask-bbox context crop on the left and the same crop on the
