@@ -27,6 +27,7 @@ import os
 import subprocess
 import threading
 import time
+import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -74,6 +75,20 @@ _RFC1918_NETWORKS = tuple(
 _DOCKER_DEFAULT_NETWORK = ipaddress.ip_network("172.17.0.0/16")
 _SHM_MIN_FREE_BYTES = 64 * 1024 * 1024
 _MODEL_MEMORY_BOUND_BYTES = 64 * 1024 * 1024
+_TIMM_LAYERS_WARNING = r"^Importing from timm\.models\.layers is deprecated\b"
+_TIMM_LAYERS_MODULE = r"^timm\.models\.layers$"
+
+
+def _install_reviewed_startup_warning_filter() -> None:
+    """Hide only TIMM's reviewed path-bearing deprecation warning."""
+    # Prevent Python's warning formatter from disclosing the absolute installed
+    # filename for this already-reviewed deprecation only.
+    warnings.filterwarnings(
+        "ignore",
+        message=_TIMM_LAYERS_WARNING,
+        category=FutureWarning,
+        module=_TIMM_LAYERS_MODULE,
+    )
 
 
 def _trim_process_heap() -> bool:
@@ -1026,6 +1041,8 @@ def main() -> int:
     failure. Uvicorn serves until SIGTERM/SIGINT triggers graceful shutdown.
     """
     import sys
+
+    _install_reviewed_startup_warning_filter()
 
     try:
         config = LiveServiceConfig.from_environment()

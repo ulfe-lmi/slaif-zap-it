@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -41,6 +42,44 @@ def _free_port_check(host: str, port: int) -> PortCheck:
 # --------------------------------------------------------------------------- #
 # Launch configuration
 # --------------------------------------------------------------------------- #
+
+
+def test_startup_warning_filter_suppresses_only_timm_path_warning():
+    exact_message = "Importing from timm.models.layers is deprecated, please import via timm.layers"
+    with warnings.catch_warnings(record=True) as observed:
+        warnings.simplefilter("always")
+        live_service._install_reviewed_startup_warning_filter()
+
+        # Emulate the warning API call made by timm without importing timm or a model.
+        warnings.warn_explicit(
+            exact_message,
+            FutureWarning,
+            "/opt/venv/lib/python3.12/site-packages/timm/models/layers/__init__.py",
+            99,
+            module="timm.models.layers",
+            registry={},
+        )
+        warnings.warn_explicit(
+            "Importing from timm.models.layers is deprecated, please import via timm.layers",
+            FutureWarning,
+            "/opt/venv/lib/python3.12/site-packages/dependency.py",
+            100,
+            module="dependency",
+            registry={},
+        )
+        warnings.warn_explicit(
+            "an unrelated startup warning",
+            FutureWarning,
+            "/opt/venv/lib/python3.12/site-packages/timm/models/layers/__init__.py",
+            101,
+            module="timm.models.layers",
+            registry={},
+        )
+
+    assert [str(item.message) for item in observed] == [
+        "Importing from timm.models.layers is deprecated, please import via timm.layers",
+        "an unrelated startup warning",
+    ]
 
 
 def test_config_requires_explicit_port():
