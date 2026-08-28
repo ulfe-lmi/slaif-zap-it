@@ -13,7 +13,7 @@
 # below must be replaced with the operator's reviewed candidate path.
 
 [Unit]
-Description=SLAIF ZAP-IT loopback service (operator-pinned GPU, automatic residency)
+Description=SLAIF ZAP-IT loopback service (operator-pinned GPU, explicit lifecycle optional)
 Documentation=https://github.com/ulfe-lmi/slaif-zap-it/blob/main/docs/RUNBOOK.md
 
 [Service]

@@ -15,6 +15,16 @@ It does not provide LAN/public exposure, TLS, gateway integration, async jobs,
 history, persistence, training, multi-worker CUDA, geometry activation,
 Detectron2 panoptic output, or customer-data handling.
 
+## Model-control subset
+
+The optional `explicit` mode adds authenticated `/v2` repository `index`,
+`load`, and `unload` management for the immutable `zap-it-1` model only. It is
+not KServe V2 tensor inference and makes no generic repository or cross-process
+ownership claim. `READY` alone admits inference; unload pauses admission,
+drains the active call, releases holders, and requires the 64-MiB logical Torch
+allocated/reserved cold proof. The default `none` mode retains background
+startup loading.
+
 ## Exact response levels
 
 | Level | Contract |

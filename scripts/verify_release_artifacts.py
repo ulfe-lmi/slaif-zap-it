@@ -78,8 +78,10 @@ REQUIRED_SDIST_NAMES = frozenset(
         "scripts/scan_release_artifacts.py",
         "scripts/check_documentation.py",
         "scripts/smoke_installed_package.py",
+        "scripts/smoke_model_control.py",
         "src/runtime/live_service.py",
         "src/service/app.py",
+        "src/service/model_control.py",
         "src/service/envelope.py",
         "src/service/fake_engine.py",
         "src/service/settings.py",
@@ -94,7 +96,11 @@ REQUIRED_SDIST_NAMES = frozenset(
     }
 )
 REQUIRED_WHEEL_MODULES = frozenset(
-    {"src/__init__.py", "src/runtime/live_service.py", "src/service/app.py"}
+    {
+        "src/__init__.py",
+        "src/runtime/live_service.py",
+        "src/service/app.py",
+    }
 )
 PUBLIC_ENV_MEMBER = "deploy/service.env.example"
 PRIVATE_ENV_BASENAMES = frozenset(

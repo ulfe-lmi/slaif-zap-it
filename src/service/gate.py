@@ -37,6 +37,8 @@ class InferenceGate:
         self._condition = asyncio.Condition()
         self._active = False
         self._waiting = 0
+        self._paused = False
+        self._pause_reason = "model is not ready"
 
     @property
     def active(self) -> bool:
@@ -45,6 +47,42 @@ class InferenceGate:
     @property
     def waiting(self) -> int:
         return self._waiting
+
+    @property
+    def paused(self) -> bool:
+        return self._paused
+
+    def pause_now(self, reason: str = "model is not ready") -> None:
+        """Close admission synchronously before a lifecycle transition.
+
+        This is intentionally a small, event-loop-independent state write so
+        explicit mode can start cold before FastAPI has entered its lifespan.
+        The async ``pause_and_drain`` method is used for unload transitions.
+        """
+        self._paused = True
+        self._pause_reason = reason
+
+    def resume_now(self) -> None:
+        """Reopen admission after a successful load or rollback."""
+        self._paused = False
+        self._pause_reason = "model is not ready"
+
+    async def pause_and_drain(self, reason: str = "model is unloading") -> None:
+        """Atomically reject new/queued work and wait for active work to finish."""
+        self._adopt_running_loop_if_quiescent()
+        async with self._condition:
+            self._paused = True
+            self._pause_reason = reason
+            self._condition.notify_all()
+            await self._condition.wait_for(lambda: not self._active)
+
+    async def resume(self) -> None:
+        """Resume admissions on the gate's owning event loop."""
+        self._adopt_running_loop_if_quiescent()
+        async with self._condition:
+            self._paused = False
+            self._pause_reason = "model is not ready"
+            self._condition.notify_all()
 
     @asynccontextmanager
     async def slot(self) -> AsyncIterator[None]:
@@ -70,6 +108,8 @@ class InferenceGate:
     async def _admit(self) -> None:
         self._adopt_running_loop_if_quiescent()
         async with self._condition:
+            if self._paused:
+                raise ServiceError(self._pause_reason, code="not_ready")
             queued = False
             if self._active or self._waiting > 0:
                 if self._waiting >= self.queue_depth:
@@ -81,7 +121,9 @@ class InferenceGate:
                 self._waiting += 1
                 queued = True
             try:
-                await self._condition.wait_for(lambda: not self._active)
+                await self._condition.wait_for(lambda: not self._active or self._paused)
+                if self._paused:
+                    raise ServiceError(self._pause_reason, code="not_ready")
             finally:
                 if queued:
                     self._waiting -= 1

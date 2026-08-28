@@ -137,6 +137,36 @@ class ServiceMetrics:
             buckets=(0.01, 0.1, 0.5, 1, 2, 5, 10, 30, 60, 120),
             registry=self.registry,
         )
+        self.model_loaded = Gauge(
+            "zap_it_model_loaded",
+            "Fixed model loaded state, one only while lifecycle is READY.",
+            registry=self.registry,
+        )
+        self.model_lifecycle_state = Gauge(
+            "zap_it_model_lifecycle_state",
+            "Fixed model lifecycle state.",
+            ("state",),
+            registry=self.registry,
+        )
+        self.model_control_operations = Counter(
+            "zap_it_model_control_operations_total",
+            "Explicit model-control operation outcomes.",
+            ("operation", "outcome"),
+            registry=self.registry,
+        )
+        self.model_control_duration = Histogram(
+            "zap_it_model_control_duration_seconds",
+            "Explicit model-control operation duration.",
+            ("operation",),
+            buckets=(0.01, 0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 600),
+            registry=self.registry,
+        )
+        self.model_control_drain_duration = Histogram(
+            "zap_it_model_control_drain_duration_seconds",
+            "Inference drain duration before unload.",
+            buckets=(0.001, 0.01, 0.1, 0.5, 1, 2, 5, 10, 30, 120),
+            registry=self.registry,
+        )
 
     def observe_error(self, code: str) -> None:
         self.requests.labels(outcome=code).inc()
@@ -221,6 +251,30 @@ class ServiceMetrics:
         self.residency_transition_duration.labels(direction=direction).observe(
             max(float(duration_seconds), 0.0)
         )
+
+    def set_model_lifecycle_state(self, state: str) -> None:
+        """Expose exactly one finite lifecycle label at value one."""
+        allowed = {"UNAVAILABLE", "LOADING", "READY", "UNLOADING"}
+        if state not in allowed:
+            state = "UNAVAILABLE"
+        for candidate in allowed:
+            self.model_lifecycle_state.labels(state=candidate).set(1 if candidate == state else 0)
+
+    def observe_model_control_operation(
+        self, operation: str, outcome: str, duration_seconds: float
+    ) -> None:
+        """Record fixed operation/outcome dimensions only."""
+        if operation not in {"load", "unload"}:
+            operation = "load"
+        if outcome not in {"success", "failure", "timeout", "drain_timeout", "cancelled"}:
+            outcome = "failure"
+        self.model_control_operations.labels(operation=operation, outcome=outcome).inc()
+        self.model_control_duration.labels(operation=operation).observe(
+            max(float(duration_seconds), 0.0)
+        )
+
+    def observe_model_control_drain(self, duration_seconds: float) -> None:
+        self.model_control_drain_duration.observe(max(float(duration_seconds), 0.0))
 
     def scrape(self) -> bytes:
         return generate_latest(self.registry)
