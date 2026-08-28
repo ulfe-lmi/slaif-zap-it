@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from scripts.smoke_model_control import _parse_metric_labels
 from src.runtime.live_service import ResidentRegistry, _trim_process_heap
 from src.service.app import ReadyState, create_app
 from src.service.errors import ServiceError
@@ -91,6 +92,14 @@ def fake_registry(*, delay: float = 0.0, fail_first: bool = False):
 
 def test_process_heap_trim_is_safe_and_returns_a_boolean() -> None:
     assert isinstance(_trim_process_heap(), bool)
+
+
+def test_metric_label_parser_is_linear_and_handles_escapes() -> None:
+    assert _parse_metric_labels('state="READY",outcome="ok\\nnow"') == {
+        "state": "READY",
+        "outcome": "ok\nnow",
+    }
+    assert _parse_metric_labels('state="' + "\\!" * 100_000) == {}
 
 
 def test_settings_explicit_mode_requires_distinct_control_credential() -> None:

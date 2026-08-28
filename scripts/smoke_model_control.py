@@ -30,7 +30,10 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from smoke_local_service import make_fixture_png, post_completion
+if __package__:
+    from scripts.smoke_local_service import make_fixture_png, post_completion
+else:
+    from smoke_local_service import make_fixture_png, post_completion
 
 
 ASSIGNED_GPU_INDEX = 0
@@ -160,7 +163,44 @@ def _operation(
 _METRIC_RE = re.compile(
     r"^(?P<name>[a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(?P<labels>[^}]*)\})?\s+(?P<value>[-+0-9.eE]+)$"
 )
-_LABEL_RE = re.compile(r'(?P<key>[a-zA-Z_][a-zA-Z0-9_]*)="(?P<value>(?:\\.|[^"])*)"')
+
+
+def _parse_metric_labels(text: str) -> dict[str, str]:
+    """Parse the bounded Prometheus label subset in linear time."""
+    labels: dict[str, str] = {}
+    offset = 0
+    length = len(text)
+    while offset < length:
+        key_start = offset
+        while offset < length and (text[offset].isalnum() or text[offset] == "_"):
+            offset += 1
+        key = text[key_start:offset]
+        if not key or offset + 1 >= length or text[offset : offset + 2] != '="':
+            return {}
+        offset += 2
+        value: list[str] = []
+        while offset < length:
+            char = text[offset]
+            offset += 1
+            if char == '"':
+                break
+            if char == "\\":
+                if offset >= length:
+                    return {}
+                escaped = text[offset]
+                offset += 1
+                value.append({"n": "\n", "\\": "\\", '"': '"'}.get(escaped, escaped))
+            else:
+                value.append(char)
+        else:
+            return {}
+        labels[key] = "".join(value)
+        if offset == length:
+            break
+        if text[offset] != ",":
+            return {}
+        offset += 1
+    return labels
 
 
 def _metrics(base_url: str, inference_token: str) -> dict[str, Any]:
@@ -183,10 +223,7 @@ def _metrics(base_url: str, inference_token: str) -> dict[str, Any]:
         match = _METRIC_RE.match(line)
         if not match:
             continue
-        labels = {
-            item.group("key"): item.group("value")
-            for item in _LABEL_RE.finditer(match.group("labels") or "")
-        }
+        labels = _parse_metric_labels(match.group("labels") or "")
         values.append((match.group("name"), labels, float(match.group("value"))))
 
     def value(
