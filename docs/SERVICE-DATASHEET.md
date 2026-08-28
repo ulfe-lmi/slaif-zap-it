@@ -43,7 +43,8 @@ overlap. The identity PNG remains a documented single-valued projection.
 ## Supported stages
 
 ROI/resize, SAM2 candidate filtering, CLIP label refresh, deterministic ordering,
-YOLO, identity PNG, annotated overlays and L3 RLE are supported. BLIP3 rules are
+YOLO, identity PNG, mask-only annotated overlays, final-object
+`annotated-labelled` overlays and L3 RLE are supported. BLIP3 rules are
 supported with a pinned FP16 holder. Below 24,576 MiB the historical 11 GB
 RTX 2080 Ti uses the live-qualified sequential stage-boundary lifecycle; at or
 above 24,576 MiB the assigned RTX 3090 uses the live-qualified all-resident

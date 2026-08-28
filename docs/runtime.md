@@ -105,8 +105,9 @@ Transformers 4.41.1 and the support libraries. The observed import smoke was
 `PASSED` for Torch 2.5.1+cu124, TorchVision 0.20.1+cu124, Transformers 4.41.1,
 Accelerate 0.32.1, Hugging Face Hub 0.24.6, SAM2 source commit `2b90b9f…`,
 Pillow 10.4.0 and NumPy 1.26.4. Importing `modules.visualizer` did not require
-detectron2; the panoptic renderer raises a bounded optional-dependency error
-only when that renderer is actually selected.
+detectron2; the final-stage `annotated-labelled` renderer is Pillow-only, while
+the panoptic renderer raises a bounded optional-dependency error only when that
+renderer is actually selected.
 
 Approved model identities were downloaded at these immutable Hugging Face
 revisions:

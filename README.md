@@ -22,6 +22,11 @@ service accepts one image and one API-safe YAML configuration through
 verbosity levels. It is a ZAP-IT-specific multimodal contract, not a generic
 OpenAI text-completions implementation.
 
+At L3, `annotated` remains the mask-only overlay. The final-stage
+`annotated-labelled` stream is a deterministic, Detectron2-free overlay whose
+labels and manifest instance numbers come from the final structured objects;
+structured labels remain available whether or not a visualization is requested.
+
 Version `0.1.0` is an unpublished release candidate. The current evidence is a
 local research/development qualification, not a production SLA, accuracy
 guarantee, commercial model-use clearance, or public-deployment authorization.

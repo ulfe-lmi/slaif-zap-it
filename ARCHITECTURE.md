@@ -65,7 +65,7 @@ configuration never becomes host authority.
 `src.core.run_single_image()` executes one decoded RGB array and returns a typed
 `SingleImageOutcome`. It performs preprocessing, SAM2 mask generation,
 post-filtering, optional CLIP and BLIP3 stages, final label filtering,
-visualization, deterministic ordering, and provenance assembly.
+deterministic ordering, final-object visualization, and provenance assembly.
 
 The core does not require a filesystem. Debug-capable modules receive an
 artifact sink. The service uses a bounded memory sink; the trusted CLI can use a
@@ -166,8 +166,10 @@ One deterministic object order drives every representation:
 
 The service produces normalized five-field YOLO lines, a uint16 identity-mask
 PNG, per-object metadata, overlap-preserving RLE, annotated overlays, warnings,
-timings, and provenance according to verbosity. JSON binary data uses bounded
-base64 descriptors; ZIP uses a deterministic manifest and names.
+timings, and provenance according to verbosity. `annotated` is mask-only;
+`annotated-labelled` is an L3-only, deterministic, Detectron2-free final-object
+overlay with sanitized labels and exact instance IDs. JSON binary data uses
+bounded base64 descriptors; ZIP uses a deterministic manifest and names.
 
 ### Ephemeral storage
 
@@ -189,7 +191,8 @@ disk and never writes client-controlled paths.
 ## Supported versus legacy-only
 
 The service supports preprocessing, SAM2, post-filtering, CLIP, BLIP3,
-deterministic result rendering, and bounded annotated visualizations. Geometry,
+deterministic result rendering, bounded mask-only annotated visualizations, and
+the final-object `annotated-labelled` L3 stream. Geometry,
 panoptic/Detectron2 rendering, batch folders, video, dataset export, and legacy
 filesystem debug workflows are not service stages.
 

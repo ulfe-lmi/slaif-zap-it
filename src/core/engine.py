@@ -364,34 +364,6 @@ def run_single_image(
                 verbosity,
             )
 
-    # -- visualization (arrays only; writers stay outside the core) ----------
-    # ``None`` preserves the legacy CLI behavior.  The service passes an
-    # explicit value so L0-L2 cannot spend work merely enriching a response.
-    should_render_visualizations = (
-        bool(render_visualizations) if render_visualizations is not None else True
-    )
-    stage_masks = {
-        "sam2": all_masks_pre,
-        "clip": clip_only_masks,
-        "blip3": final_masks,
-    }
-    rendered = (
-        timed(
-            "stage.visualization",
-            lambda: stages.generate_visualizations(
-                image_rgb,
-                stage_masks,
-                config.vis_cfg,
-                default_alpha=config.alpha,
-                verbosity=verbosity,
-                log_print_func=log,
-            ),
-        )
-        or {}
-        if should_render_visualizations
-        else {}
-    )
-
     # -- deterministic identity/ordering -------------------------------------
     ordered_masks = order_final_objects(final_masks)
     objects: List[ObjectResult] = []
@@ -421,6 +393,46 @@ def run_single_image(
                 class_id_source="mapping" if mapped is not None else "fallback",
             )
         )
+
+    # -- visualization (arrays only; writers stay outside the core) ----------
+    # ``None`` preserves the legacy CLI behavior.  The service passes an
+    # explicit value so L0-L2 cannot spend work merely enriching a response.
+    # Labelled streams are the only visualization that receives final objects;
+    # legacy mask-only streams continue to see their original stage inputs.
+    should_render_visualizations = (
+        bool(render_visualizations) if render_visualizations is not None else True
+    )
+    stage_masks = {
+        "sam2": all_masks_pre,
+        "clip": clip_only_masks,
+        "blip3": final_masks,
+    }
+    labelled_requested = any(
+        isinstance(entries, list)
+        and any(
+            isinstance(entry, Mapping)
+            and str(entry.get("renderer", "")).lower() == "annotated-labelled"
+            for entry in entries
+        )
+        for stage_name in ("sam2", "clip", "blip3")
+        for entries in (config.vis_cfg.get(stage_name, []),)
+    )
+
+    def _render_visualizations() -> Any:
+        kwargs = {
+            "default_alpha": config.alpha,
+            "verbosity": verbosity,
+            "log_print_func": log,
+        }
+        if labelled_requested:
+            kwargs["final_objects"] = tuple(objects)
+        return stages.generate_visualizations(image_rgb, stage_masks, config.vis_cfg, **kwargs)
+
+    rendered = (
+        timed("stage.visualization", _render_visualizations) or {}
+        if should_render_visualizations
+        else {}
+    )
 
     stage_statuses = (
         StageStatus(
@@ -463,6 +475,11 @@ def run_single_image(
             detail=f"{pre_filter_count} -> {len(final_masks)}",
         ),
         StageStatus(
+            name="ordering",
+            status="executed",
+            detail=f"{len(objects)} final object(s) assigned ids 1..{len(objects)}",
+        ),
+        StageStatus(
             name="visualization",
             status=(
                 "executed"
@@ -475,11 +492,6 @@ def run_single_image(
                 else "rendering disabled for this service verbosity"
             ),
             duration_ms=timings.get("stage.visualization") if rendered else None,
-        ),
-        StageStatus(
-            name="ordering",
-            status="executed",
-            detail=f"{len(objects)} final object(s) assigned ids 1..{len(objects)}",
         ),
     )
 

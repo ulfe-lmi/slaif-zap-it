@@ -17,7 +17,8 @@ module or helper is not evidence that the live service produces its output.
 | CLIP labels, scores and class map | Request labels refresh resident CLIP prompts | Public L0 class mapping, L2 label/score, L3 provenance |
 | BLIP3 verification | Pinned FP16 holder; below 24,576 MiB the live-qualified service swaps SAM2+CLIP and BLIP3 at the stage boundary, while at or above 24,576 MiB all three remain resident | Public L2/L3 fields when executed; Objective 009's real matrix covers all four supported profiles |
 | Geometry Canny/Hough helpers | Helpers and tests exist, but canonical core does not call them; helpers may write TSV/debug files | Not supported by the service; legacy compatibility only where explicitly wired |
-| `annotated`/`alpha-overlay` in-memory streams | Bounded RGB overlays; service executes them only at L3 | Bounded operator/service diagnostic |
+| `annotated`/`alpha-overlay` in-memory streams | Bounded RGB mask-only overlays; service executes them only at L3 | Bounded operator/service diagnostic |
+| `annotated-labelled` in-memory stream | Final-object RGB overlay with sanitized label and exact instance ID; deterministic, L3-only and Detectron2-free | Bounded operator/service diagnostic |
 | Panoptic/Detectron2 renderer | Detectron2 is absent and renderer is not a live capability | Unsupported for service; legacy helper only |
 | Stage statuses, candidate counts, timings | Produced by the core | Bounded L3 service metadata |
 | Object bbox, normalized bbox, area, centroid | Derived from source masks | Public L2 metadata |
@@ -40,7 +41,8 @@ module or helper is not evidence that the live service produces its output.
 
 The service accepts only bounded in-memory annotated streams under
 `visualization.sam2`, `visualization.clip`, or `visualization.blip3`, with safe
-logical IDs and a maximum of eight streams. `panoptic`, unknown renderers,
+logical IDs and a maximum of eight streams. `annotated-labelled` is accepted
+only under `visualization.blip3`; `panoptic`, unknown renderers,
 composite/file/video rules, unsafe IDs and malformed entries are rejected before
 inference. Before L3 inference, the service reserves exactly
 `stream_count * height * width * 3` raw RGB bytes for annotated streams, rejects
