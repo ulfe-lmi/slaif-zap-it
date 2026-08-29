@@ -199,6 +199,7 @@ class _ClipFilter:
         safe_artifact_names=False,
         candidate_view_config=None,
         candidate_view_inputs=None,
+        debug=None,
     ):
         from src.core.mask_views import CandidateViewConfig, build_mask_views
 
@@ -210,6 +211,7 @@ class _ClipFilter:
             if isinstance(candidate_view_config, CandidateViewConfig)
             else CandidateViewConfig.from_mapping(candidate_view_config, stage="clip")
         )
+        debug_enabled = self.debug if debug is None else bool(debug)
         for i, m in enumerate(masks):
             seg = m["segmentation"]
             source_index = m.get("_source_index")
@@ -228,7 +230,7 @@ class _ClipFilter:
             m["clip_label"] = best_lbl
             m["clip_score"] = best_sc
 
-            if self.debug and best_prompt is not None:
+            if debug_enabled and best_prompt is not None:
                 if safe_artifact_names:
                     patch_file = f"clip-candidate-view-{source_candidate_id:04d}.png"
                 else:
@@ -347,6 +349,7 @@ def run(
         view_kwargs = {
             "candidate_view_config": params.get("candidate_view_config"),
             "candidate_view_inputs": params.get("candidate_view_inputs"),
+            "debug": params.get("config", {}).get("debug", clip_filter.debug),
         }
 
     if artifact_sink is not None:
