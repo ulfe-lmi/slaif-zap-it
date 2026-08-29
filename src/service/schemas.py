@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from src.core.raw_visualizations import validate_raw_sam2_manifest
 
 from .settings import SERVICE_MODEL_ID
 
@@ -119,6 +121,13 @@ class RawVisualizationManifest(BaseModel):
     diagnostic_dimensions: RawVisualizationDimensions
     artifact_names: List[str] = Field(max_length=11)
     warnings: List[str] = Field(max_length=1)
+
+    @model_validator(mode="after")
+    def validate_arithmetic(self) -> "RawVisualizationManifest":
+        """Keep the documented raw-rendering arithmetic explicit in the schema."""
+
+        validate_raw_sam2_manifest(self.model_dump(mode="python"))
+        return self
 
 
 class Sam2Metadata(BaseModel):

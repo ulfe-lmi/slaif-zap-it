@@ -97,7 +97,8 @@ The fixed service names are `sam2-candidates-page-0001.png` through
 `sam2-overlap-heatmap.png`, and `sam2-uncovered-pixels.png`. Union is black
 uncovered/white covered; overlap is black at zero with a fixed ramp scaled by
 the observed maximum; uncovered is the source-resolution binary inverse of
-union. Diagnostics include all non-empty candidates, never upscale, and use
+union. Candidate crops may be enlarged for contact-sheet readability;
+diagnostics include all non-empty candidates, never upscale, and use
 nearest-neighbor downscaling to at most 2,000,000 pixels. The L3
 `service.sam2.raw_visualization` child reports exact source accounting,
 overlap histogram overflow, represented IDs and explicit truncation. Below L3

@@ -15,6 +15,8 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
+from .errors import CoreError
+
 try:
     from PIL import Image, ImageDraw, ImageFont
 except ImportError:  # pragma: no cover - Pillow is a runtime dependency
@@ -43,8 +45,10 @@ __all__ = [
     "RawSam2Visualization",
     "candidate_color",
     "diagnostic_dimensions",
+    "finalize_raw_sam2_visualization",
     "raw_sam2_debug_rgb_bytes",
     "render_raw_sam2_visualizations",
+    "validate_raw_sam2_manifest",
 ]
 
 RAW_CANDIDATE_ID_BASE = 1
@@ -77,6 +81,7 @@ RAW_FIXED_ARTIFACT_NAMES = (
     RAW_OVERLAP_NAME,
     RAW_UNCOVERED_NAME,
 )
+RAW_MANIFEST_ERROR = "raw SAM2 visualization manifest is inconsistent"
 
 # The palette is an arithmetic function of the public candidate id only.  It
 # is intentionally independent of image pixels, scores, labels and ordering
@@ -91,6 +96,179 @@ class RawSam2Visualization:
 
     artifacts: tuple[tuple[str, np.ndarray], ...]
     summary: Mapping[str, Any]
+
+
+def _manifest_error() -> None:
+    raise CoreError(RAW_MANIFEST_ERROR)
+
+
+def _manifest_int(value: Any, *, minimum: int = 0) -> bool:
+    return type(value) is int and value >= minimum
+
+
+def _manifest_dimensions(value: Any) -> tuple[int, int] | None:
+    if not isinstance(value, Mapping):
+        return None
+    width = value.get("width")
+    height = value.get("height")
+    if not _manifest_int(width, minimum=1) or not _manifest_int(height, minimum=1):
+        return None
+    return int(width), int(height)
+
+
+def _expected_raw_artifact_names(represented_count: int) -> list[str]:
+    page_count = math.ceil(represented_count / RAW_CANDIDATES_PER_SHEET)
+    return [f"sam2-candidates-page-{page:04d}.png" for page in range(1, page_count + 1)] + [
+        RAW_UNION_NAME,
+        RAW_OVERLAP_NAME,
+        RAW_UNCOVERED_NAME,
+    ]
+
+
+def validate_raw_sam2_manifest(
+    summary: Mapping[str, Any],
+    artifacts: Sequence[tuple[str, np.ndarray]] | None = None,
+) -> None:
+    """Validate the bounded cross-field facts published for raw SAM2 output.
+
+    This is deliberately independent of Pydantic and response serialization so
+    the engine can reject inconsistent internal facts before a sink retains an
+    artifact or exposes a summary.  All failures use one sanitized core error;
+    no internal mapping or request content is included in the message.
+    """
+
+    if not isinstance(summary, Mapping) or summary.get("enabled") is not True:
+        _manifest_error()
+    if summary.get("candidate_id_base") != RAW_CANDIDATE_ID_BASE:
+        _manifest_error()
+
+    raw_count = summary.get("raw_candidate_count")
+    visualizable_count = summary.get("visualizable_candidate_count")
+    omitted_count = summary.get("omitted_empty_candidate_count")
+    represented_count = summary.get("represented_candidate_count")
+    truncated_count = summary.get("truncated_candidate_count")
+    contact_sheet_count = summary.get("contact_sheet_count")
+    if not all(
+        _manifest_int(value)
+        for value in (
+            raw_count,
+            visualizable_count,
+            omitted_count,
+            represented_count,
+            truncated_count,
+            contact_sheet_count,
+        )
+    ):
+        _manifest_error()
+    if (
+        raw_count != visualizable_count + omitted_count
+        or visualizable_count != represented_count + truncated_count
+        or represented_count > RAW_MAXIMUM_REPRESENTED_CANDIDATES
+        or contact_sheet_count > RAW_MAXIMUM_CONTACT_SHEETS
+        or contact_sheet_count != math.ceil(represented_count / RAW_CANDIDATES_PER_SHEET)
+    ):
+        _manifest_error()
+
+    represented_ids = summary.get("represented_candidate_ids")
+    if not isinstance(represented_ids, list) or len(represented_ids) != represented_count:
+        _manifest_error()
+    if any(
+        not _manifest_int(candidate_id, minimum=RAW_CANDIDATE_ID_BASE)
+        for candidate_id in represented_ids
+    ):
+        _manifest_error()
+    if any(
+        current <= previous or current > raw_count
+        for previous, current in zip(represented_ids, represented_ids[1:])
+    ):
+        _manifest_error()
+
+    source_dimensions = _manifest_dimensions(summary.get("source_dimensions"))
+    diagnostic = _manifest_dimensions(summary.get("diagnostic_dimensions"))
+    if source_dimensions is None or diagnostic is None:
+        _manifest_error()
+    source_width, source_height = source_dimensions
+    diagnostic_width, diagnostic_height = diagnostic
+    if (
+        diagnostic_width > source_width
+        or diagnostic_height > source_height
+        or (diagnostic_width * diagnostic_height) > RAW_MAX_DIAGNOSTIC_PIXELS
+        or diagnostic != diagnostic_dimensions(source_width, source_height)
+    ):
+        _manifest_error()
+
+    covered = summary.get("covered_pixel_count")
+    uncovered = summary.get("uncovered_pixel_count")
+    maximum_overlap = summary.get("max_overlap_count")
+    overflow = summary.get("overlap_histogram_overflow_pixel_count")
+    if not all(_manifest_int(value) for value in (covered, uncovered, maximum_overlap, overflow)):
+        _manifest_error()
+    source_area = source_width * source_height
+    if covered + uncovered != source_area or maximum_overlap > visualizable_count:
+        _manifest_error()
+
+    histogram = summary.get("overlap_histogram")
+    if not isinstance(histogram, Mapping):
+        _manifest_error()
+    histogram_limit = min(maximum_overlap, 255)
+    expected_histogram_keys = [str(count) for count in range(histogram_limit + 1)]
+    if set(histogram) != set(expected_histogram_keys):
+        _manifest_error()
+    if any(not _manifest_int(value) for value in histogram.values()):
+        _manifest_error()
+    if (
+        sum(histogram.values()) + overflow != source_area
+        or histogram.get("0") != uncovered
+        or (overflow > 0) != (maximum_overlap > 255)
+        or summary.get("overlap_histogram_truncated") is not (maximum_overlap > 255)
+    ):
+        _manifest_error()
+
+    expected_names = _expected_raw_artifact_names(represented_count)
+    if summary.get("artifact_names") != expected_names:
+        _manifest_error()
+    warnings = summary.get("warnings")
+    expected_warnings = [RAW_TRUNCATION_WARNING] if truncated_count else []
+    if warnings != expected_warnings:
+        _manifest_error()
+
+    if artifacts is not None:
+        if not isinstance(artifacts, Sequence) or [name for name, _ in artifacts] != expected_names:
+            _manifest_error()
+        for index, (_, array) in enumerate(artifacts):
+            if not isinstance(array, np.ndarray) or array.dtype != np.uint8 or array.ndim != 3:
+                _manifest_error()
+            if index < contact_sheet_count:
+                expected_shape = (
+                    RAW_CONTACT_SHEET_HEIGHT,
+                    RAW_CONTACT_SHEET_WIDTH,
+                    3,
+                )
+            else:
+                expected_shape = (diagnostic_height, diagnostic_width, 3)
+            if array.shape != expected_shape:
+                _manifest_error()
+
+
+def finalize_raw_sam2_visualization(
+    rendered: RawSam2Visualization,
+    *,
+    raw_candidate_count: int,
+    omitted_empty_candidate_count: int,
+) -> RawSam2Visualization:
+    """Attach generator accounting and validate before artifacts are published."""
+
+    if not isinstance(rendered, RawSam2Visualization):
+        _manifest_error()
+    summary = dict(rendered.summary)
+    summary.update(
+        {
+            "raw_candidate_count": raw_candidate_count,
+            "omitted_empty_candidate_count": omitted_empty_candidate_count,
+        }
+    )
+    validate_raw_sam2_manifest(summary, rendered.artifacts)
+    return RawSam2Visualization(artifacts=rendered.artifacts, summary=summary)
 
 
 def candidate_color(candidate_id: int) -> tuple[int, int, int]:
@@ -189,6 +367,31 @@ def _resampling(name: str) -> Any:
     return getattr(Image, name)
 
 
+def _draw_tile_label(image: Any, label: str) -> tuple[tuple[int, int], tuple[int, int, int, int]]:
+    """Draw one complete label and return its actual position and text bounds."""
+
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default()
+    bounds = draw.textbbox((0, 0), label, font=font)
+    available_width = RAW_TILE_CONTENT_WIDTH - 8
+    if bounds[2] - bounds[0] > available_width:
+        raise CoreError("raw SAM2 visualization label does not fit")
+    text_height = bounds[3] - bounds[1]
+    label_top = RAW_TILE_CONTENT_HEIGHT
+    text_y = label_top + (RAW_TILE_LABEL_HEIGHT - text_height) // 2 - bounds[1]
+    position = (4, text_y)
+    final_bounds = draw.textbbox(position, label, font=font)
+    if (
+        final_bounds[0] < 0
+        or final_bounds[1] < label_top
+        or final_bounds[2] > RAW_TILE_CONTENT_WIDTH
+        or final_bounds[3] > label_top + RAW_TILE_LABEL_HEIGHT
+    ):
+        raise CoreError("raw SAM2 visualization label is outside its label bar")
+    draw.text(position, label, fill=RAW_LABEL_FOREGROUND, font=font)
+    return position, final_bounds
+
+
 def _letterboxed_tile(
     image_rgb: np.ndarray,
     mask: np.ndarray,
@@ -202,7 +405,6 @@ def _letterboxed_tile(
     scale = min(
         RAW_TILE_CONTENT_WIDTH / crop_width,
         RAW_TILE_CONTENT_HEIGHT / crop_height,
-        1.0,
     )
     resized_width = max(1, min(RAW_TILE_CONTENT_WIDTH, int(round(crop_width * scale))))
     resized_height = max(1, min(RAW_TILE_CONTENT_HEIGHT, int(round(crop_height * scale))))
@@ -251,16 +453,8 @@ def _render_tile(
     tile[:RAW_TILE_CONTENT_HEIGHT] = np.where(selected, composited, content)
     tile[RAW_TILE_CONTENT_HEIGHT:] = RAW_LABEL_BACKGROUND
     pil_tile = Image.fromarray(tile, mode="RGB")
-    draw = ImageDraw.Draw(pil_tile)
-    font = ImageFont.load_default()
     label = _candidate_label(candidate_id, record)
-    available_width = RAW_TILE_CONTENT_WIDTH - 8
-    while draw.textbbox((0, 0), label, font=font)[2] > available_width and label:
-        label = label[:-1]
-    bounds = draw.textbbox((0, 0), label, font=font)
-    text_height = bounds[3] - bounds[1]
-    text_y = RAW_TILE_CONTENT_HEIGHT + (RAW_TILE_LABEL_HEIGHT - text_height) // 2 - bounds[1]
-    draw.text((4, text_y), label, fill=RAW_LABEL_FOREGROUND, font=font)
+    _draw_tile_label(pil_tile, label)
     return np.asarray(pil_tile, dtype=np.uint8)
 
 
@@ -310,21 +504,39 @@ def _heatmap(overlap: np.ndarray) -> np.ndarray:
     output = np.zeros((*overlap.shape, 3), dtype=np.uint8)
     if maximum:
         fraction = overlap.astype(np.float64) / maximum
-        output[..., 0] = np.rint(255 * fraction).astype(np.uint8)
-        output[..., 1] = np.rint(96 * fraction).astype(np.uint8)
-        output[..., 2] = np.rint(255 * (1.0 - fraction)).astype(np.uint8)
+        positive = overlap > 0
+        output[..., 0] = np.where(positive, np.rint(255 * fraction), 0).astype(np.uint8)
+        output[..., 1] = np.where(positive, np.rint(96 * fraction), 0).astype(np.uint8)
+        output[..., 2] = np.where(positive, np.rint(255 * (1.0 - fraction)), 0).astype(np.uint8)
     return output
 
 
 def render_raw_sam2_visualizations(
-    image_rgb: np.ndarray, masks: Sequence[Mapping[str, Any]]
+    image_rgb: np.ndarray,
+    masks: Sequence[Mapping[str, Any]],
+    *,
+    raw_candidate_count: int | None = None,
+    omitted_empty_candidate_count: int | None = None,
 ) -> RawSam2Visualization:
-    """Render fixed, bounded raw SAM2 candidate and coverage artifacts."""
+    """Render fixed, bounded raw SAM2 candidate and coverage artifacts.
+
+    The optional generator accounting is supplied by the engine when the
+    automatic generator reports empty proposals separately from its returned
+    non-empty records.  Direct callers get the equivalent accounting for the
+    records they provide.
+    """
 
     _require_pillow()
     source = _as_rgb(image_rgb)
     height, width = source.shape[:2]
     records = _candidate_records(masks, height=height, width=width)
+    if raw_candidate_count is None:
+        raw_candidate_count = max(
+            len(masks),
+            max((int(mask["_source_index"]) + RAW_CANDIDATE_ID_BASE for mask in masks), default=0),
+        )
+    if omitted_empty_candidate_count is None:
+        omitted_empty_candidate_count = raw_candidate_count - len(records)
     overlap = np.zeros((height, width), dtype=np.uint32)
     for _, mask, _, _ in records:
         np.add(overlap, mask.astype(np.uint32), out=overlap, casting="unsafe")
@@ -357,6 +569,17 @@ def render_raw_sam2_visualizations(
             RAW_SHEET_NEUTRAL,
             dtype=np.uint8,
         )
+        for tile_index in range(RAW_CANDIDATES_PER_SHEET):
+            row, column = divmod(tile_index, RAW_CONTACT_SHEET_COLUMNS)
+            y0 = row * (RAW_TILE_CONTENT_HEIGHT + RAW_TILE_LABEL_HEIGHT)
+            x0 = column * RAW_TILE_CONTENT_WIDTH
+            sheet[y0 : y0 + RAW_TILE_CONTENT_HEIGHT, x0 : x0 + RAW_TILE_CONTENT_WIDTH] = (
+                RAW_SHEET_NEUTRAL
+            )
+            sheet[
+                y0 + RAW_TILE_CONTENT_HEIGHT : y0 + RAW_TILE_CONTENT_HEIGHT + RAW_TILE_LABEL_HEIGHT,
+                x0 : x0 + RAW_TILE_CONTENT_WIDTH,
+            ] = RAW_LABEL_BACKGROUND
         for tile_index, (candidate_id, mask, record, bbox) in enumerate(
             represented[page * RAW_CANDIDATES_PER_SHEET : (page + 1) * RAW_CANDIDATES_PER_SHEET]
         ):
@@ -376,8 +599,10 @@ def render_raw_sam2_visualizations(
     summary = {
         "enabled": True,
         "candidate_id_base": RAW_CANDIDATE_ID_BASE,
+        "raw_candidate_count": raw_candidate_count,
         "visualizable_candidate_count": len(records),
         "represented_candidate_count": len(represented),
+        "omitted_empty_candidate_count": omitted_empty_candidate_count,
         "represented_candidate_ids": [item[0] for item in represented],
         "truncated_candidate_count": truncated_count,
         "contact_sheet_count": page_count,
@@ -395,4 +620,8 @@ def render_raw_sam2_visualizations(
         "artifact_names": [name for name, _ in artifacts],
         "warnings": [RAW_TRUNCATION_WARNING] if truncated_count else [],
     }
-    return RawSam2Visualization(artifacts=tuple(artifacts), summary=summary)
+    return finalize_raw_sam2_visualization(
+        RawSam2Visualization(artifacts=tuple(artifacts), summary=summary),
+        raw_candidate_count=raw_candidate_count,
+        omitted_empty_candidate_count=omitted_empty_candidate_count,
+    )

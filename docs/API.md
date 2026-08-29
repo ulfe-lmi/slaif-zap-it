@@ -213,7 +213,9 @@ content and a 28-pixel label bar. Candidate labels are
 `C0001  IoU 0.843  stability 0.912`-style text with three decimals or `n/a`;
 no user-controlled text is rendered. Crops use at least four pixels of clamped
 `ceil(10%)` context padding, RGB bilinear/mask nearest-neighbor letterboxing
-and 45% mask alpha. Union is black/white uncovered/covered, overlap is a fixed
+and 45% mask alpha; small padded crops are enlarged to fill the tile while the
+three full-image diagnostics never upscale. Union is black/white
+uncovered/covered, overlap is a fixed
 blue-to-red ramp scaled by its observed maximum, and uncovered is the exact
 inverse at source resolution before nearest-neighbor downscale to at most
 2,000,000 pixels. Equal inputs are deterministic within a pinned environment;

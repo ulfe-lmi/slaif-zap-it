@@ -276,19 +276,18 @@ def run_single_image(
         if service_safe_artifact_names:
             if verbosity >= 3:
                 sink = _require_sink("mask_generator.debug")
-                raw_rendered = render_raw_sam2_visualizations(image_rgb, all_masks_pre)
-                for artifact_name, artifact_array in raw_rendered.artifacts:
-                    sink.store_image(artifact_name, artifact_array, fmt="png")
-                raw_summary = dict(raw_rendered.summary)
                 omitted_empty = raw_candidate_count - len(all_masks_pre)
                 if omitted_empty < 0:
                     raise CoreError("SAM2 raw candidate accounting is inconsistent")
-                raw_summary.update(
-                    {
-                        "raw_candidate_count": raw_candidate_count,
-                        "omitted_empty_candidate_count": omitted_empty,
-                    }
+                raw_rendered = render_raw_sam2_visualizations(
+                    image_rgb,
+                    all_masks_pre,
+                    raw_candidate_count=raw_candidate_count,
+                    omitted_empty_candidate_count=omitted_empty,
                 )
+                for artifact_name, artifact_array in raw_rendered.artifacts:
+                    sink.store_image(artifact_name, artifact_array, fmt="png")
+                raw_summary = dict(raw_rendered.summary)
                 warnings_out.extend(raw_summary.get("warnings", []))
                 sam2_metadata["raw_visualization"] = raw_summary
         else:

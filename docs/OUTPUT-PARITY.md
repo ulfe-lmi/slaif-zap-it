@@ -82,6 +82,8 @@ with `C<source_id>` labels and three fixed diagnostics. Pages are 3x4 with
 320x240 content and a 28-pixel label bar, capped at eight pages/96 candidates.
 The crop uses clamped `ceil(10%)` context with a four-pixel minimum, RGB
 bilinear and mask nearest-neighbor resizing, and 0.45 exact-mask alpha.
+Padded candidate crops may be enlarged into their 320x240 tiles for
+readability; the three full-image diagnostics never upscale.
 
 `sam2-union-coverage.png` is black/white uncovered/covered,
 `sam2-overlap-heatmap.png` is black at zero with a fixed observed-maximum

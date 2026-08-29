@@ -51,8 +51,10 @@ from .raw_visualizations import (
     RawSam2Visualization,
     candidate_color,
     diagnostic_dimensions,
+    finalize_raw_sam2_visualization,
     raw_sam2_debug_rgb_bytes,
     render_raw_sam2_visualizations,
+    validate_raw_sam2_manifest,
 )
 from .results import (
     ObjectResult,
@@ -121,8 +123,10 @@ __all__ = [
     "RawSam2Visualization",
     "candidate_color",
     "diagnostic_dimensions",
+    "finalize_raw_sam2_visualization",
     "raw_sam2_debug_rgb_bytes",
     "render_raw_sam2_visualizations",
+    "validate_raw_sam2_manifest",
     "render_yolo",
     "run_single_image",
 ]

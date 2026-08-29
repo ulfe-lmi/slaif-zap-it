@@ -158,7 +158,9 @@ It accepts only an RGB array and source-indexed raw mask records, makes no
 model/filesystem/network/environment calls, and returns bounded RGB arrays plus
 typed coverage facts. It uses one-based source IDs, deterministic arithmetic
 colors, independent 3x4 contact-sheet tiles (320x240 content plus a 28-pixel
-label bar), fixed score labels and at most 96 represented candidates. Its union,
+label bar), fixed score labels and at most 96 represented candidates. Candidate
+tiles may enlarge padded crops for readability; its full-image diagnostics never
+upscale. Its union,
 overlap heatmap and uncovered images and their exact numeric accounting cover
 all non-empty candidates, including those not represented in a page. The API
 engine stores these arrays as the fixed PNG names only when the service-safe

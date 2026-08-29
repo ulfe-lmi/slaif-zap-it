@@ -143,7 +143,9 @@ three columns by four rows of 320x240 content tiles plus a 28-pixel label bar,
 with at most eight pages and 96 represented candidates. A tile uses clamped
 context padding of `ceil(10% of the larger bbox dimension)`, at least four
 source pixels, bilinear RGB resizing, nearest-neighbor mask resizing and 45%
-mask-color alpha. Labels use three decimal IoU/stability values, or `n/a` for
+mask-color alpha. Padded tiles are enlarged when needed to fill their content
+area; full-image diagnostics never upscale. Labels use three decimal
+IoU/stability values, or `n/a` for
 absent/non-finite values. The fixed names are
 `sam2-candidates-page-0001.png` through `-0008.png`, the three diagnostic names
 above, and no client text enters an artifact name.

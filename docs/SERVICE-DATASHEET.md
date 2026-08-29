@@ -84,6 +84,9 @@ fixed 3x4 layouts with 320x240 content and a 28-pixel label bar; no more than
 eight pages or 96 candidates are represented. Scores use three decimals or
 `n/a`, and no client text enters an artifact name.
 
+Padded candidate crops may be enlarged to the 320x240 content area for
+readability; the three full-image diagnostics never upscale.
+
 The fixed names are `sam2-candidates-page-0001.png` through
 `sam2-candidates-page-0008.png`, `sam2-union-coverage.png`,
 `sam2-overlap-heatmap.png`, and `sam2-uncovered-pixels.png`. Union is black

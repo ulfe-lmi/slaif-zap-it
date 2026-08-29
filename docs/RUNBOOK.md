@@ -228,6 +228,8 @@ decimals or `n/a`. The three diagnostics account for every non-empty raw mask,
 including truncated candidates: union is black/white uncovered/covered,
 overlap is a fixed ramp scaled by its observed maximum, and uncovered is the
 exact inverse before nearest-neighbor downscale to at most 2,000,000 pixels.
+Candidate crops may be enlarged into their fixed 320x240 tiles; the diagnostics
+never upscale.
 Check the typed `service.sam2.raw_visualization` arithmetic, histogram overflow,
 source/diagnostic dimensions and fixed artifact hashes in both JSON and ZIP.
 The request is rejected with `response_too_large` before readiness/gate/engine

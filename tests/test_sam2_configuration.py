@@ -790,6 +790,7 @@ def test_capabilities_are_authenticated_static_deterministic_and_explicit(monkey
         "sam2-uncovered-pixels.png",
     ]
     assert "three decimals" in raw_policy["score_format"]
+    assert "may be enlarged" in raw_policy["diagnostics"]["candidate_tiles"]
     assert "first 96" in raw_policy["truncation"]
     serialized = json.dumps(body)
     assert "SLAIF_ZAP_IT_API_KEY" not in serialized

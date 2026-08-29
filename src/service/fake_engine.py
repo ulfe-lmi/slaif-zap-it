@@ -123,6 +123,7 @@ class FakeEngine:
                 "config_digest": config_digest(config),
                 "shape": tuple(image_rgb.shape),
                 "has_sink": artifact_sink is not None,
+                "sam2_debug": bool(config.sam2_cfg.get("debug", False)),
             }
         )
         if self.delay_seconds:
@@ -162,16 +163,15 @@ class FakeEngine:
         if service_safe_artifact_names and verbosity >= 3 and config.sam2_cfg.get("debug", False):
             if artifact_sink is None:
                 raise ValueError("SAM2 debug requires an artifact sink")
-            raw_rendered = render_raw_sam2_visualizations(image_rgb, candidates)
+            raw_rendered = render_raw_sam2_visualizations(
+                image_rgb,
+                candidates,
+                raw_candidate_count=len(specs),
+                omitted_empty_candidate_count=0,
+            )
             for artifact_name, artifact_array in raw_rendered.artifacts:
                 artifact_sink.store_image(artifact_name, artifact_array, fmt="png")
             raw_summary = dict(raw_rendered.summary)
-            raw_summary.update(
-                {
-                    "raw_candidate_count": len(specs),
-                    "omitted_empty_candidate_count": 0,
-                }
-            )
             sam2_metadata["raw_visualization"] = raw_summary
             result_warnings.extend(raw_summary.get("warnings", []))
         post_filter_diagnostics: Dict[str, Any] = {}

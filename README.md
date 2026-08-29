@@ -177,6 +177,8 @@ separate source-order candidate tiles plus union coverage, overlap heatmap and
 uncovered-pixel PNGs. IDs are one-based `_source_index + 1` values and scores
 are labelled to three decimals (or `n/a`). Pages are fixed 3x4 sheets with
 320x240 content and a 28-pixel label bar, capped at eight sheets/96 candidates;
+candidate crops are enlarged when their padded source crop is smaller than the
+tile, while the three full-image diagnostics never upscale;
 the fixed names are `sam2-candidates-page-0001.png` through `-0008.png`,
 `sam2-union-coverage.png`, `sam2-overlap-heatmap.png`, and
 `sam2-uncovered-pixels.png`. All non-empty raw masks contribute to exact source
