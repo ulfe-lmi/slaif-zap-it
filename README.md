@@ -27,11 +27,12 @@ At L3, `annotated` remains the mask-only overlay. The final-stage
 labels and manifest instance numbers come from the final structured objects;
 structured labels remain available whether or not a visualization is requested.
 
-BLIP3 verification is mask-aware: each executed question receives a deterministic
-side-by-side RGB image with untouched context on the left and an exact
-mask-highlighted candidate on the right. The service's L3 `debug: true` rules
-expose that exact paired image as a fixed-name lossless PNG; this is an audit
-artifact, not a guarantee of semantic accuracy.
+BLIP3 verification is mask-isolated: each executed question receives a
+deterministic side-by-side RGB image with the selected target only on the left
+and bounded, dimmed dilated context on the right. CLIP receives the same
+mask-derived dilated-context boundary. The service's L3 `debug: true` rules
+expose the exact model inputs as fixed-name lossless PNGs; these are audit
+artifacts, not guarantees of semantic accuracy.
 
 Version `0.1.0` is an unpublished release candidate. The current evidence is a
 local research/development qualification, not a production SLA, accuracy
@@ -121,10 +122,10 @@ curl --fail-with-body http://127.0.0.1:${SLAIF_ZAP_IT_PORT}/readyz
 ```
 
 The authenticated `GET /v1/capabilities` route documents the strict
-request-local SAM2 generator policy without requiring readiness. It exposes the
-exact defaults, `fast`/`balanced`/`quality` profiles, intrinsic ranges,
-startup operator caps and bounded estimation formulas; it never exposes
-credentials, operator paths, GPU topology or mutable request state.
+request-local SAM2 and candidate-view policies without requiring readiness. It
+exposes exact defaults, intrinsic ranges, fixed dilation formulas, public ID
+bases and bounded estimation formulas; it never exposes credentials, operator
+paths, GPU topology or mutable request state.
 
 Example completion request:
 
@@ -147,14 +148,26 @@ active inference request.
 
 | Verbosity | Response additions |
 | ---: | --- |
-| 0 | Completion envelope, normalized five-field YOLO lines, and `service.sam2` |
+| 0 | Completion envelope, normalized five-field YOLO lines, `service.sam2`, and effective candidate-view policy |
 | 1 | Deterministic uint16 identity-mask PNG |
-| 2 | Per-object mask-derived geometry and available SAM2/CLIP/BLIP3 metadata |
+| 2 | Per-object mask-derived geometry, source candidate ID, filtered index, and available SAM2/CLIP/BLIP3 metadata |
 | 3 | Bounded timings, stage metadata, post-filter diagnostics, RLE masks, overlays, warnings, provenance, and BLIP3 verification PNGs |
 
 Binary artifacts are base64 descriptors in JSON or files in a bounded ZIP.
 Request bytes and intermediate results remain in RAM or the validated
 `/dev/shm` workspace and are removed after every request.
+
+`candidate_views.clip` and `candidate_views.blip3` are request-local algorithm
+settings. Both default to `mask_dilated`, zero fill, 0.10 context fraction,
+zero minimum, 64-pixel maximum and 0.35 context intensity; BLIP3 additionally
+defaults to a two-pixel exterior contour. The effective radius is
+`min(max(ceil(context_fraction * max(mask_bbox_width, mask_bbox_height)),
+min_context_pixels), max_context_pixels)`. The bbox is storage-only: source
+pixels outside the exact mask or dilated support remain zero. CLIP debug names
+are `clip-candidate-view-CANDIDATE-####.png`; BLIP3 names are
+`blip3-verification-CANDIDATE-####-QUESTION-####.png` and use one-based public
+IDs. The sole public fill is `zero`; `clip.padding` is rejected by the service
+and deprecated/ignored by trusted legacy classification.
 
 L3 post-filter diagnostics report one short-circuit outcome per evaluated SAM2
 candidate: `maxsize`, `empty_mask`, `max_w`, `max_h`, or retained, in that

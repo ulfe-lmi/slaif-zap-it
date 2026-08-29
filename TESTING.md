@@ -81,8 +81,17 @@ an explicit operational order creates and secures it.
   preservation, exact selected-pixel identity, 40% exterior dimming, exterior
   four-pixel contour, fixed instruction ordering, same-crop hard-negative and
   positive regressions;
-- BLIP3 L3 fixed `blip3-verification-####-####.png` names, exact QA/debug
+- shared candidate-view builder exact Euclidean dilation, zero-fill isolation,
+  hole/disconnected/border/tiny-mask behavior, deterministic floor intensity,
+  bilinear RGB plus nearest-neighbor support reapplication, immutable inputs,
+  CLIP processor byte identity, BLIP3 pair byte identity, fixed one-based
+  source/question names, zero-based filtered indices, strict request-local
+  configuration, capability disclosure and pre-model debug admission;
+- BLIP3 L3 fixed `blip3-verification-CANDIDATE-####-QUESTION-####.png` names, exact QA/debug
   image parity, JSON/ZIP hash parity, and nested debug stripping at L0-L2;
+- radius-512 local-window dilation resource regression with an independent
+  brute-force oracle, and two-phase CLIP/BLIP3 debug admission with zero-call
+  negative cases;
 - visualization execution policy, final-object labelled pixel/placement/
   sanitization/confidence checks, geometry pre-inference rejection, metrics
   privacy/cardinality and A/B/A state-isolation checks;

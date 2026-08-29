@@ -16,6 +16,7 @@ module-level names for backward compatibility.
 from __future__ import annotations
 
 import time
+import math
 from dataclasses import dataclass
 from contextlib import nullcontext
 from contextlib import AbstractContextManager
@@ -27,6 +28,7 @@ import numpy as np
 from modules.visualizer import generate_visualizations as _generate_visualizations
 from .config import CoreConfig, config_digest
 from .errors import CoreError
+from .mask_views import build_mask_views
 from .ordering import order_final_objects
 from ..postprocessing import filter_by_area_bbox as _canonical_filter_by_area_bbox
 from .raw_visualizations import render_raw_sam2_visualizations
@@ -130,6 +132,107 @@ def _build_class_mapping(class_labels: Sequence[str]) -> Mapping[str, int]:
     for index, label in enumerate(class_labels):
         mapping.setdefault(str(label).strip(), index)
     return mapping
+
+
+def _blip_pair_nbytes(crop_shape: tuple[int, int]) -> int:
+    """Return the exact RGB byte size of the bounded BLIP3 pair."""
+    crop_height, crop_width = crop_shape
+    short_side = min(crop_height, crop_width)
+    scale = 256.0 / float(short_side) if short_side < 256 else 1.0
+    long_side = max(crop_height, crop_width)
+    if long_side * scale > 768:
+        scale = 768.0 / float(long_side)
+    scaled_width = max(1, int(math.floor(crop_width * scale + 0.5)))
+    scaled_height = max(1, int(math.floor(crop_height * scale + 0.5)))
+    return scaled_height * (2 * scaled_width + 4) * 3
+
+
+def _candidate_view_debug_capacity(
+    image_rgb: np.ndarray,
+    masks: Sequence[Mapping[str, Any]],
+    config: CoreConfig,
+    *,
+    stage: str,
+) -> tuple[int, int, list[int]]:
+    """Count the exact candidate-view artifacts for one model seam.
+
+    CLIP admission runs before CLIP values exist, so it only considers CLIP
+    debug artifacts.  BLIP3 admission runs after CLIP and can therefore use
+    the actual labels and scores to count applicable debug rules.
+    """
+    if stage not in {"clip", "blip3"}:
+        raise ValueError(f"unsupported candidate-view admission stage: {stage}")
+
+    clip_cfg = config.clip_cfg
+    clip_debug = (
+        stage == "clip"
+        and clip_cfg.get("debug") is True
+        and bool(
+            (
+                isinstance(clip_cfg.get("labels"), Mapping)
+                and any(isinstance(value, str) for value in clip_cfg["labels"].values())
+            )
+            or any(
+                type(key) is str and key.lower().startswith("label ") and isinstance(value, str)
+                for key, value in clip_cfg.items()
+            )
+        )
+    )
+    blip_rules = config.blip3_cfg if isinstance(config.blip3_cfg, Mapping) else {}
+    blip_debug_rules: list[tuple[float | None, str | None, Mapping[str, Any]]] = []
+    if stage == "blip3":
+        for rule_name, rule in blip_rules.items():
+            if not isinstance(rule_name, str) or not isinstance(rule, Mapping):
+                continue
+            if rule_name.startswith("any,"):
+                try:
+                    threshold = float(rule_name.split(",", 1)[1])
+                except ValueError:
+                    continue
+                blip_debug_rules.append((threshold, None, rule))
+            else:
+                blip_debug_rules.append((None, rule_name, rule))
+
+    artifact_count = 0
+    raw_bytes = 0
+    artifact_sizes: list[int] = []
+    for ordinal, mask in enumerate(masks):
+        source_index = mask.get("_source_index")
+        source_id = int(source_index) + 1 if type(source_index) is int else ordinal + 1
+        if clip_debug:
+            view = build_mask_views(
+                image_rgb,
+                mask["segmentation"],
+                source_id,
+                config.candidate_view_config("clip"),
+                stage="clip",
+            )
+            artifact_count += 1
+            size = int(view.context_rgb.nbytes)
+            raw_bytes += size
+            artifact_sizes.append(size)
+
+        if blip_debug_rules:
+            score = float(mask.get("clip_score", 0.0))
+            label = mask.get("clip_label")
+            debug_questions = 0
+            for threshold, rule_label, rule in blip_debug_rules:
+                applies = score <= threshold if threshold is not None else label == rule_label
+                if applies and rule.get("debug") is True:
+                    debug_questions += 1
+            if debug_questions:
+                view = build_mask_views(
+                    image_rgb,
+                    mask["segmentation"],
+                    source_id,
+                    config.candidate_view_config("blip3"),
+                    stage="blip3",
+                )
+                artifact_count += debug_questions
+                pair_size = _blip_pair_nbytes(view.context_rgb.shape[:2])
+                raw_bytes += debug_questions * pair_size
+                artifact_sizes.extend([pair_size] * debug_questions)
+    return artifact_count, raw_bytes, artifact_sizes
 
 
 def run_single_image(
@@ -243,6 +346,7 @@ def run_single_image(
         segmenter_state = staged_segmenter_state
 
     candidate_counts: dict[str, int] = {}
+    candidate_view_inputs: list[Mapping[str, Any]] = []
 
     # ``partial_masks`` is the raw automatic-generator result.  Keep that
     # count separate from the historical L3 candidate count, which counts only
@@ -335,7 +439,17 @@ def run_single_image(
         return filtered
 
     filtered_for_clip = timed("stage.postsam2_filter", _run_post_filter)
+    # This index is assigned once, immediately after the SAM2 area/bbox filter,
+    # and is never renumbered when a later stage rejects a candidate.
+    for filtered_index, mask in enumerate(filtered_for_clip):
+        mask["_filtered_index"] = filtered_index
     candidate_counts["after_area_bbox"] = len(filtered_for_clip)
+
+    if artifact_sink is not None and hasattr(artifact_sink, "ensure_capacity"):
+        debug_artifacts, debug_bytes, debug_sizes = _candidate_view_debug_capacity(
+            image_rgb, filtered_for_clip, config, stage="clip"
+        )
+        artifact_sink.ensure_capacity(debug_artifacts, debug_bytes, debug_sizes)
 
     # -- classification ------------------------------------------------------
     resolved_device = device if device is not None else _resolve_device(None)
@@ -347,6 +461,8 @@ def run_single_image(
             "masks": filtered_for_clip,
             "fname_stem": frame_id,
             "dryrun": dryrun,
+            "candidate_view_config": config.candidate_view_config("clip"),
+            "candidate_view_inputs": candidate_view_inputs,
         }
         if config.clip_cfg.get("debug", False):
             clip_params["artifact_sink"] = _require_sink("clip.debug")
@@ -372,6 +488,11 @@ def run_single_image(
     clip_only_masks = [dict(m) for m in masked_after_clip]
 
     if config.blip3_cfg:
+        if artifact_sink is not None and hasattr(artifact_sink, "ensure_capacity"):
+            debug_artifacts, debug_bytes, debug_sizes = _candidate_view_debug_capacity(
+                image_rgb, masked_after_clip, config, stage="blip3"
+            )
+            artifact_sink.ensure_capacity(debug_artifacts, debug_bytes, debug_sizes)
         log("[blip3] => verifying masks...", 1, verbosity)
         blip3_params = {
             "config": config.blip3_cfg,
@@ -380,6 +501,8 @@ def run_single_image(
             "fname_stem": frame_id,
             "dryrun": dryrun,
             "service_safe_artifact_names": service_safe_artifact_names,
+            "candidate_view_config": config.candidate_view_config("blip3"),
+            "candidate_view_inputs": candidate_view_inputs,
         }
         if any(
             isinstance(rule, Mapping) and rule.get("debug", False)
@@ -445,7 +568,8 @@ def run_single_image(
         metadata = {
             key: value
             for key, value in mask.items()
-            if key != "segmentation" and key != "_source_index"
+            if key not in {"segmentation", "_source_index", "_filtered_index"}
+            and not str(key).startswith("_")
         }
         object_warnings: List[str] = []
         label = metadata.get("clip_label")
@@ -464,6 +588,9 @@ def run_single_image(
                 warnings=tuple(object_warnings),
                 class_id=mapped if mapped is not None else 0,
                 class_id_source="mapping" if mapped is not None else "fallback",
+                filtered_index=(
+                    int(mask["_filtered_index"]) if "_filtered_index" in mask else None
+                ),
             )
         )
 
@@ -592,6 +719,7 @@ def run_single_image(
         provenance=provenance,
         post_filter_diagnostics=post_filter_diagnostics,
         sam2_metadata=sam2_metadata,
+        candidate_view_inputs=tuple(dict(record) for record in candidate_view_inputs),
     )
     return SingleImageOutcome(
         result=result,

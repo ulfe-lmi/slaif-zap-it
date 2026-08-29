@@ -677,6 +677,14 @@ def create_app(
             max_mask_rle_runs_total=settings_local.max_mask_rle_runs_total,
             max_response_bytes=settings_local.max_response_bytes,
             deadline_monotonic=deadline_monotonic,
+            candidate_views={
+                "clip": core_config.candidate_view_config("clip").as_dict(
+                    stage="clip", applied=bool(core_config.clip_cfg)
+                ),
+                "blip3": core_config.candidate_view_config("blip3").as_dict(
+                    stage="blip3", applied=bool(core_config.blip3_cfg)
+                ),
+            },
         )
 
         serialization_started = time.monotonic()

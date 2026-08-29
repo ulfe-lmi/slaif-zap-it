@@ -69,9 +69,15 @@ class _ClipFilter:
     ):
         self.verbosity = verbosity
         self.device = device
-        self.debug = bool(clip_config.get("debug", False))
-        self.padding = clip_config.get("padding", 20)
+        self.debug = clip_config.get("debug") is True
         self.log_print = log_print_func if log_print_func else (lambda *a, **k: None)
+        if "padding" in clip_config:
+            self.log_print(
+                "[_ClipFilter] clip.padding is deprecated and ignored; "
+                "candidate_views.clip controls mask-isolated context",
+                1,
+                verbosity,
+            )
 
         self.class_map: Dict[str, List[str]] = _class_map_from(clip_config)
         self._rebuild_prompt_index()
@@ -184,44 +190,84 @@ class _ClipFilter:
         return (best_label, best_score, best_prompt)
 
     def filter_masks(
-        self, masks, image_np, out_dir, fname_stem, artifact_sink=None, safe_artifact_names=False
+        self,
+        masks,
+        image_np,
+        out_dir,
+        fname_stem,
+        artifact_sink=None,
+        safe_artifact_names=False,
+        candidate_view_config=None,
+        candidate_view_inputs=None,
+        debug=None,
     ):
+        from src.core.mask_views import CandidateViewConfig, build_mask_views
+
         if self.text_embeds is None or self.text_embeds.numel() == 0 or not masks:
             return masks
 
-        H, W = image_np.shape[:2]
+        view_config = (
+            candidate_view_config
+            if isinstance(candidate_view_config, CandidateViewConfig)
+            else CandidateViewConfig.from_mapping(candidate_view_config, stage="clip")
+        )
+        debug_enabled = self.debug if debug is None else debug is True
         for i, m in enumerate(masks):
             seg = m["segmentation"]
-            rr, cc = np.where(seg)
-            if len(rr) == 0:
-                continue
-            y_min, y_max = rr.min(), rr.max()
-            x_min, x_max = cc.min(), cc.max()
-
-            pad = self.padding
-            x_min = max(0, x_min - pad)
-            x_max = min(W - 1, x_max + pad)
-            y_min = max(0, y_min - pad)
-            y_max = min(H - 1, y_max + pad)
-
-            patch = image_np[y_min : y_max + 1, x_min : x_max + 1, :]
+            source_index = m.get("_source_index")
+            source_candidate_id = (
+                int(source_index) + 1 if type(source_index) is int and source_index >= 0 else i + 1
+            )
+            view = build_mask_views(
+                image_np,
+                seg,
+                source_candidate_id,
+                view_config,
+                stage="clip",
+            )
+            patch = view.context_rgb
             best_lbl, best_sc, best_prompt = self.classify_single(patch, i)
             m["clip_label"] = best_lbl
             m["clip_score"] = best_sc
 
-            if self.debug and best_prompt is not None:
+            if debug_enabled and best_prompt is not None:
                 if safe_artifact_names:
-                    # Prompts are user-provided content.  They must never
-                    # become artifact names or log/path fragments in service.
-                    patch_file = f"{fname_stem}_clip-patch{i:04d}.jpg"
+                    patch_file = f"clip-candidate-view-CANDIDATE-{source_candidate_id:04d}.png"
                 else:
-                    safe_prompt = best_prompt.replace(" ", "_").replace(",", "_")
-                    patch_file = f"{fname_stem}_patch{i}_{safe_prompt}.jpg"
+                    legacy_stem = str(fname_stem).replace("\\", "/").rsplit("/", 1)[-1]
+                    patch_file = (
+                        f"{legacy_stem[:96] or 'image'}-clip-candidate-view-"
+                        f"CANDIDATE-{source_candidate_id:04d}.png"
+                    )
                 if artifact_sink is not None:
-                    artifact_sink.store_image(patch_file, patch)
+                    artifact_sink.store_image(patch_file, patch, fmt="png")
                 else:
                     patch_path = os.path.join(out_dir, patch_file)
-                    Image.fromarray(patch).save(patch_path, "JPEG")
+                    Image.fromarray(patch).save(patch_path, "PNG")
+                if candidate_view_inputs is not None:
+                    candidate_view_inputs.append(
+                        {
+                            "stage": "clip",
+                            "source_candidate_id": source_candidate_id,
+                            "filtered_index": int(m.get("_filtered_index", i)),
+                            "artifact_name": patch_file,
+                            "target_bbox_xyxy": list(view.target_bbox_xyxy),
+                            "context_bbox_xyxy": list(view.context_bbox_xyxy),
+                            "effective_radius": view.effective_radius,
+                            "source_dimensions": {
+                                "height": int(image_np.shape[0]),
+                                "width": int(image_np.shape[1]),
+                            },
+                            "crop_dimensions": {
+                                "height": int(view.context_rgb.shape[0]),
+                                "width": int(view.context_rgb.shape[1]),
+                            },
+                            "model_input_dimensions": {
+                                "height": int(patch.shape[0]),
+                                "width": int(patch.shape[1]),
+                            },
+                        }
+                    )
                 self.log_print(
                     f"[_ClipFilter debug] => wrote debug patch: {patch_file}", 2, self.verbosity
                 )
@@ -298,6 +344,13 @@ def run(
     fname_stem = params.get("fname_stem", "image")
     artifact_sink = params.get("artifact_sink")
     safe_artifact_names = bool(params.get("safe_artifact_names", False))
+    view_kwargs = {}
+    if isinstance(clip_filter, _ClipFilter):
+        view_kwargs = {
+            "candidate_view_config": params.get("candidate_view_config"),
+            "candidate_view_inputs": params.get("candidate_view_inputs"),
+            "debug": params.get("config", {}).get("debug", clip_filter.debug),
+        }
 
     if artifact_sink is not None:
         processed_masks = clip_filter.filter_masks(
@@ -307,6 +360,7 @@ def run(
             fname_stem,
             artifact_sink=artifact_sink,
             safe_artifact_names=safe_artifact_names,
+            **view_kwargs,
         )
     else:
         processed_masks = clip_filter.filter_masks(
@@ -315,6 +369,7 @@ def run(
             out_dir,
             fname_stem,
             safe_artifact_names=safe_artifact_names,
+            **view_kwargs,
         )
     meta = {
         "num_masks": len(processed_masks) if processed_masks is not None else 0,

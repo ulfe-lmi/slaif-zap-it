@@ -23,6 +23,16 @@ from .config import (
 )
 from .engine import StageFunctions, default_stage_functions, run_single_image
 from .errors import CoreError, IdentityMaskOverflowError, IdentityMaskProjectionError
+from .mask_views import (
+    CANDIDATE_VIEW_DEFAULTS,
+    CANDIDATE_VIEW_LIMITS,
+    CandidateViewConfig,
+    MaskViewResult,
+    build_candidate_views,
+    build_mask_views,
+    default_candidate_view_configs,
+    effective_candidate_view_configs,
+)
 from .ordering import mask_centroid_rc, order_final_objects, ordering_key
 from .renderers import (
     MAX_IDENTITY_OBJECTS,
@@ -83,9 +93,13 @@ __all__ = [
     "ConfigClassification",
     "CoreConfig",
     "CoreError",
+    "CANDIDATE_VIEW_DEFAULTS",
+    "CANDIDATE_VIEW_LIMITS",
+    "CandidateViewConfig",
     "FilesystemArtifactSink",
     "IdentityMaskOverflowError",
     "IdentityMaskProjectionError",
+    "MaskViewResult",
     "MAX_IDENTITY_OBJECTS",
     "MemoryArtifactSink",
     "ObjectResult",
@@ -98,6 +112,10 @@ __all__ = [
     "YOLO_DECIMALS",
     "classify_config_fields",
     "config_digest",
+    "build_candidate_views",
+    "build_mask_views",
+    "default_candidate_view_configs",
+    "effective_candidate_view_configs",
     "default_stage_functions",
     "format_yolo_line",
     "mask_centroid_rc",

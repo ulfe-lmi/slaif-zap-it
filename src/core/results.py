@@ -51,6 +51,12 @@ class ObjectResult:
     warnings: Tuple[str, ...] = ()
     class_id: Optional[int] = None
     class_id_source: Optional[str] = None
+    filtered_index: Optional[int] = None
+
+    @property
+    def source_candidate_id(self) -> int:
+        """Public one-based identity derived from the internal source index."""
+        return self.source_index + 1
 
     @property
     def label(self) -> Optional[str]:
@@ -115,6 +121,9 @@ class ObjectResult:
                 serialized[key] = float(value)
             else:
                 serialized[key] = value
+        serialized.setdefault("source_candidate_id", self.source_candidate_id)
+        if self.filtered_index is not None:
+            serialized.setdefault("filtered_index", self.filtered_index)
         return serialized
 
 
@@ -171,6 +180,7 @@ class PipelineResult:
     provenance: Provenance
     post_filter_diagnostics: Mapping[str, Any] = field(default_factory=dict)
     sam2_metadata: Mapping[str, Any] = field(default_factory=dict)
+    candidate_view_inputs: Tuple[Mapping[str, Any], ...] = ()
 
     def object_by_id(self, instance_id: int) -> ObjectResult:
         for obj in self.objects:

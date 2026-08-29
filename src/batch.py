@@ -8,7 +8,7 @@ import os
 import random
 import shutil
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
@@ -35,7 +35,9 @@ from modules.segmenter import initialize_sam2, run_sam2
 from modules.verifier import initialize_blip3, run_blip3
 from modules.visualizer import generate_visualizations
 from .core import (
+    CandidateViewConfig,
     CoreConfig,
+    default_candidate_view_configs,
     FilesystemArtifactSink,
     ObjectResult,
     PipelineResult,
@@ -98,6 +100,9 @@ class PipelineContext:
     post_maxsize: int
     max_w: int
     max_h: int
+    candidate_views: Mapping[str, CandidateViewConfig] = field(
+        default_factory=default_candidate_view_configs
+    )
 
     def to_core_config(self) -> CoreConfig:
         """Return the normalized core view of this context."""
@@ -115,6 +120,7 @@ class PipelineContext:
             post_maxsize=self.post_maxsize,
             max_w=self.max_w,
             max_h=self.max_h,
+            candidate_views=self.candidate_views,
         )
 
 
@@ -287,6 +293,7 @@ def pipeline_context_from_core_config(core_config: CoreConfig) -> PipelineContex
         post_maxsize=core_config.post_maxsize,
         max_w=core_config.max_w,
         max_h=core_config.max_h,
+        candidate_views=core_config.candidate_views,
     )
 
 

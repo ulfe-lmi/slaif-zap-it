@@ -7,6 +7,8 @@ from PIL import Image
 
 from modules.verifier import blip3 as blip_mod
 from src.core import BoundedMemoryArtifactSink
+from src.core.errors import CoreError
+from src.core.mask_views import build_mask_views
 
 
 def test_initialize_dryrun_alternates_labels():
@@ -70,13 +72,13 @@ def _square_ring(mask, radius=4):
 def test_composer_rejects_invalid_image_mask_and_empty_mask():
     image = np.zeros((8, 9, 3), dtype=np.uint8)
     mask = np.zeros((8, 9), dtype=bool)
-    with pytest.raises(TypeError):
+    with pytest.raises(CoreError):
         blip_mod.compose_verification_image(image.astype(np.int16), mask)
-    with pytest.raises(TypeError):
+    with pytest.raises(CoreError):
         blip_mod.compose_verification_image(image, mask.astype(np.uint8))
-    with pytest.raises(TypeError):
+    with pytest.raises(CoreError):
         blip_mod.compose_verification_image(image, np.zeros((8, 8), dtype=bool))
-    with pytest.raises(ValueError, match="at least one"):
+    with pytest.raises(CoreError, match="non-empty"):
         blip_mod.compose_verification_image(image, mask)
 
 
@@ -86,10 +88,11 @@ def test_composer_crop_metadata_handles_borders_and_spanning_mask():
     ordinary = np.zeros((300, 400), dtype=bool)
     ordinary[100:120, 150:180] = True
     composed = blip_mod.compose_verification_image(image, ordinary)
-    assert composed.crop_box_xyxy == (100, 45, 228, 173)
-    assert composed.crop_shape_hw == (128, 128)
-    assert composed.scaled_shape_hw == (256, 256)
-    assert composed.paired.shape == (256, 516, 3)
+    view = build_mask_views(image, ordinary, 1, stage="blip3")
+    assert composed.crop_box_xyxy == view.context_bbox_xyxy
+    assert composed.crop_shape_hw == view.context_rgb.shape[:2]
+    assert composed.scaled_shape_hw == (256, 354)
+    assert composed.paired.shape == (256, 712, 3)
 
     for rows, cols in (
         (slice(0, 10), slice(0, 10)),
@@ -103,8 +106,9 @@ def test_composer_crop_metadata_handles_borders_and_spanning_mask():
         x0, y0, x1, y1 = border_composed.crop_box_xyxy
         assert 0 <= x0 < x1 <= 400
         assert 0 <= y0 < y1 <= 300
-        assert x1 - x0 == 128
-        assert y1 - y0 == 128
+        expected = build_mask_views(image, border_mask, 1, stage="blip3")
+        assert (x0, y0, x1, y1) == expected.context_bbox_xyxy
+        assert border_composed.crop_shape_hw == expected.context_rgb.shape[:2]
 
     spanning = blip_mod.compose_verification_image(image, np.ones((300, 400), dtype=bool))
     assert spanning.crop_box_xyxy == (0, 0, 400, 300)
@@ -118,20 +122,20 @@ def test_composer_uses_one_exact_nearest_mapping_for_rgb_and_mask():
     mask = np.zeros((100, 100), dtype=bool)
     mask[40:60, 40:60] = True
     composed = blip_mod.compose_verification_image(image, mask)
-    crop = image[
-        composed.crop_box_xyxy[1] : composed.crop_box_xyxy[3],
-        composed.crop_box_xyxy[0] : composed.crop_box_xyxy[2],
-    ]
-    crop_mask = mask[
-        composed.crop_box_xyxy[1] : composed.crop_box_xyxy[3],
-        composed.crop_box_xyxy[0] : composed.crop_box_xyxy[2],
-    ]
-    rows = blip_mod._nearest_indices(crop.shape[0], composed.scaled_height)
-    cols = blip_mod._nearest_indices(crop.shape[1], composed.scaled_width)
-    expected = crop[np.ix_(rows, cols)]
-    expected_mask = crop_mask[np.ix_(rows, cols)]
+    view = build_mask_views(image, mask, 1, stage="blip3")
+    rows = blip_mod._nearest_indices(view.target_rgb.shape[0], composed.scaled_height)
+    cols = blip_mod._nearest_indices(view.target_rgb.shape[1], composed.scaled_width)
+    expected_mask = view.target_mask[np.ix_(rows, cols)]
+    expected = np.asarray(
+        Image.fromarray(view.target_rgb).resize(
+            (composed.scaled_width, composed.scaled_height), Image.Resampling.BILINEAR
+        )
+    ).copy()
+    expected[~expected_mask] = 0
     assert np.array_equal(composed.paired[:, : composed.scaled_width], expected)
     assert np.array_equal(composed.scaled_mask, expected_mask)
+    right = composed.paired[:, composed.scaled_width + composed.divider_width :]
+    assert np.array_equal(right[composed.scaled_mask], expected[composed.scaled_mask])
     assert composed.scaled_shape_hw[0] >= 1 and composed.scaled_shape_hw[1] >= 1
 
     large = np.zeros((1600, 1600), dtype=bool)
@@ -150,13 +154,14 @@ def test_spotlight_pixels_contour_and_dimming_are_exact_and_component_aware():
     composed = blip_mod.compose_verification_image(image, mask)
     left = composed.paired[:, : composed.scaled_width]
     right = composed.paired[:, composed.scaled_width + 4 :]
-    expected_contour = _square_ring(composed.scaled_mask)
+    expected_contour = _square_ring(composed.scaled_mask, radius=2)
     assert np.array_equal(composed.contour, expected_contour)
     assert not np.any(composed.contour & composed.scaled_mask)
     assert np.array_equal(right[composed.scaled_mask], left[composed.scaled_mask])
     assert np.all(right[composed.contour] == np.array((255, 224, 0), dtype=np.uint8))
-    exterior = ~composed.scaled_mask & ~composed.contour
-    assert np.array_equal(right[exterior], (left[exterior].astype(np.uint16) * 2 // 5))
+    assert np.all(right[~composed.support_mask] == 0)
+    assert np.all(composed.contour & ~composed.support_mask == 0)
+    assert np.all(composed.contour & composed.scaled_mask == 0)
     assert np.all(composed.paired[:, composed.scaled_width : composed.scaled_width + 4] == 0)
 
     # A bbox-only rectangle would outline the gap between these components.
@@ -228,7 +233,7 @@ def test_mask_aware_positive_and_same_crop_hard_negative():
 
     crop_box = blip_mod.compose_verification_image(scene, negative_mask).crop_box_xyxy
     ordinary_crop = scene[crop_box[1] : crop_box[3], crop_box[0] : crop_box[2]]
-    assert np.any(np.all(ordinary_crop == (220, 220, 220), axis=2))
+    assert not np.any(np.all(ordinary_crop == (220, 220, 220), axis=2))
     assert not np.any(
         np.all(
             np.asarray(qa.calls[0][0])[:, qa.calls[0][0].width // 2 + 2 :] == (220, 220, 220),
@@ -303,8 +308,8 @@ def test_service_debug_artifacts_are_fixed_png_names_and_exact_qa_arrays(tmp_pat
         service_safe_artifact_names=True,
     )
     assert sink.names() == (
-        "blip3-verification-0000-0000.png",
-        "blip3-verification-0001-0001.png",
+        "blip3-verification-CANDIDATE-0001-QUESTION-0001.png",
+        "blip3-verification-CANDIDATE-0002-QUESTION-0002.png",
     )
     for index, artifact in enumerate(sink.artifacts()):
         assert artifact.content_type == "image/png"
@@ -330,7 +335,7 @@ def test_service_debug_artifacts_are_fixed_png_names_and_exact_qa_arrays(tmp_pat
         "../frame",
         artifact_sink=cli_sink,
     )
-    assert cli_sink.names() == ("frame-blip3-verification-0000-0000.png",)
+    assert cli_sink.names() == ("frame-blip3-verification-CANDIDATE-0001-QUESTION-0001.png",)
     assert not any(
         fragment in cli_sink.names()[0] for fragment in ("hostile", "safe", "answer", "label")
     )

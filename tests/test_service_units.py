@@ -177,7 +177,7 @@ def test_json_and_zip_debug_artifacts_share_exact_png_bytes_and_descriptor():
     paired = np.zeros((32, 68, 3), dtype=np.uint8)
     paired[:, :, 1] = 7
     sink = BoundedMemoryArtifactSink()
-    sink.store_image("blip3-verification-0000-0000.png", paired, fmt="png")
+    sink.store_image("blip3-verification-CANDIDATE-0001-QUESTION-0001.png", paired, fmt="png")
     context = ResponseContext(
         request_id="req-debug",
         model_id="zap-it-1",
@@ -191,17 +191,17 @@ def test_json_and_zip_debug_artifacts_share_exact_png_bytes_and_descriptor():
     descriptor = next(
         item
         for item in document["service"]["artifacts"]
-        if item["name"] == "blip3-verification-0000-0000.png"
+        if item["name"] == "blip3-verification-CANDIDATE-0001-QUESTION-0001.png"
     )
     json_bytes = base64.b64decode(descriptor["data"])
     zip_bytes = build_completion_zip(outcome, context, sink=sink, max_bytes=10_000_000)
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
-        member_bytes = archive.read("blip3-verification-0000-0000.png")
+        member_bytes = archive.read("blip3-verification-CANDIDATE-0001-QUESTION-0001.png")
         manifest = json.loads(archive.read("manifest.json"))
     zip_descriptor = next(
         item
         for item in manifest["service"]["artifacts"]
-        if item["name"] == "blip3-verification-0000-0000.png"
+        if item["name"] == "blip3-verification-CANDIDATE-0001-QUESTION-0001.png"
     )
     assert json_bytes == member_bytes
     assert descriptor["size"] == zip_descriptor["size"] == len(json_bytes)
@@ -562,6 +562,21 @@ def test_debug_flags_stripped_below_verbosity_three():
     kept = parse_hostile_config(raw, verbosity=3)
     assert kept.effective_mapping["preprocessing"]["debug"] is True
     assert not [w for w in kept.warnings if "debug" in w]
+
+
+@pytest.mark.parametrize("value", ["'true'", "'false'", 0, 1, ".nan", ".inf"])
+def test_clip_debug_requires_strict_boolean(value):
+    raw = f"alpha: 0.5\nclip:\n  debug: {value}\n"
+    with pytest.raises(ServiceError) as excinfo:
+        parse_hostile_config(raw.encode(), verbosity=3)
+    assert excinfo.value.code == "invalid_config"
+
+
+def test_clip_debug_is_stripped_at_lower_verbosity_after_boolean_validation():
+    raw = b"alpha: 0.5\nclip:\n  debug: true\n"
+    result = parse_hostile_config(raw, verbosity=2)
+    assert result.effective_mapping["clip"]["debug"] is False
+    assert any("debug flag clip.debug" in warning for warning in result.warnings)
 
 
 def test_nested_blip3_debug_flags_are_aggregated_and_stripped_below_l3():

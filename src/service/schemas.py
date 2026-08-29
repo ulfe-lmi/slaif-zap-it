@@ -8,6 +8,7 @@ dynamic level-gated fields stays honest without duplicating the logic.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
@@ -18,6 +19,10 @@ from .settings import SERVICE_MODEL_ID
 
 __all__ = [
     "ArtifactDescriptor",
+    "CandidateViewClipConfig",
+    "CandidateViewBlip3Config",
+    "CandidateViewsMetadata",
+    "CandidateViewInputRecord",
     "ObjectRecord",
     "PostFilterReason",
     "PostFilterLimits",
@@ -44,8 +49,82 @@ class ArtifactDescriptor(BaseModel):
     data: str = Field(description="Base64-encoded payload")
 
 
+class CandidateViewClipConfig(BaseModel):
+    """Effective request-local CLIP view policy."""
+
+    mode: Literal["mask_dilated"]
+    context_fraction: float = Field(ge=0.0, le=0.5)
+    min_context_pixels: int = Field(ge=0, le=256)
+    max_context_pixels: int = Field(ge=0, le=512)
+    outside_fill: Literal["zero"]
+    context_intensity: float = Field(ge=0.0, le=1.0)
+    applied: bool
+
+
+class CandidateViewBlip3Config(CandidateViewClipConfig):
+    """Effective request-local BLIP3 view policy."""
+
+    contour_width: int = Field(ge=0, le=16)
+
+
+class CandidateViewsMetadata(BaseModel):
+    """Effective candidate-view values and stage application status."""
+
+    clip: CandidateViewClipConfig
+    blip3: CandidateViewBlip3Config
+
+
+class CandidateViewInputRecord(BaseModel):
+    """Bounded provenance for one emitted exact model-input debug artifact."""
+
+    stage: Literal["clip", "blip3"]
+    source_candidate_id: int = Field(ge=1)
+    filtered_index: int = Field(ge=0)
+    question_id: Optional[int] = Field(default=None, ge=1)
+    artifact_name: str
+    target_bbox_xyxy: List[int]
+    context_bbox_xyxy: List[int]
+    effective_radius: int = Field(ge=0, le=512)
+    source_dimensions: Dict[str, int]
+    crop_dimensions: Dict[str, int]
+    model_input_dimensions: Dict[str, int]
+
+    @model_validator(mode="after")
+    def validate_artifact_identity(self) -> "CandidateViewInputRecord":
+        """Require a fixed tokenized name matching this input record."""
+        if self.stage == "clip":
+            pattern = re.compile(
+                r"^(?:[A-Za-z0-9][A-Za-z0-9_.-]*-)?"
+                r"clip-candidate-view-CANDIDATE-(\d{4,})\.png$"
+            )
+            if self.question_id is not None:
+                raise ValueError("CLIP candidate-view records cannot have question_id")
+            expected_prefix = "clip-candidate-view-CANDIDATE-"
+        else:
+            pattern = re.compile(
+                r"^(?:[A-Za-z0-9][A-Za-z0-9_.-]*-)?"
+                r"blip3-verification-CANDIDATE-(\d{4,})-QUESTION-(\d{4,})\.png$"
+            )
+            if self.question_id is None:
+                raise ValueError("BLIP3 candidate-view records require question_id")
+            expected_prefix = "blip3-verification-CANDIDATE-"
+
+        match = pattern.fullmatch(self.artifact_name)
+        if match is None:
+            raise ValueError(f"{self.stage} candidate-view artifact_name must be a fixed PNG name")
+        if int(match.group(1)) != self.source_candidate_id:
+            raise ValueError("candidate-view artifact name has the wrong source candidate ID")
+        if self.stage == "blip3" and int(match.group(2)) != self.question_id:
+            raise ValueError("candidate-view artifact name has the wrong question ID")
+        if expected_prefix not in self.artifact_name:
+            raise ValueError("candidate-view artifact name is missing its stage token")
+        return self
+
+
 class ObjectRecord(BaseModel):
     instance_id: int = Field(ge=1)
+    source_candidate_id: int = Field(ge=1)
+    filtered_index: int = Field(ge=0)
     class_id: int = Field(ge=0)
     label: Optional[str] = None
     bbox_xyxy: List[int]
@@ -153,6 +232,7 @@ class ServiceMetadata(BaseModel):
     class_mapping: Dict[str, int]
     config_digest: str
     sam2: Sam2Metadata
+    candidate_views: CandidateViewsMetadata
     artifacts: Optional[List[ArtifactDescriptor]] = None
     objects: Optional[List[ObjectRecord]] = None
     stage_statuses: Optional[List[Dict[str, Any]]] = None
@@ -161,6 +241,7 @@ class ServiceMetadata(BaseModel):
     timings_ms: Optional[Dict[str, float]] = None
     provenance: Optional[Dict[str, Any]] = None
     warnings: Optional[List[str]] = None
+    candidate_view_inputs: Optional[List[CandidateViewInputRecord]] = None
 
 
 class Choice(BaseModel):

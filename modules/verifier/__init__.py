@@ -3,6 +3,7 @@
 from .blip3 import (
     BLIP3_FIXED_INSTRUCTION,
     Blip3VerificationComposition,
+    compose_candidate_view_pair,
     compose_blip3_verification_image,
     compose_verification_image,
     compose_verification_query,
@@ -14,6 +15,7 @@ from .blip3 import (
 __all__ = [
     "BLIP3_FIXED_INSTRUCTION",
     "Blip3VerificationComposition",
+    "compose_candidate_view_pair",
     "compose_blip3_verification_image",
     "compose_verification_image",
     "compose_verification_query",

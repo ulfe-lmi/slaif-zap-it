@@ -37,6 +37,7 @@ from src.core.config import (
     ALGORITHMIC_TOP_LEVEL_FIELDS,
     classify_config_fields,
 )
+from src.core.mask_views import CANDIDATE_VIEW_DEFAULTS
 
 from .errors import ServiceError
 from .settings import ServiceSettings
@@ -165,6 +166,18 @@ _DEBUG_FLAG_PATHS = (
     ("clip", "debug"),
 )
 _BLIP3_DEBUG_WARNING = "BLIP3 debug flags ignored at verbosity below 3"
+
+_CANDIDATE_VIEW_STAGES = frozenset({"clip", "blip3"})
+_CANDIDATE_VIEW_COMMON_FIELDS = frozenset(
+    {
+        "mode",
+        "context_fraction",
+        "min_context_pixels",
+        "max_context_pixels",
+        "outside_fill",
+        "context_intensity",
+    }
+)
 
 _VISUALIZATION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _VISUALIZATION_STAGES = frozenset({"sam2", "clip", "blip3"})
@@ -590,6 +603,101 @@ def _validate_blip3_policy(value: Any) -> None:
             raise ServiceError("BLIP3 debug must be a boolean", code="invalid_config")
 
 
+def _validate_clip_policy(value: Any) -> None:
+    """Validate the request-controlled CLIP debug switch without coercion."""
+    if value in (None, {}):
+        return
+    if not isinstance(value, Mapping):
+        raise ServiceError("clip must be a mapping", code="invalid_config")
+    if "debug" in value and type(value["debug"]) is not bool:
+        raise ServiceError("CLIP debug must be a boolean", code="invalid_config")
+
+
+def _candidate_view_invalid(path: str, detail: str) -> ServiceError:
+    return ServiceError(f"{path} must be {detail}", code="invalid_config")
+
+
+def _validate_candidate_view_stage(value: Any, stage: str) -> Dict[str, Any]:
+    path = f"candidate_views.{stage}"
+    if value is None or not isinstance(value, Mapping):
+        raise ServiceError(f"{path} must be a mapping", code="invalid_config")
+    allowed = set(_CANDIDATE_VIEW_COMMON_FIELDS)
+    if stage == "blip3":
+        allowed.add("contour_width")
+    unknown = sorted(set(value).difference(allowed), key=str)
+    if unknown:
+        raise ServiceError(
+            f"unsupported {path} field(s): " + ", ".join(map(str, unknown)),
+            code="unsupported_field",
+        )
+    defaults = CANDIDATE_VIEW_DEFAULTS[stage]
+    mode = value.get("mode", defaults["mode"])
+    if type(mode) is not str or mode != "mask_dilated":
+        raise ServiceError(f"{path}.mode supports only 'mask_dilated'", code="unsupported_field")
+    outside_fill = value.get("outside_fill", defaults["outside_fill"])
+    if type(outside_fill) is not str or outside_fill != "zero":
+        raise ServiceError(f"{path}.outside_fill supports only 'zero'", code="unsupported_field")
+
+    fraction = value.get("context_fraction", defaults["context_fraction"])
+    if type(fraction) not in (int, float) or not math.isfinite(float(fraction)):
+        raise _candidate_view_invalid(f"{path}.context_fraction", "a finite number")
+    if not 0.0 <= float(fraction) <= 0.5:
+        raise _candidate_view_invalid(f"{path}.context_fraction", "a number from 0 to 0.5")
+
+    minimum = value.get("min_context_pixels", defaults["min_context_pixels"])
+    maximum = value.get("max_context_pixels", defaults["max_context_pixels"])
+    for field_name, candidate, upper in (
+        ("min_context_pixels", minimum, 256),
+        ("max_context_pixels", maximum, 512),
+    ):
+        if type(candidate) is not int:
+            raise _candidate_view_invalid(f"{path}.{field_name}", "an integer")
+        if not 0 <= candidate <= upper:
+            raise _candidate_view_invalid(f"{path}.{field_name}", f"an integer from 0 to {upper}")
+    if minimum > maximum:
+        raise _candidate_view_invalid(f"{path}.min_context_pixels", "not exceed max_context_pixels")
+
+    intensity = value.get("context_intensity", defaults["context_intensity"])
+    if type(intensity) not in (int, float) or not math.isfinite(float(intensity)):
+        raise _candidate_view_invalid(f"{path}.context_intensity", "a finite number")
+    if not 0.0 <= float(intensity) <= 1.0:
+        raise _candidate_view_invalid(f"{path}.context_intensity", "a number from 0 to 1")
+    contour = value.get("contour_width", defaults.get("contour_width", 0))
+    if type(contour) is not int:
+        raise _candidate_view_invalid(f"{path}.contour_width", "an integer")
+    if not 0 <= contour <= 16:
+        raise _candidate_view_invalid(f"{path}.contour_width", "an integer from 0 to 16")
+
+    result = {
+        "mode": mode,
+        "context_fraction": float(fraction),
+        "min_context_pixels": minimum,
+        "max_context_pixels": maximum,
+        "outside_fill": outside_fill,
+        "context_intensity": float(intensity),
+    }
+    if stage == "blip3":
+        result["contour_width"] = contour
+    return result
+
+
+def _validate_candidate_views(value: Any) -> Dict[str, Dict[str, Any]]:
+    if value is None or not isinstance(value, Mapping):
+        raise ServiceError("candidate_views must be a mapping", code="invalid_config")
+    unknown = sorted(set(value).difference(_CANDIDATE_VIEW_STAGES), key=str)
+    if unknown:
+        raise ServiceError(
+            "unsupported candidate_views stage(s): " + ", ".join(map(str, unknown)),
+            code="unsupported_field",
+        )
+    return {
+        stage: _validate_candidate_view_stage(value.get(stage), stage)
+        if stage in value
+        else _validate_candidate_view_stage({}, stage)
+        for stage in ("clip", "blip3")
+    }
+
+
 @dataclass(frozen=True)
 class ValidatedConfig:
     """Sanitized effective configuration plus honest provenance warnings."""
@@ -629,6 +737,16 @@ def parse_hostile_config(
         key: value for key, value in loaded.items() if key in ALGORITHMIC_TOP_LEVEL_FIELDS
     }
     _scan_hostile(effective, "")
+
+    clip_config = effective.get("clip")
+    _validate_clip_policy(clip_config)
+    if isinstance(clip_config, Mapping) and "padding" in clip_config:
+        raise ServiceError(
+            "clip.padding is unsupported; use candidate_views.clip instead",
+            code="unsupported_field",
+        )
+
+    effective["candidate_views"] = _validate_candidate_views(effective.get("candidate_views", {}))
 
     sam2_config, sam2_metadata = _validate_sam2_policy(
         effective.get("mask_generator", {}), settings=settings

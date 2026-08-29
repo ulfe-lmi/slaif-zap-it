@@ -182,18 +182,20 @@ Sinks accept logical names only (relative, no traversal, no absolute paths):
 When any debug flag (`preprocessing.debug`, `mask_generator.debug`,
 `postsam2processing.debug`, CLIP debug, BLIP3 rule debug) is configured, a
 sink MUST be supplied; otherwise the engine raises `CoreError` instead of
-silently skipping or writing to arbitrary locations. BLIP3 debug stores only
-the exact paired RGB image passed to QA as a lossless PNG. Service names are
-`blip3-verification-{candidate_index:04d}-{question_index:04d}.png`; trusted
-CLI names prefix the same numeric ordinals with a sanitized frame stem and
-never include prompts, labels, rule names or answers. No BLIP3 answer-text
-artifact is generated.
+silently skipping or writing to arbitrary locations. CLIP and BLIP3 debug store
+only the exact RGB arrays passed to their processors as lossless PNGs. Service
+names are `clip-candidate-view-CANDIDATE-####.png` and
+`blip3-verification-CANDIDATE-####-QUESTION-####.png`; trusted CLI names prefix
+these tokenized names with a sanitized frame stem and never include prompts,
+labels, rule names or answers. No answer-text artifact is generated.
 
 The BLIP3 paired image is built once per candidate and reused for all questions:
-the left half is untouched context, the right half preserves selected mask
-pixels, dims other exterior pixels to 40% using floor integer arithmetic, and
-marks the exterior square-radius-four mask dilation ring yellow. The service
-validator strips nested BLIP3 debug flags below L3 with one aggregate warning.
+the left half is target-only, the right half preserves selected mask pixels,
+includes only bounded Euclidean-dilated context with floor integer arithmetic,
+restores right-side target pixels after bilinear resizing, and marks the
+configured exterior contour. The service validator strips nested
+BLIP3 debug flags below L3 with one aggregate warning. L3 input records retain
+source candidate ID, filtered index, bboxes, radius and dimensions.
 
 ## Compatibility notes
 
