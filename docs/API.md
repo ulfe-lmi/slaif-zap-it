@@ -194,6 +194,42 @@ generation, is rounded to three decimals, and is observability data rather
 than a deterministic-content field. No debug flag, unknown field, raw YAML or
 operator control is echoed.
 
+When verbosity is 3 and `mask_generator.debug: true`, `service.sam2` also has a
+typed `raw_visualization` child. Its `candidate_id_base` is 1 and its raw
+candidate count is the generator count before empty-mask removal; the
+visualizable count plus omitted-empty count reconciles to that raw count.
+`represented_candidate_ids` are the first 96 non-empty source-order IDs, so
+empty proposals can create gaps and truncation is explicit. The child reports
+exact original-resolution covered/uncovered counts, maximum overlap, histogram
+keys 0..255 plus overflow pixels, contact-sheet count and source/diagnostic
+dimensions. Union, overlap and uncovered artifacts are computed from all
+non-empty candidates, not only those shown in the sheets.
+
+Raw candidate sheets use fixed names `sam2-candidates-page-0001.png` through
+`sam2-candidates-page-0008.png`; the other fixed names are
+`sam2-union-coverage.png`, `sam2-overlap-heatmap.png`, and
+`sam2-uncovered-pixels.png`. Pages have three columns, four rows, 320x240
+content and a 28-pixel label bar. Candidate labels are
+`C0001  IoU 0.843  stability 0.912`-style text with three decimals or `n/a`;
+no user-controlled text is rendered. Crops use at least four pixels of clamped
+`ceil(10%)` context padding, RGB bilinear/mask nearest-neighbor letterboxing
+and 45% mask alpha; small padded crops are enlarged to fill the tile while the
+three full-image diagnostics never upscale. Union is black/white
+uncovered/covered, overlap is a fixed
+blue-to-red ramp scaled by its observed maximum, and uncovered is the exact
+inverse at source resolution before nearest-neighbor downscale to at most
+2,000,000 pixels. Equal inputs are deterministic within a pinned environment;
+arbitrary Pillow-version PNG byte identity is outside the claim.
+
+Before readiness or gate admission, a debug request reserves the fixed maximum
+of 11 diagnostic artifacts and the exact RGB formula
+`8 * 960 * 1072 * 3 + 3 * diagnostic_width * diagnostic_height * 3` (the
+2,000,000-pixel case is 42,698,880 bytes), in addition to configured streams.
+Existing per-artifact, total raw-artifact, encoded JSON, ZIP and response-size
+limits remain authoritative. Lower levels do not render or reserve these
+diagnostics, and trusted CLI debug retains its historical rectangular JPEG
+patch names and format.
+
 ### Capabilities
 
 `GET /v1/capabilities` uses the ordinary inference bearer and is available

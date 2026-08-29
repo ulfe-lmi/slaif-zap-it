@@ -6,6 +6,13 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
+from src.core import (
+    RAW_CONTACT_SHEET_HEIGHT,
+    RAW_CONTACT_SHEET_WIDTH,
+    RAW_MAXIMUM_CONTACT_SHEETS,
+    diagnostic_dimensions,
+    raw_sam2_debug_rgb_bytes,
+)
 from src.core.config import CoreConfig
 
 from .errors import ServiceError
@@ -15,6 +22,8 @@ __all__ = [
     "host_available_bytes",
     "shm_free_bytes",
     "visualization_raw_bytes",
+    "raw_sam2_debug_artifact_count",
+    "raw_sam2_debug_bytes",
     "check_visualization_raw_budget",
     "check_request_resources",
 ]
@@ -59,6 +68,18 @@ def visualization_raw_bytes(config: CoreConfig, *, height: int, width: int) -> i
     return stream_count * max(int(height), 0) * max(int(width), 0) * 3
 
 
+def raw_sam2_debug_artifact_count() -> int:
+    """Return the fixed maximum artifact count for one SAM2 debug request."""
+
+    return RAW_MAXIMUM_CONTACT_SHEETS + 3
+
+
+def raw_sam2_debug_bytes(*, height: int, width: int) -> int:
+    """Return the renderer's exact worst-case RGB reservation."""
+
+    return raw_sam2_debug_rgb_bytes(int(width), int(height))
+
+
 def check_visualization_raw_budget(
     config: CoreConfig,
     settings: ServiceSettings,
@@ -68,22 +89,69 @@ def check_visualization_raw_budget(
 ) -> int:
     """Reject L3 rendering that cannot fit before the engine allocates arrays."""
     stream_count = _visualization_stream_count(config.vis_cfg)
-    if stream_count == 0:
-        return 0
-
-    reserved = stream_count * max(int(height), 0) * max(int(width), 0) * 3
+    reserved_streams = stream_count * max(int(height), 0) * max(int(width), 0) * 3
     per_stream = max(int(height), 0) * max(int(width), 0) * 3
-    if per_stream > settings.max_single_artifact_bytes:
+    if stream_count and per_stream > settings.max_single_artifact_bytes:
         raise ServiceError(
             "annotated visualization exceeds the configured raw artifact limit",
             code="response_too_large",
         )
-    if reserved > settings.max_total_raw_artifact_bytes:
+    if reserved_streams > settings.max_total_raw_artifact_bytes:
         raise ServiceError(
             "annotated visualizations exceed the configured raw artifact budget",
             code="response_too_large",
         )
-    return reserved
+
+    if config.sam2_cfg.get("debug", False):
+        sheet_bytes = RAW_CONTACT_SHEET_WIDTH * RAW_CONTACT_SHEET_HEIGHT * 3
+        diagnostic_width, diagnostic_height = diagnostic_dimensions(int(width), int(height))
+        diagnostic_bytes = diagnostic_width * diagnostic_height * 3
+        maximum_single = max(sheet_bytes, diagnostic_bytes)
+        if maximum_single > settings.max_single_artifact_bytes:
+            raise ServiceError(
+                "raw SAM2 debug artifact exceeds the configured per-artifact limit",
+                code="response_too_large",
+            )
+        debug_bytes = raw_sam2_debug_bytes(height=height, width=width)
+        reserved = reserved_streams + debug_bytes
+        if reserved > settings.max_total_raw_artifact_bytes:
+            raise ServiceError(
+                "raw SAM2 debug artifacts exceed the configured total byte limit",
+                code="response_too_large",
+            )
+        debug_artifacts = raw_sam2_debug_artifact_count()
+        if settings.max_debug_artifacts < debug_artifacts:
+            raise ServiceError(
+                "raw SAM2 debug artifacts exceed the configured artifact count",
+                code="response_too_large",
+            )
+        response_artifacts = 1 + stream_count + debug_artifacts
+        if response_artifacts > settings.max_response_artifacts:
+            raise ServiceError(
+                "raw SAM2 debug response exceeds the configured artifact count",
+                code="response_too_large",
+            )
+        # The response admission includes the uint16 identity source canvas,
+        # all configured RGB streams and the fixed raw-debug arrays.  The
+        # small fixed margin covers PNG/container and typed-envelope framing;
+        # final encoded-size checks remain authoritative after rendering.
+        identity_bytes = max(int(height), 0) * max(int(width), 0) * 2
+        response_source_bytes = identity_bytes + reserved
+        response_upper_bound = 4 * ((response_source_bytes + 2) // 3)
+        response_upper_bound += 64 * 1024 + response_artifacts * 1024
+        if response_upper_bound > settings.max_response_bytes:
+            raise ServiceError(
+                "raw SAM2 debug response exceeds the configured response limit",
+                code="response_too_large",
+            )
+        # Configured visualization arrays are produced outside the artifact
+        # sink, so only their reservation is deducted from the sink budget.
+        # The debug reservation is an admission ceiling for arrays that the
+        # sink will actually receive; deducting it here would reject the
+        # exact accepted boundary twice.
+        return reserved_streams
+
+    return reserved_streams
 
 
 def check_request_resources(settings: ServiceSettings) -> None:

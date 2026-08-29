@@ -146,7 +146,7 @@ def _object_record(
     return record
 
 
-def _sam2_manifest(result: Any) -> Dict[str, Any]:
+def _sam2_manifest(result: Any, *, include_raw_visualization: bool = False) -> Dict[str, Any]:
     """Return the complete typed SAM2 manifest, including legacy outcomes."""
     defaults = dict(SAM2_DEFAULTS)
     metadata = dict(getattr(result, "sam2_metadata", {}) or {})
@@ -170,7 +170,7 @@ def _sam2_manifest(result: Any) -> Dict[str, Any]:
             prompts * (3 if effective["multimask_output"] else 1),
         )
     )
-    return {
+    manifest = {
         "requested": dict(metadata.get("requested", {})),
         "effective": effective,
         "sources": sources,
@@ -187,6 +187,9 @@ def _sam2_manifest(result: Any) -> Dict[str, Any]:
         ),
         "resource_warnings": list(metadata.get("resource_warnings", [])),
     }
+    if include_raw_visualization and metadata.get("raw_visualization") is not None:
+        manifest["raw_visualization"] = dict(metadata["raw_visualization"])
+    return manifest
 
 
 def _stored_sink_artifact(stored: StoredArtifact) -> _RawArtifact:
@@ -335,7 +338,7 @@ def _prepare(
         "class_mapping": dict(context.class_mapping),
         "config_digest": context.config_digest,
         "package_version": __version__,
-        "sam2": _sam2_manifest(result),
+        "sam2": _sam2_manifest(result, include_raw_visualization=context.verbosity >= 3),
     }
     if context.verbosity >= 1:
         service_meta["artifacts"] = [

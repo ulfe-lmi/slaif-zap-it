@@ -26,6 +26,7 @@ module or helper is not evidence that the live service produces its output.
 | SAM quality, CLIP score, BLIP answer, geometry fields | Included only when an executed stage produced the field | Public L2 fields; geometry is currently absent |
 | YOLO text | Five-field normalized final-object lines | Public L0-L3 completion text and ZIP entry |
 | Identity PNG | Deterministic uint16 projection, 0 background, IDs 1..N, larger-area overlap winner with deterministic representatives | Public L1-L3 artifact |
+| Raw SAM2 candidate diagnostics | Source-order one-based IDs, separate paginated mask tiles, all-candidate union/overlap/uncovered accounting and bounded typed facts | Public L3 only when `mask_generator.debug: true`; fixed PNG names; never a quality benchmark |
 | Per-object source masks | Exact boolean masks retained in request result | Public L3 uncompressed column-major RLE; overlap is preserved |
 | JSON envelope and artifact descriptors | Level-gated, base64 binary artifacts with hashes and sizes | Public L0-L3 |
 | ZIP manifest and raw artifacts | Data-free manifest plus the same raw artifacts and YOLO text | Public L0-L3 `zip` response |
@@ -70,6 +71,31 @@ writer behavior.
 RLE, artifact preparation, base64 expansion and ZIP entry assembly share the
 absolute request deadline. RLE transition detection is vectorized in fixed-size
 column-major chunks and never retains a second full-size flattened mask.
+
+## Raw SAM2 diagnostic policy
+
+The combined ordinary overlay is insufficient for overlapping raw proposals: it
+can show only the last composited color and cannot identify the source mask or
+distinguish uncovered pixels from overwritten pixels. L3 plus
+`mask_generator.debug: true` therefore emits independent contact-sheet tiles
+with `C<source_id>` labels and three fixed diagnostics. Pages are 3x4 with
+320x240 content and a 28-pixel label bar, capped at eight pages/96 candidates.
+The crop uses clamped `ceil(10%)` context with a four-pixel minimum, RGB
+bilinear and mask nearest-neighbor resizing, and 0.45 exact-mask alpha.
+Padded candidate crops may be enlarged into their 320x240 tiles for
+readability; the three full-image diagnostics never upscale.
+
+`sam2-union-coverage.png` is black/white uncovered/covered,
+`sam2-overlap-heatmap.png` is black at zero with a fixed observed-maximum
+scaled ramp, and `sam2-uncovered-pixels.png` is the exact inverse of union at
+source resolution before nearest-neighbor downscale to at most 2,000,000
+pixels. Exact source counts and a bounded 0..255 histogram plus overflow are in
+the optional `service.sam2.raw_visualization` child. The fixed names are
+`sam2-candidates-page-0001.png`..`-0008.png` and the three diagnostic names;
+truncation is explicit. API preflight reserves the exact 11-artifact RGB
+formula before readiness/gate/engine work; encoded response checks remain
+authoritative. Legacy CLI rectangular JPEG patches and all lower levels remain
+unchanged.
 
 ## Geometry status
 

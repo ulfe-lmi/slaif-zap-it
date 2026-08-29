@@ -7,6 +7,21 @@ from typing import Any, Dict, List, Literal
 from pydantic import BaseModel, Field
 
 from modules.segmenter.sam2 import SAM2_DEFAULTS, SAM2_PROFILES
+from src.core.raw_visualizations import (
+    RAW_CANDIDATE_ID_BASE,
+    RAW_CANDIDATES_PER_SHEET,
+    RAW_CONTACT_SHEET_COLUMNS,
+    RAW_CONTACT_SHEET_ROWS,
+    RAW_CONTEXT_PADDING_FRACTION,
+    RAW_MASK_ALPHA,
+    RAW_MAXIMUM_CONTACT_SHEETS,
+    RAW_MAXIMUM_REPRESENTED_CANDIDATES,
+    RAW_MAX_DIAGNOSTIC_PIXELS,
+    RAW_MIN_CONTEXT_PADDING_PIXELS,
+    RAW_TILE_CONTENT_HEIGHT,
+    RAW_TILE_CONTENT_WIDTH,
+    RAW_TILE_LABEL_HEIGHT,
+)
 from src.runtime.models import APPROVED_MODEL_SPECS
 
 from .envelope import SCHEMA_VERSION
@@ -16,6 +31,7 @@ __all__ = [
     "CapabilityField",
     "FixedControls",
     "CapabilitiesResponse",
+    "RawSam2DebugPolicy",
     "build_capabilities",
 ]
 
@@ -46,6 +62,31 @@ class FixedControls(BaseModel):
     arbitrary_kwargs: bool = False
 
 
+class RawSam2DebugPolicy(BaseModel):
+    """Static policy for the bounded L3 raw-candidate diagnostic."""
+
+    trigger: str
+    fixed_artifact_names: List[str]
+    candidate_id_base: int
+    columns: int
+    rows: int
+    candidates_per_sheet: int
+    tile_content_width: int
+    tile_content_height: int
+    tile_label_height: int
+    mask_alpha: float
+    context_padding_fraction: float
+    minimum_context_padding_pixels: int
+    maximum_contact_sheets: int
+    maximum_represented_candidates: int
+    maximum_diagnostic_pixels: int
+    candidate_order: str
+    score_format: str
+    palette: str
+    diagnostics: Dict[str, str]
+    truncation: str
+
+
 class CapabilitiesResponse(BaseModel):
     """Explicit OpenAPI model for the read-only capabilities endpoint."""
 
@@ -59,6 +100,7 @@ class CapabilitiesResponse(BaseModel):
     source_precedence: List[str]
     estimation_formulas: Dict[str, str]
     fixed_controls: FixedControls
+    raw_sam2_debug: RawSam2DebugPolicy
 
 
 def _field_descriptions() -> Dict[str, CapabilityField]:
@@ -130,6 +172,42 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
             point_grids=None,
             output_mode="binary_mask",
             arbitrary_kwargs=False,
+        ),
+        raw_sam2_debug=RawSam2DebugPolicy(
+            trigger="verbosity == 3 and mask_generator.debug == true",
+            fixed_artifact_names=[
+                *[
+                    f"sam2-candidates-page-{page:04d}.png"
+                    for page in range(1, RAW_MAXIMUM_CONTACT_SHEETS + 1)
+                ],
+                "sam2-union-coverage.png",
+                "sam2-overlap-heatmap.png",
+                "sam2-uncovered-pixels.png",
+            ],
+            candidate_id_base=RAW_CANDIDATE_ID_BASE,
+            columns=RAW_CONTACT_SHEET_COLUMNS,
+            rows=RAW_CONTACT_SHEET_ROWS,
+            candidates_per_sheet=RAW_CANDIDATES_PER_SHEET,
+            tile_content_width=RAW_TILE_CONTENT_WIDTH,
+            tile_content_height=RAW_TILE_CONTENT_HEIGHT,
+            tile_label_height=RAW_TILE_LABEL_HEIGHT,
+            mask_alpha=RAW_MASK_ALPHA,
+            context_padding_fraction=RAW_CONTEXT_PADDING_FRACTION,
+            minimum_context_padding_pixels=RAW_MIN_CONTEXT_PADDING_PIXELS,
+            maximum_contact_sheets=RAW_MAXIMUM_CONTACT_SHEETS,
+            maximum_represented_candidates=RAW_MAXIMUM_REPRESENTED_CANDIDATES,
+            maximum_diagnostic_pixels=RAW_MAX_DIAGNOSTIC_PIXELS,
+            candidate_order="ascending _source_index; candidate_id = _source_index + 1",
+            score_format="IoU and stability: three decimals when finite, otherwise n/a",
+            palette="fixed RGB arithmetic palette keyed only by candidate_id",
+            diagnostics={
+                "union": "black uncovered, white covered",
+                "overlap": "black zero; blue-to-red fixed ramp scaled by observed maximum",
+                "uncovered": "white uncovered, black covered; inverse of union at source resolution",
+                "candidate_tiles": "padded crops may be enlarged for readability; aspect-preserving letterbox",
+                "downscale": "diagnostics: nearest-neighbor only; never upscale; at most 2,000,000 pixels",
+            },
+            truncation="first 96 non-empty source-order candidates; one aggregate warning; no ninth sheet",
         ),
     )
     if hasattr(response, "model_dump"):

@@ -82,6 +82,30 @@ logical `cuda:0`, dtype, residency, `point_grids: null`,
 cannot be selected by uploaded YAML. The trusted batch path retains its
 legacy model initialization and configured generator behavior.
 
+At service verbosity 3, `mask_generator.debug: true` selects the bounded raw
+candidate diagnostic. It is the only trigger; page layout, palette, crop,
+label, destination and artifact names are fixed. Sheets are three by four
+320x240 content tiles with a 28-pixel label bar, at most eight sheets and 96
+represented candidates. IDs are one-based source-order IDs (`_source_index +
+1`) and may have gaps for empty proposals. Each tile uses clamped
+`ceil(10%)` context padding with a four-pixel minimum, RGB bilinear/mask
+nearest-neighbor letterboxing and 45% exact-mask alpha. Labels show finite IoU
+and stability to three decimals, otherwise `n/a`.
+
+The fixed service names are `sam2-candidates-page-0001.png` through
+`sam2-candidates-page-0008.png`, `sam2-union-coverage.png`,
+`sam2-overlap-heatmap.png`, and `sam2-uncovered-pixels.png`. Union is black
+uncovered/white covered; overlap is black at zero with a fixed ramp scaled by
+the observed maximum; uncovered is the source-resolution binary inverse of
+union. Candidate crops may be enlarged for contact-sheet readability;
+diagnostics include all non-empty candidates, never upscale, and use
+nearest-neighbor downscaling to at most 2,000,000 pixels. The L3
+`service.sam2.raw_visualization` child reports exact source accounting,
+overlap histogram overflow, represented IDs and explicit truncation. Below L3
+the validator strips debug and leaves the response unchanged apart from its
+existing bounded warning. The trusted CLI continues to emit its historical
+rectangular JPEG patches.
+
 ## `postsam2processing`
 
 Filters applied after SAM2 but before CLIP. All thresholds are optional; if a

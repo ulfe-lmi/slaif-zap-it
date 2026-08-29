@@ -171,6 +171,23 @@ This is configured-filter evidence, not a SAM2 recall or model-accuracy claim.
 The two-wide-candidate roof regression is programmatic
 CPU filter evidence, not a real roof-image benchmark.
 
+At L3, `mask_generator.debug: true` adds a bounded raw-SAM2 audit. The normal
+combined overlay cannot explain overlapping proposals, so the service emits
+separate source-order candidate tiles plus union coverage, overlap heatmap and
+uncovered-pixel PNGs. IDs are one-based `_source_index + 1` values and scores
+are labelled to three decimals (or `n/a`). Pages are fixed 3x4 sheets with
+320x240 content and a 28-pixel label bar, capped at eight sheets/96 candidates;
+candidate crops are enlarged when their padded source crop is smaller than the
+tile, while the three full-image diagnostics never upscale;
+the fixed names are `sam2-candidates-page-0001.png` through `-0008.png`,
+`sam2-union-coverage.png`, `sam2-overlap-heatmap.png`, and
+`sam2-uncovered-pixels.png`. All non-empty raw masks contribute to exact source
+coverage/overlap counts, including truncated candidates. Diagnostics never
+upscale and use nearest-neighbor downscaling to at most 2,000,000 pixels.
+The `service.sam2.raw_visualization` manifest child reports dimensions,
+histogram overflow and explicit truncation. Lower levels and legacy CLI
+rectangular JPEG debug patches are unchanged.
+
 ## Documentation
 
 Start with the [documentation index](docs/README.md), or go directly to:

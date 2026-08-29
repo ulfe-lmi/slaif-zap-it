@@ -466,3 +466,17 @@ assets, stop using the lock, remove the repo-local `.venv-gpu`, and remove the
 three approved model snapshots with the operator's Hugging Face cache tooling;
 do not remove other cache entries. The repository contains no model weights,
 request data, credentials or generated qualification dump.
+
+## Raw SAM2 visualization resource policy
+
+The service-safe L3 raw-SAM2 debug path is CPU/Pillow/NumPy rendering around
+the resident model's original-resolution masks; it does not alter model
+identity, dtype, residency, device selection or request-local generator caps.
+It always uses logical `cuda:0` for inference after the operator's physical
+GPU mask, and it keeps all unassigned devices protected. Before readiness or
+inference admission, it reserves up to eight 960x1072 RGB contact sheets and
+three nearest-neighbor diagnostic RGB arrays at the decoded source aspect ratio,
+never exceeding 2,000,000 pixels per diagnostic. The exact RGB reservation is
+`8 * 960 * 1072 * 3 + 3 * diagnostic_width * diagnostic_height * 3`, with a
+maximum of 42,698,880 bytes; insufficient count, per-item, total or response
+budgets fail closed. This diagnostic adds no model process or worker.

@@ -56,6 +56,14 @@ an explicit operational order creates and secures it.
 - authenticated `/v1/capabilities` is static and gate/readiness independent;
 - `service.sam2` is present at L0-L3 and JSON/ZIP raw candidate/timing metadata
   agrees;
+- raw-SAM2 renderer determinism, source-indexed IDs, exact score labels,
+  independent contact-sheet pagination, border/disconnected masks, all-candidate
+  union/overlap/uncovered accounting, bounded histograms, nearest-neighbor
+  diagnostic downscaling and source/destination dimensions;
+- raw-SAM2 fixed names, typed L3 manifest arithmetic, JSON/ZIP hash parity,
+  authenticated static capability policy, legacy rectangular JPEG compatibility,
+  and pre-readiness rejection for fixed artifact count/per-item/total/response
+  budget insufficiency;
 - one-image-only and config-only multipart cardinality;
 - no persistent files after success/error/cancel;
 - model/request state isolation across repeated/concurrent calls;

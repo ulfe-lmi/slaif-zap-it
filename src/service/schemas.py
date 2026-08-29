@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from src.core.raw_visualizations import validate_raw_sam2_manifest
 
 from .settings import SERVICE_MODEL_ID
 
@@ -21,6 +23,8 @@ __all__ = [
     "PostFilterLimits",
     "PostFilterRejection",
     "PostFilterDiagnostics",
+    "RawVisualizationDimensions",
+    "RawVisualizationManifest",
     "Sam2Metadata",
     "ServiceMetadata",
     "Choice",
@@ -90,6 +94,42 @@ class PostFilterDiagnostics(BaseModel):
     rejections_truncated: int = Field(ge=0)
 
 
+class RawVisualizationDimensions(BaseModel):
+    width: int = Field(ge=1)
+    height: int = Field(ge=1)
+
+
+class RawVisualizationManifest(BaseModel):
+    """L3 facts for bounded raw SAM2 candidate visualizations."""
+
+    enabled: bool
+    candidate_id_base: int = Field(ge=1)
+    raw_candidate_count: int = Field(ge=0)
+    visualizable_candidate_count: int = Field(ge=0)
+    omitted_empty_candidate_count: int = Field(ge=0)
+    represented_candidate_count: int = Field(ge=0, le=96)
+    represented_candidate_ids: List[int] = Field(max_length=96)
+    truncated_candidate_count: int = Field(ge=0)
+    contact_sheet_count: int = Field(ge=0, le=8)
+    covered_pixel_count: int = Field(ge=0)
+    uncovered_pixel_count: int = Field(ge=0)
+    max_overlap_count: int = Field(ge=0)
+    overlap_histogram: Dict[str, int]
+    overlap_histogram_overflow_pixel_count: int = Field(ge=0)
+    overlap_histogram_truncated: bool
+    source_dimensions: RawVisualizationDimensions
+    diagnostic_dimensions: RawVisualizationDimensions
+    artifact_names: List[str] = Field(max_length=11)
+    warnings: List[str] = Field(max_length=1)
+
+    @model_validator(mode="after")
+    def validate_arithmetic(self) -> "RawVisualizationManifest":
+        """Keep the documented raw-rendering arithmetic explicit in the schema."""
+
+        validate_raw_sam2_manifest(self.model_dump(mode="python"))
+        return self
+
+
 class Sam2Metadata(BaseModel):
     """Request-local SAM2 configuration and execution facts."""
 
@@ -102,6 +142,7 @@ class Sam2Metadata(BaseModel):
     actual_candidate_count: int = Field(ge=0)
     execution_time_ms: float = Field(ge=0)
     resource_warnings: List[str]
+    raw_visualization: Optional[RawVisualizationManifest] = None
 
 
 class ServiceMetadata(BaseModel):

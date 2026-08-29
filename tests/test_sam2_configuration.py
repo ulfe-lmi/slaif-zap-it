@@ -774,6 +774,24 @@ def test_capabilities_are_authenticated_static_deterministic_and_explicit(monkey
         "output_mode": "binary_mask",
         "arbitrary_kwargs": False,
     }
+    raw_policy = body["raw_sam2_debug"]
+    assert raw_policy["trigger"] == "verbosity == 3 and mask_generator.debug == true"
+    assert raw_policy["candidate_id_base"] == 1
+    assert raw_policy["columns"] == 3
+    assert raw_policy["rows"] == 4
+    assert raw_policy["candidates_per_sheet"] == 12
+    assert raw_policy["maximum_contact_sheets"] == 8
+    assert raw_policy["maximum_represented_candidates"] == 96
+    assert raw_policy["maximum_diagnostic_pixels"] == 2_000_000
+    assert raw_policy["fixed_artifact_names"] == [
+        *[f"sam2-candidates-page-{page:04d}.png" for page in range(1, 9)],
+        "sam2-union-coverage.png",
+        "sam2-overlap-heatmap.png",
+        "sam2-uncovered-pixels.png",
+    ]
+    assert "three decimals" in raw_policy["score_format"]
+    assert "may be enlarged" in raw_policy["diagnostics"]["candidate_tiles"]
+    assert "first 96" in raw_policy["truncation"]
     serialized = json.dumps(body)
     assert "SLAIF_ZAP_IT_API_KEY" not in serialized
     assert "GPU-" not in serialized
@@ -793,6 +811,7 @@ def test_capabilities_are_authenticated_static_deterministic_and_explicit(monkey
         "source_precedence",
         "estimation_formulas",
         "fixed_controls",
+        "raw_sam2_debug",
     }
 
 
