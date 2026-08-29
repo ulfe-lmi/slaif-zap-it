@@ -18,6 +18,10 @@ from .settings import SERVICE_MODEL_ID
 
 __all__ = [
     "ArtifactDescriptor",
+    "CandidateViewClipConfig",
+    "CandidateViewBlip3Config",
+    "CandidateViewsMetadata",
+    "CandidateViewInputRecord",
     "ObjectRecord",
     "PostFilterReason",
     "PostFilterLimits",
@@ -44,8 +48,51 @@ class ArtifactDescriptor(BaseModel):
     data: str = Field(description="Base64-encoded payload")
 
 
+class CandidateViewClipConfig(BaseModel):
+    """Effective request-local CLIP view policy."""
+
+    mode: Literal["mask_dilated"]
+    context_fraction: float = Field(ge=0.0, le=0.5)
+    min_context_pixels: int = Field(ge=0, le=256)
+    max_context_pixels: int = Field(ge=0, le=512)
+    outside_fill: Literal["zero"]
+    context_intensity: float = Field(ge=0.0, le=1.0)
+    applied: bool
+
+
+class CandidateViewBlip3Config(CandidateViewClipConfig):
+    """Effective request-local BLIP3 view policy."""
+
+    contour_width: int = Field(ge=0, le=16)
+
+
+class CandidateViewsMetadata(BaseModel):
+    """Effective candidate-view values and stage application status."""
+
+    clip: CandidateViewClipConfig
+    blip3: CandidateViewBlip3Config
+
+
+class CandidateViewInputRecord(BaseModel):
+    """Bounded provenance for one emitted exact model-input debug artifact."""
+
+    stage: Literal["clip", "blip3"]
+    source_candidate_id: int = Field(ge=1)
+    filtered_index: int = Field(ge=0)
+    question_id: Optional[int] = Field(default=None, ge=1)
+    artifact_name: str
+    target_bbox_xyxy: List[int]
+    context_bbox_xyxy: List[int]
+    effective_radius: int = Field(ge=0, le=512)
+    source_dimensions: Dict[str, int]
+    crop_dimensions: Dict[str, int]
+    model_input_dimensions: Dict[str, int]
+
+
 class ObjectRecord(BaseModel):
     instance_id: int = Field(ge=1)
+    source_candidate_id: int = Field(ge=1)
+    filtered_index: int = Field(ge=0)
     class_id: int = Field(ge=0)
     label: Optional[str] = None
     bbox_xyxy: List[int]
@@ -153,6 +200,7 @@ class ServiceMetadata(BaseModel):
     class_mapping: Dict[str, int]
     config_digest: str
     sam2: Sam2Metadata
+    candidate_views: CandidateViewsMetadata
     artifacts: Optional[List[ArtifactDescriptor]] = None
     objects: Optional[List[ObjectRecord]] = None
     stage_statuses: Optional[List[Dict[str, Any]]] = None
@@ -161,6 +209,7 @@ class ServiceMetadata(BaseModel):
     timings_ms: Optional[Dict[str, float]] = None
     provenance: Optional[Dict[str, Any]] = None
     warnings: Optional[List[str]] = None
+    candidate_view_inputs: Optional[List[CandidateViewInputRecord]] = None
 
 
 class Choice(BaseModel):

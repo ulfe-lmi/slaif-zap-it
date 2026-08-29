@@ -1,5 +1,11 @@
 # 0.1.0 release-candidate notes
 
+Objective 017 adds request-local mask-isolated candidate views for CLIP and
+BLIP3. The service exposes effective view settings at every response level and
+fixed numeric PNG artifacts plus bounded L3 model-input records. This remains
+bounded local research evidence and does not claim semantic accuracy or release
+readiness.
+
 Status: unpublished and untagged. This is a qualified local research candidate,
 not a production or commercial-model-use approval.
 

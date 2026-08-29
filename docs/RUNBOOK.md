@@ -236,14 +236,14 @@ The request is rejected with `response_too_large` before readiness/gate/engine
 if the fixed 11-artifact or exact RGB reservation cannot fit operator limits.
 
 For a bounded L3 BLIP3 audit, set `debug: true` on one rule. The verifier passes
-each executed question a paired image: untouched context on the left and an
-exact mask spotlight on the right, separated by four dark pixels and outlined
-only on the exterior by a four-pixel yellow contour. Its dimensions use a
-128-pixel minimum, uniform nearest-neighbor scaling toward a 256-pixel short
-side, and a 768-pixel long-side cap. The service returns the exact lossless
-image as `blip3-verification-####-####.png` at L3 only; it never puts the
-question, label, answer or filename in that logical name. This qualifies the
-image/instruction/artifact integration, not universal BLIP3 accuracy.
+each executed question a pair with target-only pixels on the left and exact
+zero-filled Euclidean-dilated context on the right, separated by four dark
+pixels. RGB uses bilinear resizing, masks use nearest-neighbor resizing and
+support masks are reapplied; the short-side target is 256 and the long-side cap
+is 768. The service returns the exact lossless image as
+`blip3-verification-CANDIDATE-####-QUESTION-####.png` at L3 only; it never puts
+the question, label, answer or filename in that logical name. This qualifies
+the image/instruction/artifact integration, not universal BLIP3 accuracy.
 
 The operator-only `scripts/profile_matrix.py` harness sends the exact sanitized
 sequence `sam2, sam2_clip, sam2_blip3, sam2_clip_blip3, sam2_clip_blip3,

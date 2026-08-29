@@ -3,6 +3,13 @@
 All versions below are unpublished development state unless explicitly marked
 otherwise. No ZAP-IT package, tag, or GitHub release has been published.
 
+## Unreleased
+
+- Objective 017 isolates CLIP and BLIP3 candidate views from rectangular
+  semantic leakage with one deterministic mask-derived builder, strict
+  `candidate_views` settings, fixed lossless debug artifacts, public candidate
+  identity and L3 provenance.
+
 ## 0.1.0 — unpublished release candidate
 
 - 2026-08-23: Objective 000–005 established the typed in-memory pipeline,

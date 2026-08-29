@@ -15,6 +15,12 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Tuple
 
+from .mask_views import (
+    CandidateViewConfig,
+    default_candidate_view_configs,
+    effective_candidate_view_configs,
+)
+
 __all__ = [
     "ALGORITHMIC_TOP_LEVEL_FIELDS",
     "BATCH_ONLY_TOP_LEVEL_FIELDS",
@@ -34,6 +40,7 @@ ALGORITHMIC_TOP_LEVEL_FIELDS = frozenset(
         "postsam2processing",
         "clip",
         "blip3",
+        "candidate_views",
         "visualization",
     }
 )
@@ -110,6 +117,9 @@ class CoreConfig:
     # Service-only SAM2 provenance is kept separate from constructor scalars so
     # the core can carry it without forwarding metadata to a model adapter.
     sam2_metadata: Mapping[str, Any] = field(default_factory=dict)
+    candidate_views: Mapping[str, CandidateViewConfig] = field(
+        default_factory=default_candidate_view_configs
+    )
 
     @classmethod
     def from_mapping(cls, config: Mapping[str, Any]) -> "CoreConfig":
@@ -130,6 +140,7 @@ class CoreConfig:
         )
         postsam2_cfg = config.get("postsam2processing", {}) or {}
         vis_cfg = config.get("visualization", {}) or {}
+        candidate_views = effective_candidate_view_configs(config.get("candidate_views"))
 
         post_maxsize = postsam2_cfg.get("maxsize", 999_999_999)
         max_w = postsam2_cfg.get("max_w", 999_999_999)
@@ -163,7 +174,20 @@ class CoreConfig:
             post_maxsize=post_maxsize,
             max_w=max_w,
             max_h=max_h,
+            candidate_views=candidate_views,
         )
+
+    @property
+    def candidate_views_cfg(self) -> Mapping[str, CandidateViewConfig]:
+        """Compatibility alias for callers naming the section as a config."""
+        return self.candidate_views
+
+    def candidate_view_config(self, stage: str) -> CandidateViewConfig:
+        """Return one normalized stage policy, including constructor defaults."""
+        value = self.candidate_views.get(stage)
+        if isinstance(value, CandidateViewConfig):
+            return value
+        return CandidateViewConfig.from_mapping(value, stage=stage)
 
     def debug_artifacts_requested(self) -> bool:
         """Return whether any stage requested filesystem-style debug artifacts."""

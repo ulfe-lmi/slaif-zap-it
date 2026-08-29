@@ -183,6 +183,8 @@ class FakeEngine:
             diagnostics=post_filter_diagnostics,
             collect_rejections=verbosity >= 3,
         )
+        for filtered_index, mask_record in enumerate(filtered):
+            mask_record["_filtered_index"] = filtered_index
         ordered = sorted(
             filtered,
             key=lambda mask: int(np.count_nonzero(mask["segmentation"])),
@@ -204,11 +206,12 @@ class FakeEngine:
             objects.append(
                 ObjectResult(
                     instance_id=instance_id,
-                    source_index=instance_id,
+                    source_index=int(mask_record.get("_source_index", instance_id - 1)),
                     mask=mask,
                     metadata=metadata,
                     class_id=(instance_id - 1) % max(len(class_labels), 1),
                     class_id_source="mapping" if class_labels else "fallback",
+                    filtered_index=int(mask_record.get("_filtered_index", instance_id - 1)),
                 )
             )
 

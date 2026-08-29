@@ -23,7 +23,7 @@ gates remain separate. No persistent listener is started by the package factory.
 | Path | Method | Purpose |
 |---|---|---|
 | `/v1/completions` | POST | one image + one YAML config -> one result |
-| `/v1/capabilities` | GET | authenticated static SAM2 policy and schema |
+| `/v1/capabilities` | GET | authenticated static SAM2/candidate-view policy and schema |
 | `/healthz` | GET | process/event-loop health (always unauthenticated) |
 | `/readyz` | GET | engine readiness via injected provider; honest `not_ready` |
 | `/metrics` | GET | process-local finite-cardinality Prometheus text |
@@ -82,18 +82,21 @@ rejected with stable codes before any expensive work.
 ## Verbosity levels (monotonic information)
 
 - **L0**: completion envelope + normalized YOLO lines in `choices[0].text`
-  + minimal metadata (request id, image dims, class mapping, config digest) and
-  the complete `service.sam2` configuration/provenance object.
+  + minimal metadata (request id, image dims, class mapping, config digest),
+  the complete `service.sam2` configuration/provenance object, and effective
+  CLIP/BLIP3 candidate-view configuration with application status.
 - **L1**: L0 + lossless uint16 identity PNG artifact (`identity-mask.png`,
   background `0`, instance ids `1..N`). Overlaps use the larger-area winner;
   if that would fully occlude an object, the service reserves a deterministic
   source pixel so the PNG IDs remain bijective with YOLO/object records.
 - **L2**: L1 + per-object records containing only fields actually produced
   (bbox pixel+normalized, area, centroid, SAM quality, CLIP score, BLIP3
-  answer when present, geometry hook when present).
+  answer when present, geometry hook when present, one-based
+  `source_candidate_id` and zero-based post-SAM2 `filtered_index`).
 - **L3**: L2 + stage statuses, candidate counts, post-filter diagnostics, timings, provenance,
-  aggregate warnings, bounded annotated/debug artifacts, and one exact
-  per-object uncompressed column-major COCO-style mask RLE. `annotated` remains
+  aggregate warnings, bounded annotated/debug artifacts, one-for-one numeric
+  candidate-view input records, and one exact per-object uncompressed
+  column-major COCO-style mask RLE. `annotated` remains
   mask-only; the optional `annotated-labelled` stream is final-stage, labelled,
   deterministic and Detectron2-free.
 
@@ -126,15 +129,16 @@ the JSON response and ZIP manifest. The two-wide-candidate roof case is a
 programmatic CPU filter regression, not a real-image SAM2 accuracy benchmark.
 
 When a BLIP3 rule executes, the verifier passes a deterministic paired RGB image
-to every QA call: a mask-bbox context crop on the left and the same crop on the
-right with only the selected mask preserved, a four-pixel dark divider, and an
-exterior-only four-pixel yellow contour. Crop dimensions are at least 128 before
-uniform nearest-neighbor scaling toward a 256-pixel short side, capped at a
-768-pixel long side. At L3, an effective rule with `debug: true` adds only the
-exact paired image passed to QA as
-`blip3-verification-{candidate_index:04d}-{question_index:04d}.png`; the
-structured answer and label remain independent of that artifact. No user text
-enters the name.
+to every QA call: a target-only mask view on the left and the same candidate's
+zero-filled, dimmed Euclidean-dilated context view on the right, with a
+four-pixel dark divider and an exterior-only contour. The bbox is storage-only;
+holes and disconnected components are not bridged. RGB is bilinearly resized,
+masks nearest-neighbor resized, and support masks are reapplied before the
+bounded 256-short-side/768-long-side policy. At L3, an effective rule with
+`debug: true` adds only the exact paired image passed to QA as
+`blip3-verification-CANDIDATE-####-QUESTION-####.png`; CLIP similarly emits
+`clip-candidate-view-CANDIDATE-####.png`. Public candidate/question IDs are
+one-based, filtered indices are zero-based, and no client text enters a name.
 
 ## Completion envelope
 
@@ -251,7 +255,7 @@ max 16 384 characters per scalar, zero aliases/anchors accepted.
 Top-level allowlist derived from the core boundary:
 
 - **Accepted** (algorithmic): `alpha`, `preprocessing`, `mask_generator`,
-  `postsam2processing`, `clip`, `blip3`, `visualization`.
+  `postsam2processing`, `clip`, `blip3`, `candidate_views`, `visualization`.
 - **Ignored with warning** (batch-only, never honored):
   `images`, `video`, `export_yolo_det`.
 - **Rejected** (`unsupported_field`): anything else — including legacy
@@ -270,6 +274,27 @@ commands, imports, Python symbols, devices, model repositories/revisions or
 deployment settings. Legacy `visualization.alpha` hoisting matches CLI
 normalization (default `0.6`). CLIP `labels` keys define the class mapping in
 document order.
+
+### Candidate-view policy
+
+`candidate_views` is a typed request-local section with `clip` and `blip3`
+children. Both default to `mode: mask_dilated`, `context_fraction: 0.10`,
+`min_context_pixels: 0`, `max_context_pixels: 64`, `outside_fill: zero`, and
+`context_intensity: 0.35`; BLIP3 also defaults to `contour_width: 2`. The exact
+limits are fraction 0..0.5, minimum 0..256, maximum 0..512, intensity 0..1 and
+BLIP3 contour 0..16. Null, bool-as-number, non-finite, unknown, out-of-range,
+cross-field and unsupported values are rejected without clamping. `clip.padding`
+is an unsupported service field; clients must use `candidate_views.clip`.
+
+For `L = max(mask_bbox_width, mask_bbox_height)`, the builder reports
+`raw_radius = ceil(context_fraction * L)` and
+`effective_radius = min(max(raw_radius, min_context_pixels),
+max_context_pixels)`. Dilation is an exact Euclidean disk clipped to the source.
+The target is retained only where `M` is true; context is retained only in `D`,
+with `floor(channel * context_intensity)` in `D - M`. Candidate and question
+IDs are one-based; the post-SAM2 `filtered_index` is zero-based. L3 debug records
+are one-for-one with fixed-name lossless model-input PNGs and contain only
+bounded numeric provenance, not image pixels or client text.
 
 ### Visualization streams
 

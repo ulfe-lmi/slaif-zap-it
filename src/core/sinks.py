@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Sequence
 
 import numpy as np
 
@@ -137,6 +137,15 @@ class ArtifactSink:
         except KeyError as exc:  # pragma: no cover - trivial
             raise ArtifactSinkError(f"unknown artifact: {name!r}") from exc
 
+    def ensure_capacity(
+        self,
+        additional_artifacts: int,
+        additional_bytes: int,
+        artifact_sizes: Sequence[int] | None = None,
+    ) -> None:
+        """Admission hook for a stage before it starts model work."""
+        del additional_artifacts, additional_bytes, artifact_sizes
+
     # -- hooks --------------------------------------------------------------
     def _commit(self, artifact: StoredArtifact) -> StoredArtifact:
         raise NotImplementedError
@@ -182,6 +191,27 @@ class BoundedMemoryArtifactSink(MemoryArtifactSink):
             raise ArtifactSinkError("debug artifacts exceed the configured total byte limit")
         self.raw_bytes = self.raw_bytes - previous_size + raw_size
         return super()._commit(artifact)
+
+    def ensure_capacity(
+        self,
+        additional_artifacts: int,
+        additional_bytes: int,
+        artifact_sizes: Sequence[int] | None = None,
+    ) -> None:
+        """Reject a predictable debug overflow before an expensive stage."""
+        if additional_artifacts < 0 or additional_bytes < 0:
+            raise ArtifactSinkError("debug artifact admission values must be non-negative")
+        sizes = list(artifact_sizes) if artifact_sizes is not None else []
+        if sizes and (len(sizes) != additional_artifacts or any(size < 0 for size in sizes)):
+            raise ArtifactSinkError("debug artifact admission values are inconsistent")
+        if sizes and any(size > self.budget.max_single_bytes for size in sizes):
+            raise ArtifactSinkError("debug artifact exceeds the configured per-artifact limit")
+        if len(self._artifacts) + additional_artifacts > self.budget.max_artifacts:
+            raise ArtifactSinkError("debug artifact count exceeds the configured limit")
+        if additional_bytes > additional_artifacts * self.budget.max_single_bytes:
+            raise ArtifactSinkError("debug artifact exceeds the configured per-artifact limit")
+        if self.raw_bytes + additional_bytes > self.budget.max_total_bytes:
+            raise ArtifactSinkError("debug artifacts exceed the configured total byte limit")
 
 
 class FilesystemArtifactSink(ArtifactSink):

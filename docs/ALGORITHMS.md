@@ -82,14 +82,13 @@ configured true/false substrings, and optionally assign a replacement class.
 Service requests provide only rule mappings. The model, revision, FP16 dtype,
 tokenizer, processor, device, cache, and residency strategy remain pinned. The
 service limits each request to 32 planned questions and 32 generated tokens per
-question. Each question receives a deterministic mask-aware paired image rather
-than a rectangle-only patch. The complete mask bbox receives symmetric
-`max(16, ceil(12.5% of the larger bbox dimension))` context and a 128-pixel
-minimum crop extent. The crop is uniformly nearest-neighbor scaled toward a
-256-pixel short side, with a 768-pixel long-side cap, then rendered as
-untouched context, a four-pixel divider, and a spotlight that preserves selected
-pixels, dims other exterior pixels to 40%, and paints only the exterior
-four-pixel dilation ring yellow.
+question. Each question receives a deterministic mask-isolated pair rather than
+an unmasked rectangle. The shared builder computes exact Euclidean dilation from
+the candidate mask, neutralizes pixels outside the mask/support, and crops only
+after masking. The left side is target-only; the right side is bounded dilated
+context with floor-rounded intensity and an optional exterior contour. RGB is
+bilinearly resized and masks are nearest-neighbor resized before support-mask
+reapplication, with a four-pixel divider and a 768-pixel long-side cap.
 
 Below 24,576 MiB, BLIP3 lives in host RAM until its stage. SAM2 and CLIP run on
 GPU first; the registry then swaps them out, executes BLIP3 on GPU, and restores

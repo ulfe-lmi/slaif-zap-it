@@ -65,15 +65,14 @@ three-decimal SAM2 duration and deterministic resource warnings. Timing is
 excluded from content-determinism comparisons; JSON and ZIP metadata otherwise
 agree.
 
-BLIP3 debug is an L3-only lossless PNG of the exact image passed to QA, named
-`blip3-verification-{candidate_index:04d}-{question_index:04d}.png`. The
-image is a deterministic pair of untouched context and mask spotlight views:
-the crop uses the complete mask bbox plus symmetric bounded context, a
-128-pixel minimum, uniform nearest-neighbor scaling toward a 256-pixel short
-side, and a 768-pixel long-side cap. A four-pixel divider separates the views;
-selected right pixels are unchanged, other exterior pixels retain 40% of each
-channel, and the exterior four-pixel dilation ring is yellow. The artifact
-documents the verifier input but does not guarantee semantic accuracy.
+Candidate-view debug artifacts are L3-only lossless PNGs of the exact arrays
+passed to the semantic processors. CLIP uses
+`clip-candidate-view-CANDIDATE-####.png`; BLIP3 uses
+`blip3-verification-CANDIDATE-####-QUESTION-####.png`. BLIP3's pair places
+target-only pixels on the left and zero-filled, floor-dimmed Euclidean-dilated
+context on the right, separated by four dark pixels. RGB/mask resize order and
+support reapplication are deterministic. The artifact documents the verifier
+input but does not guarantee semantic accuracy.
 
 At L3, `mask_generator.debug: true` enables the bounded raw-SAM2 diagnostic.
 The ordinary combined overlay is insufficient to audit overlap ownership, so

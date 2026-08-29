@@ -71,15 +71,15 @@ The core does not require a filesystem. Debug-capable modules receive an
 artifact sink. The service uses a bounded memory sink; the trusted CLI can use a
 filesystem sink through its compatibility adapter.
 
-BLIP3 composes one bounded verification image per candidate that is actually
-questioned. Its half-open mask-bbox crop adds symmetric context (at least
-128 pixels per dimension), scales uniformly by deterministic nearest-neighbor
-mapping toward a 256-pixel short side with a 768-pixel long-side cap, and
-places untouched context beside a four-pixel divider and an exterior-only
-four-pixel yellow mask contour. Selected right-side pixels remain identical to
-the left view; other exterior pixels retain 40% of each channel. The fixed
-region-specific instruction follows the delimited client question. This
-mask-level evidence improves the input boundary but does not guarantee semantic
+The shared pure candidate-view builder constructs one tight mask-derived crop
+per candidate. It computes a circular Euclidean dilation from the exact mask,
+neutralizes prohibited source pixels, then crops; the bbox is storage-only. CLIP
+receives the lossless dilated-context RGB view. BLIP3 composes one bounded pair
+from the same result: target-only RGB on the left and zero-filled, dimmed
+dilated context on the right, with an optional exterior-only contour. RGB is
+resized bilinearly and masks are resized nearest-neighbor before support masks
+are reapplied. The fixed region-specific instruction follows the delimited
+client question. This pixel-boundary evidence does not guarantee semantic
 accuracy.
 
 ### Models and residency

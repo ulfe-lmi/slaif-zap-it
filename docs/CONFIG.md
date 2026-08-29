@@ -11,6 +11,7 @@ At a glance the batch runner understands these top-level sections:
 - `postsam2processing`
 - `clip`
 - `blip3`
+- `candidate_views`
 - `geometry`
 - `visualization`
 - `images`
@@ -132,15 +133,65 @@ at 256, with
 describe configured filtering and do not establish SAM2 recall or semantic
 accuracy.
 
+## `candidate_views`
+
+This dedicated algorithmic section controls the source-pixel boundary shared by
+the CLIP and BLIP3 adapters. Omission of the section or either child selects
+these effective values:
+
+```yaml
+candidate_views:
+  clip:
+    mode: mask_dilated
+    context_fraction: 0.10
+    min_context_pixels: 0
+    max_context_pixels: 64
+    outside_fill: zero
+    context_intensity: 0.35
+  blip3:
+    mode: mask_dilated
+    context_fraction: 0.10
+    min_context_pixels: 0
+    max_context_pixels: 64
+    outside_fill: zero
+    context_intensity: 0.35
+    contour_width: 2
+```
+
+`mode: mask_dilated` and `outside_fill: zero` are currently the only accepted
+values. `context_fraction` is a finite number from 0 through 0.5;
+`min_context_pixels` is 0..256; `max_context_pixels` is 0..512 and must not be
+less than the minimum; `context_intensity` is 0..1; and BLIP3-only
+`contour_width` is 0..16. Booleans, nulls, non-finite values, unknown fields,
+and unsupported modes/fills are rejected without clamping.
+
+For a mask bbox with inclusive width/height `L = max(width, height)`,
+`raw_radius = ceil(context_fraction * L)` and
+`effective_radius = min(max(raw_radius, min_context_pixels),
+max_context_pixels)`. Dilation is an exact Euclidean disk clipped to image
+bounds. The target and context crops are made only after neutralization, so the
+rectangle never fills holes or bridges disconnected components. Context-ring
+channels use `floor(source_channel * context_intensity)`; target pixels remain
+byte-identical and prohibited pixels remain zero. The optional BLIP3 contour is
+yellow and limited to `D - M`.
+
+At L3, `clip.debug` emits the exact CLIP processor RGB input as
+`clip-candidate-view-CANDIDATE-####.png`. A debug BLIP3 rule emits the exact
+paired QA input as `blip3-verification-CANDIDATE-####-QUESTION-####.png`.
+Candidate and question IDs are one-based; `filtered_index` is zero-based and is
+assigned immediately after the SAM2 area/bbox filter. Names never contain
+prompts, labels, rule names, answers, frame names or client paths. Effective
+values and application status are present in every service response, while
+bounded model-input records are L3-only.
+
 ## `clip` (optional)
 
 Enables the CLIP-based zero-shot classifier. When the section is absent the
 CLIP stage is skipped entirely.
 
-- `padding` (integer, default `20`): how many pixels to expand each bounding box
-  before cropping.
-- `debug` (bool): if set, every crop is written as `*-patch*.jpg` with the
-  winning prompt in the filename.
+- `debug` (bool): if set, every effective candidate view is written as a
+  lossless PNG. The service uses the fixed numeric name above; trusted legacy
+  output prefixes it with a sanitized frame stem.
 - `labels` (mapping): label names to comma-separated prompt strings. Literal
   block style (`|`) is recommended so that commas and line breaks are preserved.
 
@@ -176,21 +227,23 @@ Each rule supports these fields:
   answer (case-insensitive).
 - `newcategory`: optional replacement label applied when the answer is true.
 - `debug`: when `true`, service verbosity 3 returns the exact paired
-  mask-aware verification image as a lossless PNG named
-  `blip3-verification-{candidate_index:04d}-{question_index:04d}.png`.
+  mask-isolated verification image as a lossless PNG named
+  `blip3-verification-CANDIDATE-####-QUESTION-####.png`.
   The image is not a semantic-accuracy guarantee, and structured answers are
   returned independently; raw answers are never logged or used as metric labels.
   At lower service verbosity the nested flag is set to `false` and one
   aggregate warning is returned.
 
-BLIP3 does not receive the old rectangle-only crop. The verifier derives one
-half-open crop from the complete mask bbox, adds symmetric padding of
-`max(16, ceil(12.5% of the larger bbox dimension))`, and enforces a 128-pixel
-minimum dimension. It scales uniformly by explicit nearest-neighbor mapping
-toward a 256-pixel short side, capped at 768 pixels on the long side. The
-paired image has untouched context on the left, a four-pixel dark divider, and
-an aligned right spotlight with exact selected pixels, 40% integer-channel
-dimming outside the mask, and a yellow exterior four-pixel contour.
+BLIP3 receives no untouched rectangular crop. The shared builder first creates
+the exact target mask `M` and Euclidean dilated support `D`, then the verifier
+places the target-only view on the left and the dimmed `D` context view on the
+right with a four-pixel dark divider. It uses bilinear RGB and nearest-neighbor
+mask scaling toward a 256-pixel short side, capped at 768 pixels on the long
+side, followed by support-mask reapplication. The fixed instruction says to
+judge only the selected target on the left and not classify objects visible only
+in the context ring. `clip.padding` is unsupported by the service; trusted
+legacy configs receive a bounded deprecation warning and cannot restore a
+rectangle.
 
 The service allows at most 32 nested rules/questions and fixes generation to at
 most 32 new tokens per question. It rejects `model_name`, `revision`, `dtype`,

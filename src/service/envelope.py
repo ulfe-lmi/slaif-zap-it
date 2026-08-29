@@ -67,6 +67,7 @@ class ResponseContext:
     max_mask_rle_runs_total: int = _DEFAULT_RLE_RUNS_TOTAL
     max_response_bytes: int = 256 * 1024 * 1024
     deadline_monotonic: Optional[float] = None
+    candidate_views: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -122,6 +123,10 @@ def _object_record(
     cx, cy, bw, bh = obj.normalized_bbox(width, height)
     record: Dict[str, Any] = {
         "instance_id": obj.instance_id,
+        "source_candidate_id": obj.source_candidate_id,
+        "filtered_index": (
+            obj.filtered_index if obj.filtered_index is not None else obj.source_index
+        ),
         "class_id": obj.class_id if obj.class_id is not None else 0,
         "label": obj.label,
         "bbox_xyxy": [int(v) for v in obj.bbox_xyxy],
@@ -339,6 +344,9 @@ def _prepare(
         "config_digest": context.config_digest,
         "package_version": __version__,
         "sam2": _sam2_manifest(result, include_raw_visualization=context.verbosity >= 3),
+        "candidate_views": {
+            str(stage): dict(values) for stage, values in context.candidate_views.items()
+        },
     }
     if context.verbosity >= 1:
         service_meta["artifacts"] = [
@@ -375,6 +383,9 @@ def _prepare(
             provenance["runtime"] = dict(context.runtime_metadata)
         service_meta["provenance"] = provenance
         service_meta["warnings"] = list(result.warnings) + list(context.config_warnings)
+        service_meta["candidate_view_inputs"] = [
+            dict(record) for record in result.candidate_view_inputs
+        ]
     _check_deadline(context)
     return _PreparedResponse(
         {
