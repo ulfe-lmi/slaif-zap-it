@@ -282,6 +282,27 @@ def test_manifest_finalization_rejects_inconsistent_internal_facts(tamper):
         validate_raw_sam2_manifest(summary, result.artifacts)
 
 
+def test_manifest_validator_bounds_singleton_and_accepts_gapped_ids():
+    image = np.zeros((4, 5, 3), dtype=np.uint8)
+    singleton = render_raw_sam2_visualizations(
+        image, [_candidate(0, [(1, 1)], shape=(4, 5))]
+    ).summary
+    assert singleton["represented_candidate_ids"] == [1]
+    validate_raw_sam2_manifest(singleton)
+
+    tampered = copy.deepcopy(dict(singleton))
+    tampered["represented_candidate_ids"] = [2]
+    with pytest.raises(CoreError, match="raw SAM2 visualization manifest is inconsistent"):
+        validate_raw_sam2_manifest(tampered)
+
+    gapped = render_raw_sam2_visualizations(
+        image,
+        [_candidate(0, [(1, 1)], shape=(4, 5)), _candidate(2, [(2, 2)], shape=(4, 5))],
+    ).summary
+    assert gapped["represented_candidate_ids"] == [1, 3]
+    validate_raw_sam2_manifest(gapped)
+
+
 def test_manifest_schema_reuses_cross_field_validation():
     from src.service.schemas import RawVisualizationManifest
 
@@ -289,9 +310,14 @@ def test_manifest_schema_reuses_cross_field_validation():
     summary = render_raw_sam2_visualizations(image, [_candidate(0, [(1, 1)], shape=(4, 5))]).summary
     assert RawVisualizationManifest(**summary).represented_candidate_count == 1
     tampered = dict(summary)
-    tampered["contact_sheet_count"] = 2
-    with pytest.raises(ValueError):
+    tampered["represented_candidate_ids"] = [2]
+    with pytest.raises(ValueError, match="raw SAM2 visualization manifest is inconsistent"):
         RawVisualizationManifest(**tampered)
+    gapped = render_raw_sam2_visualizations(
+        image,
+        [_candidate(0, [(1, 1)], shape=(4, 5)), _candidate(2, [(2, 2)], shape=(4, 5))],
+    ).summary
+    assert RawVisualizationManifest(**gapped).represented_candidate_ids == [1, 3]
 
 
 @pytest.mark.parametrize("count", [0, 1, 12, 13, 96, 97])

@@ -177,9 +177,8 @@ def validate_raw_sam2_manifest(
         for candidate_id in represented_ids
     ):
         _manifest_error()
-    if any(
-        current <= previous or current > raw_count
-        for previous, current in zip(represented_ids, represented_ids[1:])
+    if any(candidate_id > raw_count for candidate_id in represented_ids) or any(
+        current <= previous for previous, current in zip(represented_ids, represented_ids[1:])
     ):
         _manifest_error()
 
