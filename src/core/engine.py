@@ -151,27 +151,47 @@ def _candidate_view_debug_capacity(
     image_rgb: np.ndarray,
     masks: Sequence[Mapping[str, Any]],
     config: CoreConfig,
+    *,
+    stage: str,
 ) -> tuple[int, int, list[int]]:
-    """Count and reserve candidate-view artifacts before model adapters run."""
+    """Count the exact candidate-view artifacts for one model seam.
+
+    CLIP admission runs before CLIP values exist, so it only considers CLIP
+    debug artifacts.  BLIP3 admission runs after CLIP and can therefore use
+    the actual labels and scores to count applicable debug rules.
+    """
+    if stage not in {"clip", "blip3"}:
+        raise ValueError(f"unsupported candidate-view admission stage: {stage}")
+
     clip_cfg = config.clip_cfg
-    clip_debug = bool(clip_cfg.get("debug", False)) and bool(
-        isinstance(clip_cfg.get("labels"), Mapping)
-        and clip_cfg.get("labels")
-        or any(str(key).lower().startswith("label ") for key in clip_cfg)
+    clip_debug = (
+        stage == "clip"
+        and clip_cfg.get("debug") is True
+        and bool(
+            (
+                isinstance(clip_cfg.get("labels"), Mapping)
+                and any(isinstance(value, str) for value in clip_cfg["labels"].values())
+            )
+            or any(
+                type(key) is str and key.lower().startswith("label ") and isinstance(value, str)
+                for key, value in clip_cfg.items()
+            )
+        )
     )
     blip_rules = config.blip3_cfg if isinstance(config.blip3_cfg, Mapping) else {}
     blip_debug_rules: list[tuple[float | None, str | None, Mapping[str, Any]]] = []
-    for rule_name, rule in blip_rules.items():
-        if not isinstance(rule_name, str) or not isinstance(rule, Mapping):
-            continue
-        if rule_name.startswith("any,"):
-            try:
-                threshold = float(rule_name.split(",", 1)[1])
-            except ValueError:
+    if stage == "blip3":
+        for rule_name, rule in blip_rules.items():
+            if not isinstance(rule_name, str) or not isinstance(rule, Mapping):
                 continue
-            blip_debug_rules.append((threshold, None, rule))
-        else:
-            blip_debug_rules.append((None, rule_name, rule))
+            if rule_name.startswith("any,"):
+                try:
+                    threshold = float(rule_name.split(",", 1)[1])
+                except ValueError:
+                    continue
+                blip_debug_rules.append((threshold, None, rule))
+            else:
+                blip_debug_rules.append((None, rule_name, rule))
 
     artifact_count = 0
     raw_bytes = 0
@@ -198,7 +218,7 @@ def _candidate_view_debug_capacity(
             debug_questions = 0
             for threshold, rule_label, rule in blip_debug_rules:
                 applies = score <= threshold if threshold is not None else label == rule_label
-                if applies and rule.get("debug", False):
+                if applies and rule.get("debug") is True:
                     debug_questions += 1
             if debug_questions:
                 view = build_mask_views(
@@ -427,7 +447,7 @@ def run_single_image(
 
     if artifact_sink is not None and hasattr(artifact_sink, "ensure_capacity"):
         debug_artifacts, debug_bytes, debug_sizes = _candidate_view_debug_capacity(
-            image_rgb, filtered_for_clip, config
+            image_rgb, filtered_for_clip, config, stage="clip"
         )
         artifact_sink.ensure_capacity(debug_artifacts, debug_bytes, debug_sizes)
 
@@ -468,6 +488,11 @@ def run_single_image(
     clip_only_masks = [dict(m) for m in masked_after_clip]
 
     if config.blip3_cfg:
+        if artifact_sink is not None and hasattr(artifact_sink, "ensure_capacity"):
+            debug_artifacts, debug_bytes, debug_sizes = _candidate_view_debug_capacity(
+                image_rgb, masked_after_clip, config, stage="blip3"
+            )
+            artifact_sink.ensure_capacity(debug_artifacts, debug_bytes, debug_sizes)
         log("[blip3] => verifying masks...", 1, verbosity)
         blip3_params = {
             "config": config.blip3_cfg,

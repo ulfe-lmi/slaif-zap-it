@@ -603,6 +603,16 @@ def _validate_blip3_policy(value: Any) -> None:
             raise ServiceError("BLIP3 debug must be a boolean", code="invalid_config")
 
 
+def _validate_clip_policy(value: Any) -> None:
+    """Validate the request-controlled CLIP debug switch without coercion."""
+    if value in (None, {}):
+        return
+    if not isinstance(value, Mapping):
+        raise ServiceError("clip must be a mapping", code="invalid_config")
+    if "debug" in value and type(value["debug"]) is not bool:
+        raise ServiceError("CLIP debug must be a boolean", code="invalid_config")
+
+
 def _candidate_view_invalid(path: str, detail: str) -> ServiceError:
     return ServiceError(f"{path} must be {detail}", code="invalid_config")
 
@@ -729,6 +739,7 @@ def parse_hostile_config(
     _scan_hostile(effective, "")
 
     clip_config = effective.get("clip")
+    _validate_clip_policy(clip_config)
     if isinstance(clip_config, Mapping) and "padding" in clip_config:
         raise ServiceError(
             "clip.padding is unsupported; use candidate_views.clip instead",

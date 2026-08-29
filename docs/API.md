@@ -239,7 +239,10 @@ patch names and format.
 `GET /v1/capabilities` uses the ordinary inference bearer and is available
 without model readiness or inference-gate admission. It returns an explicit
 OpenAPI schema for strict field types/ranges, defaults, exact profile
-overrides, current operator maxima and estimation formulas. Fixed model,
+overrides, current operator maxima and estimation formulas. Candidate-view
+policy is one required top-level `candidate_views` object, independent of the
+`raw_sam2_debug` policy; the response model, runtime JSON and OpenAPI schema
+declare the same fields. Fixed model,
 device, dtype, residency, cache/checkpoint/config and artifact-destination
 controls are described as policy; sensitive operator paths, credentials,
 topology and process state are not disclosed. `/docs` and `/openapi.json`
@@ -294,7 +297,9 @@ The target is retained only where `M` is true; context is retained only in `D`,
 with `floor(channel * context_intensity)` in `D - M`. Candidate and question
 IDs are one-based; the post-SAM2 `filtered_index` is zero-based. L3 debug records
 are one-for-one with fixed-name lossless model-input PNGs and contain only
-bounded numeric provenance, not image pixels or client text.
+bounded numeric provenance, not image pixels or client text. CLIP capacity is
+admitted before the CLIP processor/model call; BLIP3 capacity is admitted after
+actual CLIP labels/scores and before any QA call.
 
 ### Visualization streams
 

@@ -88,7 +88,6 @@ class RawSam2DebugPolicy(BaseModel):
     palette: str
     diagnostics: Dict[str, str]
     truncation: str
-    candidate_views: "CandidateViewsCapability"
 
 
 class CandidateViewCapabilityStage(BaseModel):
@@ -116,7 +115,7 @@ class CandidateViewsCapability(BaseModel):
 class CapabilitiesResponse(BaseModel):
     """Explicit OpenAPI model for the read-only capabilities endpoint."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     schema_version: str
     model_id: str
@@ -129,6 +128,7 @@ class CapabilitiesResponse(BaseModel):
     estimation_formulas: Dict[str, str]
     fixed_controls: FixedControls
     raw_sam2_debug: RawSam2DebugPolicy
+    candidate_views: CandidateViewsCapability
 
 
 def _field_descriptions() -> Dict[str, CapabilityField]:
@@ -250,40 +250,32 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
                 "downscale": "diagnostics: nearest-neighbor only; never upscale; at most 2,000,000 pixels",
             },
             truncation="first 96 non-empty source-order candidates; one aggregate warning; no ninth sheet",
-            candidate_views=CandidateViewsCapability(
-                clip=CandidateViewCapabilityStage(
-                    fields=_candidate_view_fields(include_contour=False),
-                    defaults=dict(CANDIDATE_VIEW_DEFAULTS["clip"]),
-                    debug_trigger="verbosity == 3 and clip.debug == true",
-                    fixed_artifact_name="clip-candidate-view-CANDIDATE-0008.png",
-                ),
-                blip3=CandidateViewCapabilityStage(
-                    fields=_candidate_view_fields(include_contour=True),
-                    defaults=dict(CANDIDATE_VIEW_DEFAULTS["blip3"]),
-                    debug_trigger=("verbosity == 3 and an effective BLIP3 rule has debug == true"),
-                    fixed_artifact_name=("blip3-verification-CANDIDATE-0008-QUESTION-0003.png"),
-                ),
-                dilation_formula=(
-                    "raw_radius = ceil(context_fraction * max(mask_bbox_width, "
-                    "mask_bbox_height)); effective_radius = min(max(raw_radius, "
-                    "min_context_pixels), max_context_pixels)"
-                ),
-                context_rounding="floor(source_channel * context_intensity)",
-                source_candidate_id="one-based: _source_index + 1",
-                filtered_index="zero-based: post-SAM2-filter retained source order",
-                question_id="one-based: question index + 1",
-                bbox_policy="storage-only crop; mask/support pixels decide visibility",
+        ),
+        candidate_views=CandidateViewsCapability(
+            clip=CandidateViewCapabilityStage(
+                fields=_candidate_view_fields(include_contour=False),
+                defaults=dict(CANDIDATE_VIEW_DEFAULTS["clip"]),
+                debug_trigger="verbosity == 3 and clip.debug == true",
+                fixed_artifact_name="clip-candidate-view-CANDIDATE-0008.png",
             ),
+            blip3=CandidateViewCapabilityStage(
+                fields=_candidate_view_fields(include_contour=True),
+                defaults=dict(CANDIDATE_VIEW_DEFAULTS["blip3"]),
+                debug_trigger=("verbosity == 3 and an effective BLIP3 rule has debug == true"),
+                fixed_artifact_name="blip3-verification-CANDIDATE-0008-QUESTION-0003.png",
+            ),
+            dilation_formula=(
+                "raw_radius = ceil(context_fraction * max(mask_bbox_width, "
+                "mask_bbox_height)); effective_radius = min(max(raw_radius, "
+                "min_context_pixels), max_context_pixels)"
+            ),
+            context_rounding="floor(source_channel * context_intensity)",
+            source_candidate_id="one-based: _source_index + 1",
+            filtered_index="zero-based: post-SAM2-filter retained source order",
+            question_id="one-based: question index + 1",
+            bbox_policy="storage-only crop; mask/support pixels decide visibility",
         ),
     )
-    # Preserve the frozen top-level capability schema while exposing the new
-    # additive policy directly for dynamic clients as well as under the raw
-    # diagnostic policy where older schema snapshots already permit extensions.
-    candidate_policy = response.raw_sam2_debug.candidate_views
-    if hasattr(response, "model_copy"):
-        response = response.model_copy(update={"candidate_views": candidate_policy})
-    else:  # pragma: no cover - Pydantic v1 compatibility
-        response = response.copy(update={"candidate_views": candidate_policy})
     if hasattr(response, "model_dump"):
         return response.model_dump(mode="json")
     return response.dict()

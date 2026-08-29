@@ -186,13 +186,14 @@ silently skipping or writing to arbitrary locations. CLIP and BLIP3 debug store
 only the exact RGB arrays passed to their processors as lossless PNGs. Service
 names are `clip-candidate-view-CANDIDATE-####.png` and
 `blip3-verification-CANDIDATE-####-QUESTION-####.png`; trusted CLI names prefix
-these numeric names with a sanitized frame stem and never include prompts,
+these tokenized names with a sanitized frame stem and never include prompts,
 labels, rule names or answers. No answer-text artifact is generated.
 
 The BLIP3 paired image is built once per candidate and reused for all questions:
 the left half is target-only, the right half preserves selected mask pixels,
 includes only bounded Euclidean-dilated context with floor integer arithmetic,
-and marks the configured exterior contour. The service validator strips nested
+restores right-side target pixels after bilinear resizing, and marks the
+configured exterior contour. The service validator strips nested
 BLIP3 debug flags below L3 with one aggregate warning. L3 input records retain
 source candidate ID, filtered index, bboxes, radius and dimensions.
 

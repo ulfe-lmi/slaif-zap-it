@@ -190,7 +190,7 @@ Enables the CLIP-based zero-shot classifier. When the section is absent the
 CLIP stage is skipped entirely.
 
 - `debug` (bool): if set, every effective candidate view is written as a
-  lossless PNG. The service uses the fixed numeric name above; trusted legacy
+  lossless PNG. The service uses the fixed tokenized name above; trusted legacy
   output prefixes it with a sanitized frame stem.
 - `labels` (mapping): label names to comma-separated prompt strings. Literal
   block style (`|`) is recommended so that commas and line breaks are preserved.
@@ -239,11 +239,20 @@ the exact target mask `M` and Euclidean dilated support `D`, then the verifier
 places the target-only view on the left and the dimmed `D` context view on the
 right with a four-pixel dark divider. It uses bilinear RGB and nearest-neighbor
 mask scaling toward a 256-pixel short side, capped at 768 pixels on the long
-side, followed by support-mask reapplication. The fixed instruction says to
-judge only the selected target on the left and not classify objects visible only
-in the context ring. `clip.padding` is unsupported by the service; trusted
-legacy configs receive a bounded deprecation warning and cannot restore a
-rectangle.
+side, followed by support-mask reapplication and explicit right-target
+restoration (`right[M] == left[M]`). The fixed instruction says to judge only
+the selected target on the left and not classify objects visible only in the
+context ring. `clip.padding` is unsupported by the service; trusted legacy
+configs receive a bounded deprecation warning and cannot restore a rectangle.
+
+The exact disk dilation uses a two-pass squared Euclidean distance transform
+over only the target-bbox window expanded by the effective radius. It retains a
+constant number of arrays proportional to that local window, has no
+radius-sized image cache, and keeps the public maximum radius at 512. Resource
+admission is also two-phase: CLIP debug artifacts are admitted before CLIP,
+then actual post-CLIP labels/scores determine BLIP3 debug admission before any
+QA call. The exported legacy compositor names use this same safe helper; this
+is pixel-isolation evidence, not a semantic-accuracy guarantee.
 
 The service allows at most 32 nested rules/questions and fixes generation to at
 most 32 new tokens per question. It rejects `model_name`, `revision`, `dtype`,

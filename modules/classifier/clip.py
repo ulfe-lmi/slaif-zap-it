@@ -69,7 +69,7 @@ class _ClipFilter:
     ):
         self.verbosity = verbosity
         self.device = device
-        self.debug = bool(clip_config.get("debug", False))
+        self.debug = clip_config.get("debug") is True
         self.log_print = log_print_func if log_print_func else (lambda *a, **k: None)
         if "padding" in clip_config:
             self.log_print(
@@ -211,7 +211,7 @@ class _ClipFilter:
             if isinstance(candidate_view_config, CandidateViewConfig)
             else CandidateViewConfig.from_mapping(candidate_view_config, stage="clip")
         )
-        debug_enabled = self.debug if debug is None else bool(debug)
+        debug_enabled = self.debug if debug is None else debug is True
         for i, m in enumerate(masks):
             seg = m["segmentation"]
             source_index = m.get("_source_index")
@@ -232,12 +232,12 @@ class _ClipFilter:
 
             if debug_enabled and best_prompt is not None:
                 if safe_artifact_names:
-                    patch_file = f"clip-candidate-view-{source_candidate_id:04d}.png"
+                    patch_file = f"clip-candidate-view-CANDIDATE-{source_candidate_id:04d}.png"
                 else:
                     legacy_stem = str(fname_stem).replace("\\", "/").rsplit("/", 1)[-1]
                     patch_file = (
                         f"{legacy_stem[:96] or 'image'}-clip-candidate-view-"
-                        f"{source_candidate_id:04d}.png"
+                        f"CANDIDATE-{source_candidate_id:04d}.png"
                     )
                 if artifact_sink is not None:
                     artifact_sink.store_image(patch_file, patch, fmt="png")

@@ -87,8 +87,11 @@ an explicit operational order creates and secures it.
   CLIP processor byte identity, BLIP3 pair byte identity, fixed one-based
   source/question names, zero-based filtered indices, strict request-local
   configuration, capability disclosure and pre-model debug admission;
-- BLIP3 L3 fixed `blip3-verification-####-####.png` names, exact QA/debug
+- BLIP3 L3 fixed `blip3-verification-CANDIDATE-####-QUESTION-####.png` names, exact QA/debug
   image parity, JSON/ZIP hash parity, and nested debug stripping at L0-L2;
+- radius-512 local-window dilation resource regression with an independent
+  brute-force oracle, and two-phase CLIP/BLIP3 debug admission with zero-call
+  negative cases;
 - visualization execution policy, final-object labelled pixel/placement/
   sanitization/confidence checks, geometry pre-inference rejection, metrics
   privacy/cardinality and A/B/A state-isolation checks;

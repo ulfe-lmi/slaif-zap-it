@@ -71,8 +71,15 @@ passed to the semantic processors. CLIP uses
 `blip3-verification-CANDIDATE-####-QUESTION-####.png`. BLIP3's pair places
 target-only pixels on the left and zero-filled, floor-dimmed Euclidean-dilated
 context on the right, separated by four dark pixels. RGB/mask resize order and
-support reapplication are deterministic. The artifact documents the verifier
-input but does not guarantee semantic accuracy.
+support reapplication are deterministic; right-side target pixels are restored
+after bilinear interpolation so they equal the left target pixels exactly. The
+artifact documents the verifier input but does not guarantee semantic accuracy.
+
+The exact radius-512 disk dilation uses a local-window squared distance
+transform with a constant number of temporary arrays. Debug resource admission
+is two-phase: CLIP artifacts are admitted before CLIP, and actual post-CLIP
+labels/scores admit BLIP3 debug questions before QA. Both exported BLIP3
+compositor names use this safe mask-aware path.
 
 At L3, `mask_generator.debug: true` enables the bounded raw-SAM2 diagnostic.
 The ordinary combined overlay is insufficient to audit overlap ownership, so

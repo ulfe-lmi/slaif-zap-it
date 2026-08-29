@@ -229,37 +229,100 @@ def _validate_inputs(
         raise _invalid("source candidate ID must be a positive integer")
 
 
-def _horizontal_dilate(mask: np.ndarray, radius: int) -> np.ndarray:
-    """Return exact 1-D boolean dilation for every row using a window sum."""
+def _distance_transform_1d(values: np.ndarray) -> np.ndarray:
+    """Return the exact squared distance to the nearest finite 1-D sample.
+
+    This is the lower-envelope algorithm for parabolas.  It is used twice by
+    :func:`_circular_dilate` to calculate an exact squared Euclidean distance
+    transform without retaining one image-sized array per disk row.
+    """
+    length = int(values.size)
+    result = np.full(length, np.inf, dtype=np.float64)
+    finite = np.flatnonzero(np.isfinite(values))
+    if finite.size == 0:
+        return result
+
+    parabola_positions = np.empty(length, dtype=np.intp)
+    intersections = np.empty(length + 1, dtype=np.float64)
+    first = int(finite[0])
+    parabola_positions[0] = first
+    intersections[0] = -np.inf
+    intersections[1] = np.inf
+    envelope_size = 0
+
+    for position_value in finite[1:]:
+        position = int(position_value)
+        while True:
+            previous = int(parabola_positions[envelope_size])
+            intersection = (
+                (float(values[position]) + position * position)
+                - (float(values[previous]) + previous * previous)
+            ) / float(2 * (position - previous))
+            if envelope_size == 0 or intersection > intersections[envelope_size]:
+                break
+            envelope_size -= 1
+        envelope_size += 1
+        parabola_positions[envelope_size] = position
+        intersections[envelope_size] = intersection
+        intersections[envelope_size + 1] = np.inf
+
+    envelope_index = 0
+    for position in range(length):
+        while intersections[envelope_index + 1] < position:
+            envelope_index += 1
+        nearest = int(parabola_positions[envelope_index])
+        delta = position - nearest
+        result[position] = delta * delta + float(values[nearest])
+    return result
+
+
+def _exact_disk_dilate_window(mask: np.ndarray, radius: int) -> np.ndarray:
+    """Return exact disk dilation for a source-space local window."""
     if radius == 0:
         return mask.copy()
     height, width = mask.shape
-    padded = np.pad(mask, ((0, 0), (radius, radius)), mode="constant")
-    cumulative = np.concatenate(
-        [np.zeros((height, 1), dtype=np.int32), np.cumsum(padded, axis=1, dtype=np.int32)],
-        axis=1,
-    )
-    return (cumulative[:, 2 * radius + 1 :] - cumulative[:, : -(2 * radius + 1)]) > 0
+    vertical_distances = np.empty((height, width), dtype=np.float64)
+    for column in range(width):
+        values = np.where(mask[:, column], 0.0, np.inf)
+        vertical_distances[:, column] = _distance_transform_1d(values)
+
+    squared_distances = np.empty((height, width), dtype=np.float64)
+    for row in range(height):
+        squared_distances[row, :] = _distance_transform_1d(vertical_distances[row, :])
+    return squared_distances <= float(radius * radius)
+
+
+def _dilate_cropped(
+    mask: np.ndarray,
+    radius: int,
+    target_bbox: tuple[int, int, int, int],
+) -> tuple[np.ndarray, tuple[int, int, int, int]]:
+    """Dilate only the target-expanded window and return its tight support crop."""
+    if radius < 0:
+        raise ValueError("dilation radius must not be negative")
+    height, width = mask.shape
+    wx0 = max(0, target_bbox[0] - radius)
+    wy0 = max(0, target_bbox[1] - radius)
+    wx1 = min(width, target_bbox[2] + radius)
+    wy1 = min(height, target_bbox[3] + radius)
+    support_window = _exact_disk_dilate_window(mask[wy0:wy1, wx0:wx1], radius)
+    local_bbox = _tight_bbox(support_window)
+    sx0, sy0, sx1, sy1 = local_bbox
+    context_bbox = (wx0 + sx0, wy0 + sy0, wx0 + sx1, wy0 + sy1)
+    return support_window[sy0:sy1, sx0:sx1].copy(), context_bbox
 
 
 def _circular_dilate(mask: np.ndarray, radius: int) -> np.ndarray:
     """Dilate by the exact integer-pixel Euclidean disk, clipped to the source."""
-    if radius == 0:
-        return mask.copy()
-    height, width = mask.shape
-    result = np.zeros((height, width), dtype=bool)
-    horizontal_cache: dict[int, np.ndarray] = {}
-    for row_delta in range(-radius, radius + 1):
-        horizontal_radius = math.isqrt(radius * radius - row_delta * row_delta)
-        horizontal = horizontal_cache.get(horizontal_radius)
-        if horizontal is None:
-            horizontal = _horizontal_dilate(mask, horizontal_radius)
-            horizontal_cache[horizontal_radius] = horizontal
-        source_y0 = max(0, -row_delta)
-        source_y1 = min(height, height - row_delta)
-        target_y0 = source_y0 + row_delta
-        target_y1 = source_y1 + row_delta
-        result[target_y0:target_y1] |= horizontal[source_y0:source_y1]
+    if radius < 0:
+        raise ValueError("dilation radius must not be negative")
+    if not np.any(mask):
+        return np.zeros_like(mask, dtype=bool)
+    target_bbox = _tight_bbox(mask)
+    support_crop, context_bbox = _dilate_cropped(mask, radius, target_bbox)
+    result = np.zeros_like(mask, dtype=bool)
+    x0, y0, x1, y1 = context_bbox
+    result[y0:y1, x0:x1] = support_crop
     return result
 
 
@@ -333,11 +396,9 @@ def build_mask_views(
     effective_radius = min(
         max(raw_radius, view_config.min_context_pixels), view_config.max_context_pixels
     )
-    support = _circular_dilate(segmentation_mask, effective_radius)
-    context_bbox = _tight_bbox(support)
+    support_crop, context_bbox = _dilate_cropped(segmentation_mask, effective_radius, target_bbox)
     x0, y0, x1, y1 = context_bbox
     target_crop = segmentation_mask[y0:y1, x0:x1].copy()
-    support_crop = support[y0:y1, x0:x1].copy()
     source_crop = image_rgb[y0:y1, x0:x1]
 
     target_rgb = np.zeros_like(source_crop)

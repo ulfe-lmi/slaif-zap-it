@@ -19,6 +19,7 @@ from src.core import StageFunctions, run_single_image
 from src.postprocessing import filter_by_area_bbox
 from src.runtime.models import APPROVED_MODEL_SPECS
 from src.service import FakeEngine, ReadyState, ServiceError, ServiceSettings, create_app
+from src.service.capabilities import CapabilitiesResponse
 from src.service.gate import InferenceGate
 from src.service.settings import SAM2_LIMIT_ENV_VARS
 from src.service.yaml_input import parse_hostile_config
@@ -775,6 +776,13 @@ def test_capabilities_are_authenticated_static_deterministic_and_explicit(monkey
         "arbitrary_kwargs": False,
     }
     raw_policy = body["raw_sam2_debug"]
+    assert "candidate_views" not in raw_policy
+    assert body["candidate_views"]["clip"]["fixed_artifact_name"] == (
+        "clip-candidate-view-CANDIDATE-0008.png"
+    )
+    assert body["candidate_views"]["blip3"]["fixed_artifact_name"] == (
+        "blip3-verification-CANDIDATE-0008-QUESTION-0003.png"
+    )
     assert raw_policy["trigger"] == "verbosity == 3 and mask_generator.debug == true"
     assert raw_policy["candidate_id_base"] == 1
     assert raw_policy["columns"] == 3
@@ -800,6 +808,9 @@ def test_capabilities_are_authenticated_static_deterministic_and_explicit(monkey
     assert client.get("/openapi.json").status_code == 200
     openapi = client.get("/openapi.json").json()
     assert "CapabilitiesResponse" in json.dumps(openapi)
+    declared = set(CapabilitiesResponse.model_json_schema()["properties"])
+    assert declared == set(openapi["components"]["schemas"]["CapabilitiesResponse"]["properties"])
+    assert declared == set(body)
     assert set(openapi["components"]["schemas"]["CapabilitiesResponse"]["properties"]) == {
         "schema_version",
         "model_id",
@@ -812,6 +823,7 @@ def test_capabilities_are_authenticated_static_deterministic_and_explicit(monkey
         "estimation_formulas",
         "fixed_controls",
         "raw_sam2_debug",
+        "candidate_views",
     }
 
 
