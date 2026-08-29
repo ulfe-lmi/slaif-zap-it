@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 
 from src.core.config import CoreConfig, config_digest
+from src.core.raw_visualizations import render_raw_sam2_visualizations
 from src.core.results import (
     ObjectResult,
     PipelineResult,
@@ -97,6 +98,7 @@ class FakeEngine:
                 verbosity=verbosity,
                 artifact_sink=artifact_sink,
                 class_labels=class_labels,
+                service_safe_artifact_names=service_safe_artifact_names,
             )
         finally:
             with self._lock:
@@ -111,6 +113,7 @@ class FakeEngine:
         verbosity: int,
         artifact_sink=None,
         class_labels=(),
+        service_safe_artifact_names=False,
     ) -> SingleImageOutcome:
         self.calls.append(
             {
@@ -139,14 +142,38 @@ class FakeEngine:
             specs.append((0.50, 0.80, 0.60, 0.90))
 
         candidates = []
-        for top, bottom, left, right in specs:
+        for source_index, (top, bottom, left, right) in enumerate(specs):
             mask = _rect_mask(height, width, top, bottom, left, right)
             candidates.append(
                 {
                     "segmentation": mask,
                     "area": int(np.count_nonzero(mask)),
+                    "predicted_iou": round(0.90 + 0.01 * (source_index + 1), 4),
+                    "stability_score": round(0.85 + 0.01 * (source_index + 1), 4),
+                    "_source_index": source_index,
                 }
             )
+        result_warnings = ["fake engine output; not a model prediction"]
+        sam2_metadata = {
+            **dict(config.sam2_metadata or {}),
+            "actual_candidate_count": len(specs),
+            "execution_time_ms": 0.5,
+        }
+        if service_safe_artifact_names and verbosity >= 3 and config.sam2_cfg.get("debug", False):
+            if artifact_sink is None:
+                raise ValueError("SAM2 debug requires an artifact sink")
+            raw_rendered = render_raw_sam2_visualizations(image_rgb, candidates)
+            for artifact_name, artifact_array in raw_rendered.artifacts:
+                artifact_sink.store_image(artifact_name, artifact_array, fmt="png")
+            raw_summary = dict(raw_rendered.summary)
+            raw_summary.update(
+                {
+                    "raw_candidate_count": len(specs),
+                    "omitted_empty_candidate_count": 0,
+                }
+            )
+            sam2_metadata["raw_visualization"] = raw_summary
+            result_warnings.extend(raw_summary.get("warnings", []))
         post_filter_diagnostics: Dict[str, Any] = {}
         filtered = filter_by_area_bbox(
             candidates,
@@ -169,8 +196,8 @@ class FakeEngine:
             label = labels_cycle[(instance_id - 1) % len(labels_cycle)]
             metadata = {
                 "clip_label": str(label),
-                "predicted_iou": round(0.90 + 0.01 * instance_id, 4),
-                "stability_score": round(0.85 + 0.01 * instance_id, 4),
+                "predicted_iou": mask_record.get("predicted_iou"),
+                "stability_score": mask_record.get("stability_score"),
                 "clip_score": round(0.80 + 0.01 * instance_id, 4),
                 "area": int(np.count_nonzero(mask)),
             }
@@ -213,7 +240,7 @@ class FakeEngine:
                 "final": len(objects),
             },
             rendered={},
-            warnings=("fake engine output; not a model prediction",),
+            warnings=tuple(result_warnings),
             timings={"stage.sam2": 0.5},
             provenance=Provenance(
                 config_digest=config_digest(config),
@@ -221,11 +248,7 @@ class FakeEngine:
                 notes=("deterministic fake engine",),
             ),
             post_filter_diagnostics=post_filter_diagnostics,
-            sam2_metadata={
-                **dict(config.sam2_metadata or {}),
-                "actual_candidate_count": len(specs),
-                "execution_time_ms": 0.5,
-            },
+            sam2_metadata=sam2_metadata,
         )
         return SingleImageOutcome(
             result=result,

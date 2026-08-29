@@ -574,9 +574,9 @@ def create_app(
                 raise ServiceError(str(exc), code="unsupported_profile") from exc
         check_deadline()
 
-        reserved_visualization_bytes = 0
+        reserved_artifact_bytes = 0
         if parsed.verbosity >= 3:
-            reserved_visualization_bytes = check_visualization_raw_budget(
+            reserved_artifact_bytes = check_visualization_raw_budget(
                 core_config,
                 settings_local,
                 height=image_rgb.shape[0],
@@ -598,7 +598,7 @@ def create_app(
                 max_artifacts=settings_local.max_debug_artifacts,
                 max_single_bytes=settings_local.max_single_artifact_bytes,
                 max_total_bytes=(
-                    settings_local.max_total_raw_artifact_bytes - reserved_visualization_bytes
+                    settings_local.max_total_raw_artifact_bytes - reserved_artifact_bytes
                 ),
             )
         )

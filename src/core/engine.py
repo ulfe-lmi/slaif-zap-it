@@ -29,6 +29,7 @@ from .config import CoreConfig, config_digest
 from .errors import CoreError
 from .ordering import order_final_objects
 from ..postprocessing import filter_by_area_bbox as _canonical_filter_by_area_bbox
+from .raw_visualizations import render_raw_sam2_visualizations
 from .results import ObjectResult, PipelineResult, Provenance, SingleImageOutcome, StageStatus
 from .sinks import ArtifactSink
 
@@ -272,16 +273,35 @@ def run_single_image(
     candidate_counts["sam2_candidates"] = len(all_masks_pre)
 
     if config.sam2_cfg.get("debug", False):
-        sink = _require_sink("mask_generator.debug")
-        log("[mask_generator debug] => capturing raw SAM2 patches...", 1, verbosity)
-        for idx, mm in enumerate(all_masks_pre):
-            seg = mm["segmentation"]
-            rr, cc = np.nonzero(seg)
-            if len(rr) == 0:
-                continue
-            patch = image_rgb[rr.min() : rr.max() + 1, cc.min() : cc.max() + 1, :]
-            sink.store_image(f"{frame_id}_sam2-patch{idx:04d}.jpg", patch)
-            log(f"  => captured {frame_id}_sam2-patch{idx:04d}.jpg", 2, verbosity)
+        if service_safe_artifact_names:
+            if verbosity >= 3:
+                sink = _require_sink("mask_generator.debug")
+                raw_rendered = render_raw_sam2_visualizations(image_rgb, all_masks_pre)
+                for artifact_name, artifact_array in raw_rendered.artifacts:
+                    sink.store_image(artifact_name, artifact_array, fmt="png")
+                raw_summary = dict(raw_rendered.summary)
+                omitted_empty = raw_candidate_count - len(all_masks_pre)
+                if omitted_empty < 0:
+                    raise CoreError("SAM2 raw candidate accounting is inconsistent")
+                raw_summary.update(
+                    {
+                        "raw_candidate_count": raw_candidate_count,
+                        "omitted_empty_candidate_count": omitted_empty,
+                    }
+                )
+                warnings_out.extend(raw_summary.get("warnings", []))
+                sam2_metadata["raw_visualization"] = raw_summary
+        else:
+            sink = _require_sink("mask_generator.debug")
+            log("[mask_generator debug] => capturing raw SAM2 patches...", 1, verbosity)
+            for idx, mm in enumerate(all_masks_pre):
+                seg = mm["segmentation"]
+                rr, cc = np.nonzero(seg)
+                if len(rr) == 0:
+                    continue
+                patch = image_rgb[rr.min() : rr.max() + 1, cc.min() : cc.max() + 1, :]
+                sink.store_image(f"{frame_id}_sam2-patch{idx:04d}.jpg", patch)
+                log(f"  => captured {frame_id}_sam2-patch{idx:04d}.jpg", 2, verbosity)
 
     post_filter_diagnostics: dict[str, Any] = {}
 

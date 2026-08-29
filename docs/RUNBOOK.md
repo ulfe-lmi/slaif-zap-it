@@ -218,6 +218,21 @@ diagnostic values in the response and `manifest.json`. The two-wide-candidate
 roof scenario is a programmatic CPU regression and must not be reported as a
 real-image accuracy result.
 
+For a raw-SAM2 L3 audit, set only `mask_generator.debug: true`. The service
+returns fixed `sam2-candidates-page-0001.png`..`-0008.png` pages and
+`sam2-union-coverage.png`, `sam2-overlap-heatmap.png`, and
+`sam2-uncovered-pixels.png`; pages are 3x4 with 320x240 content and a 28-pixel
+label bar, capped at 96 represented candidates. IDs are one-based source-order
+IDs, with gaps for empty proposals, and labels show IoU/stability to three
+decimals or `n/a`. The three diagnostics account for every non-empty raw mask,
+including truncated candidates: union is black/white uncovered/covered,
+overlap is a fixed ramp scaled by its observed maximum, and uncovered is the
+exact inverse before nearest-neighbor downscale to at most 2,000,000 pixels.
+Check the typed `service.sam2.raw_visualization` arithmetic, histogram overflow,
+source/diagnostic dimensions and fixed artifact hashes in both JSON and ZIP.
+The request is rejected with `response_too_large` before readiness/gate/engine
+if the fixed 11-artifact or exact RGB reservation cannot fit operator limits.
+
 For a bounded L3 BLIP3 audit, set `debug: true` on one rule. The verifier passes
 each executed question a paired image: untouched context on the left and an
 exact mask spotlight on the right, separated by four dark pixels and outlined

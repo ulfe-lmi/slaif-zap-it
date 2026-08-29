@@ -75,6 +75,28 @@ selected right pixels are unchanged, other exterior pixels retain 40% of each
 channel, and the exterior four-pixel dilation ring is yellow. The artifact
 documents the verifier input but does not guarantee semantic accuracy.
 
+At L3, `mask_generator.debug: true` enables the bounded raw-SAM2 diagnostic.
+The ordinary combined overlay is insufficient to audit overlap ownership, so
+the service emits independent candidate contact-sheet tiles and exact
+all-candidate union, overlap and uncovered diagnostics. Candidate IDs are
+one-based source-order IDs and may have gaps for empty proposals. Pages are
+fixed 3x4 layouts with 320x240 content and a 28-pixel label bar; no more than
+eight pages or 96 candidates are represented. Scores use three decimals or
+`n/a`, and no client text enters an artifact name.
+
+The fixed names are `sam2-candidates-page-0001.png` through
+`sam2-candidates-page-0008.png`, `sam2-union-coverage.png`,
+`sam2-overlap-heatmap.png`, and `sam2-uncovered-pixels.png`. Union is black
+uncovered/white covered, overlap is black at zero with a fixed observed-maximum
+scaled ramp, and uncovered is the exact inverse of union at source resolution.
+The typed `service.sam2.raw_visualization` child reports source and diagnostic
+dimensions, exact coverage counts, bounded overlap histogram/overflow,
+represented IDs and truncation. Preflight reserves at most 11 diagnostic
+artifacts and the exact fixed RGB-array formula before readiness or inference;
+existing encoded response limits still apply. This is bounded visualization
+evidence, not segmentation-quality validation or a solar-array recall/precision
+benchmark.
+
 ## Supported stages
 
 ROI/resize, SAM2 candidate filtering, CLIP label refresh, deterministic ordering,
@@ -104,7 +126,7 @@ separate for reasons other than GPU memory, as documented in
 | Response artifacts | 64 | `SLAIF_ZAP_IT_MAX_RESPONSE_ARTIFACTS` |
 | Debug artifacts | 48 | `SLAIF_ZAP_IT_MAX_DEBUG_ARTIFACTS` |
 | Single raw artifact | 32 MiB | `SLAIF_ZAP_IT_MAX_SINGLE_ARTIFACT_BYTES` |
-| Total raw artifacts | 128 MiB; L3 annotated RGB reservations are deducted before debug sink admission | `SLAIF_ZAP_IT_MAX_TOTAL_RAW_ARTIFACT_BYTES` |
+| Total raw artifacts | 128 MiB; L3 annotated RGB reservations are deducted before debug sink admission; raw-SAM2 debug reserves its fixed worst case before inference | `SLAIF_ZAP_IT_MAX_TOTAL_RAW_ARTIFACT_BYTES` |
 | RLE runs/object | 250,000 | `SLAIF_ZAP_IT_MAX_MASK_RLE_RUNS_PER_OBJECT` |
 | RLE runs/response | 1,000,000 | `SLAIF_ZAP_IT_MAX_MASK_RLE_RUNS_TOTAL` |
 | Response | 256 MiB | `SLAIF_ZAP_IT_MAX_RESPONSE_BYTES` |
@@ -119,9 +141,11 @@ separate for reasons other than GPU memory, as documented in
 
 Budgets are validated at startup and cannot be changed by request YAML. For L3,
 each supported annotated stream reserves exactly `height * width * 3` raw bytes
-before inference; a per-stream overflow or combined overflow is rejected before
-model execution, and the remaining bytes are the debug sink budget. L0-L2 do not
-render or reserve visualization arrays. Raw artifacts are checked before
+before inference; raw SAM2 debug additionally reserves
+`8 * 960 * 1072 * 3 + 3 * diagnostic_width * diagnostic_height * 3` bytes and
+11 artifact slots. A per-stream/fixed-debug overflow or combined overflow is
+rejected before model execution, and the remaining configured-stream bytes are
+the debug sink budget. L0-L2 do not render or reserve visualization arrays. Raw artifacts are checked before
 retention/encoding; JSON checks base64 expansion before encoding, and ZIP writes
 prepared raw bytes directly. RLE and every serialization loop check the absolute
 120-second request deadline. There is no post-hoc artifact truncation.

@@ -127,6 +127,34 @@ each object's source mask/RLE.
 The service supports bounded in-memory annotated and alpha-overlay streams at
 verbosity 3. It preflights raw RGB memory and artifact budgets before inference.
 
+The L3 `mask_generator.debug: true` path has a separate raw-SAM2 diagnostic
+renderer because one combined overlay cannot show which overlapping candidate
+owned a pixel. It emits independent candidate contact-sheet tiles and three
+all-candidate diagnostics: `sam2-union-coverage.png` is black for uncovered
+pixels and white for covered pixels, `sam2-overlap-heatmap.png` is black at zero
+and uses a fixed blue-to-red ramp scaled by the observed maximum overlap, and
+`sam2-uncovered-pixels.png` is the exact source-resolution binary inverse of
+the union before any display downscale. Coverage and overlap counts include
+every non-empty raw mask, including candidates omitted from the bounded sheets.
+
+Candidate IDs are one-based `source_index + 1` values in ascending generator
+order; gaps identify empty raw proposals omitted before remapping. Each page is
+three columns by four rows of 320x240 content tiles plus a 28-pixel label bar,
+with at most eight pages and 96 represented candidates. A tile uses clamped
+context padding of `ceil(10% of the larger bbox dimension)`, at least four
+source pixels, bilinear RGB resizing, nearest-neighbor mask resizing and 45%
+mask-color alpha. Labels use three decimal IoU/stability values, or `n/a` for
+absent/non-finite values. The fixed names are
+`sam2-candidates-page-0001.png` through `-0008.png`, the three diagnostic names
+above, and no client text enters an artifact name.
+
+The manifest reports exact full-resolution covered/uncovered counts, maximum
+overlap and a bounded histogram (keys 0 through 255 plus an exact overflow
+count), source and diagnostic dimensions, represented IDs and truncation. The
+diagnostics never upscale and are nearest-neighbor downscaled to at most
+2,000,000 pixels. Rendering is deterministic for equal inputs in one pinned
+environment; PNG byte identity across arbitrary Pillow versions is not claimed.
+
 Panoptic/Detectron2 rendering and Canny/Hough geometry helpers remain legacy
 components. They are not executed by the canonical service and no absent field
 is fabricated.
