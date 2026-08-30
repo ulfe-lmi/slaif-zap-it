@@ -102,6 +102,32 @@ physical GPU, prove PID/listener continuity across cold-load-infer-drain-
 unload-reload-infer-unload, and record Torch allocated/reserved cold memory
 separately from the small persistent CUDA context.
 
+## Objective 018 mask-view acceptance evidence
+
+The current generated-array evidence includes one exact 512x512 RGB uint8
+high-contrast striped distractor inside a nonrectangular mask bbox. It asserts
+source-space `M`/Euclidean `D` visibility, byte identity under `M`, zero fill
+outside each support, clipped borders/corners, holes, disconnected components,
+radius formula and deterministic PNG hashes. The tiny-mask case independently
+asserts source-space cropping before model-minimum enlargement, bilinear RGB,
+nearest-neighbor mask reapplication and zero- and positive-width contours.
+
+The semantic seams are literal CPU/fake captures: the real CLIP
+`classify_single` path is exercised while a bounded processor records its
+`images=` argument, and the BLIP3 QA holder receives the shared paired image;
+lossless debug PNG decoding is compared with both model inputs. A focused core
+flow carries one-based source candidate IDs and zero-based post-SAM2 filtered
+indices across removal, CLIP, BLIP3, final area ordering, labelled
+visualization, debug records, JSON objects and ZIP manifest objects.
+
+The service matrix validates effective candidate-view policy at verbosity L0,
+L1, L2 and L3, including `applied` false/true behavior. One injected service
+instance performs generated-image A/B/A requests varying both CLIP and BLIP3
+context fractions; resident fake holder identities and initialization counts
+remain stable, while model inputs and effective metadata change for B and
+restore exactly for A2. These are boundary/provenance tests only; they do not
+measure semantic-model accuracy, recall or precision.
+
 Every OAP order names exact commands and broad/focused scope. “All tests passed”
 means the entire named set ran and passed. Local success never substitutes for a
 required GitHub check.
