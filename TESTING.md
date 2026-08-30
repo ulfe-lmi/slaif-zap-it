@@ -102,6 +102,36 @@ physical GPU, prove PID/listener continuity across cold-load-infer-drain-
 unload-reload-infer-unload, and record Torch allocated/reserved cold memory
 separately from the small persistent CUDA context.
 
+## Objective 018 mask-view acceptance evidence
+
+The current generated-array evidence includes one exact 512x512 RGB uint8
+high-contrast striped distractor inside a nonrectangular mask bbox. It asserts
+source-space `M`/Euclidean `D` visibility, byte identity under `M`, zero fill
+outside each support, clipped borders/corners, holes, disconnected components,
+radius formula and deterministic PNG hashes. The tiny-mask case independently
+derives its source-space Euclidean `D`, tight context bbox, center-based
+nearest-neighbor mapping and square contour with bounded test-owned brute-force
+oracles; Pillow bilinear interpolation starts from independently neutralized
+source crops, and zero- and positive-width contours are checked.
+
+The semantic seams are literal CPU/fake captures: the real CLIP
+`classify_single` path is exercised while a bounded processor records its
+`images=` argument, and the BLIP3 QA holder receives the shared paired image;
+lossless debug PNG decoding is compared with both model inputs. A focused core
+flow carries one-based source candidate IDs and zero-based post-SAM2 filtered
+indices across removal, CLIP, BLIP3, final area ordering, labelled
+visualization, debug records, JSON objects and ZIP manifest objects.
+
+The service matrix validates effective candidate-view policy at verbosity L0,
+L1, L2 and L3, including `applied` false/true behavior. One injected service
+instance performs generated-image A/B/A requests varying both CLIP and BLIP3
+context fractions; exact resident fake-holder identities remain stable while
+the actual CLIP `initialize` and BLIP3 `_Blip3QA` construction seams are
+guarded to record any forbidden reinitialization attempt. The observed attempt
+list remains empty, while model inputs and effective metadata change for B and
+restore exactly for A2. These are boundary/provenance tests only; they do not
+measure semantic-model accuracy, recall or precision.
+
 Every OAP order names exact commands and broad/focused scope. “All tests passed”
 means the entire named set ran and passed. Local success never substitutes for a
 required GitHub check.
