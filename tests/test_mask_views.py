@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import hashlib
 import inspect
+import math
 import subprocess
 import sys
 
@@ -239,8 +240,10 @@ def test_border_corner_and_disconnected_source_pixels_have_no_wraparound():
 def test_tiny_mask_builds_source_space_crop_before_resize_and_contour(contour_width):
     image = np.zeros((9, 11, 3), dtype=np.uint8)
     image[3, 4] = (240, 17, 91)
-    prohibited = (253, 251, 249)
-    image[0, 0] = prohibited
+    inside_marker = (17, 91, 211)
+    image[3, 5] = inside_marker
+    outside_marker = (253, 251, 249)
+    image[0, 0] = outside_marker
     mask = np.zeros((9, 11), dtype=bool)
     mask[3, 4] = True
     config = CandidateViewConfig.from_mapping(
@@ -260,29 +263,125 @@ def test_tiny_mask_builds_source_space_crop_before_resize_and_contour(contour_wi
     assert pair.scaled_shape_hw == (256, 256)
     assert pair.scale == 256 / 5
 
-    from modules.verifier.blip3 import _nearest_indices, _square_dilation
+    # Keep these bounded expected-value oracles test-owned.  In particular,
+    # do not derive an expected result through the production mapper/dilator.
+    radius = 2
+    source_rows, source_cols = np.nonzero(mask)
+    expected_distance_squared = np.empty(mask.shape, dtype=np.int64)
+    for source_row in range(mask.shape[0]):
+        for source_col in range(mask.shape[1]):
+            expected_distance_squared[source_row, source_col] = min(
+                (source_row - int(mask_row)) ** 2 + (source_col - int(mask_col)) ** 2
+                for mask_row, mask_col in zip(source_rows, source_cols)
+            )
+    expected_d = expected_distance_squared <= radius**2
+    expected_target_bbox = (
+        int(source_cols.min()),
+        int(source_rows.min()),
+        int(source_cols.max()) + 1,
+        int(source_rows.max()) + 1,
+    )
+    support_rows, support_cols = np.nonzero(expected_d)
+    expected_context_bbox = (
+        int(support_cols.min()),
+        int(support_rows.min()),
+        int(support_cols.max()) + 1,
+        int(support_rows.max()) + 1,
+    )
+    assert expected_distance_squared[3, 5] == 1
+    assert expected_distance_squared[0, 0] > radius**2
+    assert view.target_bbox_xyxy == expected_target_bbox
+    assert view.context_bbox_xyxy == expected_context_bbox
 
-    row_indices = _nearest_indices(5, 256)
-    col_indices = _nearest_indices(5, 256)
+    context_x0, context_y0, context_x1, context_y1 = expected_context_bbox
+    source_crop = image[context_y0:context_y1, context_x0:context_x1]
+    expected_target_mask = mask[context_y0:context_y1, context_x0:context_x1]
+    expected_support_mask = expected_d[context_y0:context_y1, context_x0:context_x1]
+    expected_target_rgb = np.zeros_like(source_crop)
+    expected_target_rgb[expected_target_mask] = source_crop[expected_target_mask]
+    expected_context_rgb = np.zeros_like(source_crop)
+    expected_context_rgb[expected_target_mask] = source_crop[expected_target_mask]
+    context_ring = expected_support_mask & ~expected_target_mask
+    expected_context_rgb[context_ring] = (
+        source_crop[context_ring].astype(np.float32) * config.context_intensity
+    ).astype(np.uint8)
+    source_target_rows, source_target_cols = np.nonzero(expected_target_mask)
+    expected_source_contour = np.zeros_like(expected_target_mask)
+    for row in range(expected_target_mask.shape[0]):
+        for col in range(expected_target_mask.shape[1]):
+            expected_source_contour[row, col] = any(
+                (row - int(mask_row)) ** 2 + (col - int(mask_col)) ** 2 <= contour_width**2
+                for mask_row, mask_col in zip(source_target_rows, source_target_cols)
+            )
+    expected_source_contour &= ~expected_target_mask & expected_support_mask
+    expected_context_rgb[expected_source_contour] = np.array((255, 224, 0), dtype=np.uint8)
+    assert np.array_equal(view.target_mask, expected_target_mask)
+    assert np.array_equal(view.support_mask, expected_support_mask)
+    assert np.array_equal(view.target_rgb, expected_target_rgb)
+    assert np.array_equal(view.context_rgb, expected_context_rgb)
+
+    # This center formula is intentionally repeated in the test rather than
+    # importing the production nearest-neighbor helper.
+    def test_center_nearest_indices(source_length, target_length):
+        indices = []
+        for target_position in range(target_length):
+            center = (target_position + 0.5) * (source_length / float(target_length)) - 0.5
+            indices.append(min(source_length - 1, max(0, math.floor(center + 0.5))))
+        return np.asarray(indices, dtype=np.int64)
+
+    row_indices = test_center_nearest_indices(expected_support_mask.shape[0], 256)
+    col_indices = test_center_nearest_indices(expected_support_mask.shape[1], 256)
     indexer = np.ix_(row_indices, col_indices)
-    target_mask = view.target_mask[indexer]
-    support_mask = view.support_mask[indexer]
-    expected_target = np.asarray(
-        Image.fromarray(view.target_rgb).resize((256, 256), Image.Resampling.BILINEAR)
+    target_mask = expected_target_mask[indexer]
+    support_mask = expected_support_mask[indexer]
+    expected_target_scaled = np.asarray(
+        Image.fromarray(expected_target_rgb).resize((256, 256), Image.Resampling.BILINEAR)
     ).copy()
-    expected_context = np.asarray(
-        Image.fromarray(view.context_rgb).resize((256, 256), Image.Resampling.BILINEAR)
+    expected_context_scaled = np.asarray(
+        Image.fromarray(expected_context_rgb).resize((256, 256), Image.Resampling.BILINEAR)
     ).copy()
-    expected_target[~target_mask] = 0
-    expected_context[~support_mask] = 0
-    expected_context[target_mask] = expected_target[target_mask]
-    expected_contour = _square_dilation(target_mask, contour_width) & ~target_mask & support_mask
-    expected_context[expected_contour] = np.array((255, 224, 0), dtype=np.uint8)
-    assert np.array_equal(pair.paired[:, :256], expected_target)
+    expected_target_scaled[~target_mask] = 0
+    expected_context_scaled[~support_mask] = 0
+    expected_context_scaled[target_mask] = expected_target_scaled[target_mask]
+
+    def test_square_dilation(mask_to_dilate, dilation_radius):
+        result = np.zeros_like(mask_to_dilate)
+        if dilation_radius == 0:
+            return result
+        mask_rows, mask_cols = np.nonzero(mask_to_dilate)
+        for row in range(mask_to_dilate.shape[0]):
+            for col in range(mask_to_dilate.shape[1]):
+                result[row, col] = any(
+                    abs(row - int(mask_row)) <= dilation_radius
+                    and abs(col - int(mask_col)) <= dilation_radius
+                    for mask_row, mask_col in zip(mask_rows, mask_cols)
+                )
+        return result
+
+    expected_contour = (
+        test_square_dilation(target_mask, contour_width) & ~target_mask & support_mask
+    )
+    expected_context_scaled[expected_contour] = np.array((255, 224, 0), dtype=np.uint8)
+    assert np.array_equal(pair.paired[:, :256], expected_target_scaled)
     assert np.array_equal(pair.scaled_mask, target_mask)
     assert np.array_equal(pair.support_mask, support_mask)
-    assert np.array_equal(pair.paired[:, 260:], expected_context)
-    assert not np.any(np.all(pair.paired == prohibited, axis=2))
+    assert np.array_equal(pair.paired[:, 260:], expected_context_scaled)
+    expected_inside_display = np.array(
+        (255, 224, 0) if contour_width else (5, 31, 73), dtype=np.uint8
+    )
+    assert expected_context_rgb[2, 3].tolist() == expected_inside_display.tolist()
+    inside_scaled_rows = np.flatnonzero(row_indices == 2)
+    inside_scaled_cols = np.flatnonzero(col_indices == 3)
+    assert np.any(expected_context_scaled[np.ix_(inside_scaled_rows, inside_scaled_cols)] != 0)
+    assert np.array_equal(
+        pair.paired[:, 260:][np.ix_(inside_scaled_rows, inside_scaled_cols)],
+        expected_context_scaled[np.ix_(inside_scaled_rows, inside_scaled_cols)],
+    )
+    assert not np.any(np.all(expected_target_rgb == np.array(inside_marker), axis=2))
+    assert not np.any(np.all(expected_target_rgb == np.array(outside_marker), axis=2))
+    assert not np.any(np.all(pair.paired[:, :256] == np.array(inside_marker), axis=2))
+    assert not np.any(np.all(pair.paired[:, :256] == np.array(outside_marker), axis=2))
+    assert not np.any(np.all(pair.paired[:, 260:] == np.array(outside_marker), axis=2))
 
     assert np.array_equal(pair.contour, expected_contour)
     assert not np.any(pair.contour & pair.scaled_mask)

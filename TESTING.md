@@ -109,8 +109,10 @@ high-contrast striped distractor inside a nonrectangular mask bbox. It asserts
 source-space `M`/Euclidean `D` visibility, byte identity under `M`, zero fill
 outside each support, clipped borders/corners, holes, disconnected components,
 radius formula and deterministic PNG hashes. The tiny-mask case independently
-asserts source-space cropping before model-minimum enlargement, bilinear RGB,
-nearest-neighbor mask reapplication and zero- and positive-width contours.
+derives its source-space Euclidean `D`, tight context bbox, center-based
+nearest-neighbor mapping and square contour with bounded test-owned brute-force
+oracles; Pillow bilinear interpolation starts from independently neutralized
+source crops, and zero- and positive-width contours are checked.
 
 The semantic seams are literal CPU/fake captures: the real CLIP
 `classify_single` path is exercised while a bounded processor records its
@@ -123,8 +125,10 @@ visualization, debug records, JSON objects and ZIP manifest objects.
 The service matrix validates effective candidate-view policy at verbosity L0,
 L1, L2 and L3, including `applied` false/true behavior. One injected service
 instance performs generated-image A/B/A requests varying both CLIP and BLIP3
-context fractions; resident fake holder identities and initialization counts
-remain stable, while model inputs and effective metadata change for B and
+context fractions; exact resident fake-holder identities remain stable while
+the actual CLIP `initialize` and BLIP3 `_Blip3QA` construction seams are
+guarded to record any forbidden reinitialization attempt. The observed attempt
+list remains empty, while model inputs and effective metadata change for B and
 restore exactly for A2. These are boundary/provenance tests only; they do not
 measure semantic-model accuracy, recall or precision.
 

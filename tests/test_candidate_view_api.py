@@ -68,7 +68,6 @@ class _CandidateViewEngine:
             "max_questions": 32,
             "max_new_tokens": 32,
         }
-        self.holder_initialization_counts = {"clip": 1, "blip3": 1}
         self.holder_ids = []
         self.config_snapshots = []
         self.image_inputs = []
@@ -372,8 +371,26 @@ def _zip_manifest(response):
     return manifest, members
 
 
-def test_candidate_view_policy_levels_and_stable_resident_ab_a_isolation():
+def test_candidate_view_policy_levels_and_stable_resident_ab_a_isolation(monkeypatch):
     engine = _CandidateViewEngine()
+    forbidden_initializations = []
+
+    def fail_clip_initialize(*_args, **_kwargs):
+        if engine.clip_state.get("clip_filter") is not None:
+            forbidden_initializations.append("clip")
+            raise AssertionError("resident CLIP holder was reinitialized")
+        raise AssertionError("unexpected CLIP initialization without a resident holder")
+
+    def fail_blip3_holder(*_args, **_kwargs):
+        if engine.blip_state.get("blip3_qa") is not None:
+            forbidden_initializations.append("blip3")
+            raise AssertionError("resident BLIP3 holder was reinitialized")
+        raise AssertionError("unexpected BLIP3 holder construction without a resident holder")
+
+    # These are the actual fallback construction seams.  If a request silently
+    # discards the supplied holder and constructs a replacement, this test fails.
+    monkeypatch.setattr(clip_module, "initialize", fail_clip_initialize)
+    monkeypatch.setattr(blip3_module, "_Blip3QA", fail_blip3_holder)
     client = TestClient(
         create_app(
             engine=engine,
@@ -397,6 +414,7 @@ def test_candidate_view_policy_levels_and_stable_resident_ab_a_isolation():
             document = response.json()
             CompletionResponse.model_validate(document)
             _assert_effective_policy(document, *fractions[label], applied=True)
+            assert engine.holder_ids[-1] == engine.holder_ids[0]
             responses.append(document)
 
         clip_inputs = engine.clip_inputs[before_clip:]
@@ -451,8 +469,10 @@ def test_candidate_view_policy_levels_and_stable_resident_ab_a_isolation():
                 "identity-mask.png"
             ]
 
-    assert engine.holder_initialization_counts == {"clip": 1, "blip3": 1}
-    assert len(set(engine.holder_ids)) == 1
+    assert forbidden_initializations == []
+    assert len(forbidden_initializations) == 0
+    assert engine.holder_ids
+    assert all(holder_ids == engine.holder_ids[0] for holder_ids in engine.holder_ids)
     assert all(np.array_equal(engine.image_inputs[0], item) for item in engine.image_inputs)
     assert (
         engine.config_snapshots[0]["candidate_views"]
