@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 
 from src.core.config import CoreConfig, config_digest
+from src.core.clip_prompts import summarize_canonical_labels
 from src.core.raw_visualizations import render_raw_sam2_visualizations
 from src.core.results import (
     ObjectResult,
@@ -101,6 +102,7 @@ class FakeEngine:
                 verbosity=verbosity,
                 artifact_sink=artifact_sink,
                 class_labels=class_labels,
+                render_visualizations=render_visualizations,
                 service_safe_artifact_names=service_safe_artifact_names,
             )
         finally:
@@ -116,6 +118,7 @@ class FakeEngine:
         verbosity: int,
         artifact_sink=None,
         class_labels=(),
+        render_visualizations=None,
         service_safe_artifact_names=False,
     ) -> SingleImageOutcome:
         self.calls.append(
@@ -217,18 +220,55 @@ class FakeEngine:
         route_counts = {}
         if clip_labels:
             for index, mask_record in enumerate(filtered):
-                scores = {
-                    str(label): round(0.80 - 0.03 * label_index - 0.01 * index, 4)
-                    for label_index, label in enumerate(labels_cycle)
-                }
+                scores = {}
+                prompt_indices = {}
+                for label_index, label in enumerate(labels_cycle):
+                    configured_prompts = (config.clip_cfg.get("labels", {}) or {}).get(label, "")
+                    prompts = (
+                        [configured_prompts]
+                        if isinstance(configured_prompts, str)
+                        else configured_prompts
+                        if isinstance(configured_prompts, (list, tuple))
+                        else [""]
+                    )
+                    prompt_scores = [
+                        round(0.80 - 0.03 * label_index - 0.001 * prompt_index - 0.01 * index, 4)
+                        for prompt_index, _prompt in enumerate(prompts)
+                    ]
+                    score = max(prompt_scores) if prompt_scores else 0.0
+                    scores[str(label)] = score
+                    prompt_indices[str(label)] = (
+                        min(
+                            prompt_index
+                            for prompt_index, prompt_score in enumerate(prompt_scores)
+                            if prompt_score == score
+                        )
+                        if prompt_scores
+                        else 0
+                    )
                 mask_record["clip_scores"] = scores
                 winner = max(scores, key=lambda label: (scores[label], -list(scores).index(label)))
                 mask_record["clip_label"] = winner
                 mask_record["clip_score"] = scores[winner]
+                mask_record["_clip_winning_prompt_indices"] = prompt_indices
+                mask_record["_clip_winning_prompt_index"] = prompt_indices[winner]
+                prompts = (config.clip_cfg.get("labels", {}) or {}).get(winner, "")
+                prompts = [prompts] if isinstance(prompts, str) else prompts
+                mask_record["_clip_winning_prompt"] = (
+                    prompts[prompt_indices[winner]] if prompts else ""
+                )
         if config.clip_routing_cfg:
             routed, routing_diagnostics, route_counts = apply_clip_routing(
                 filtered, config.clip_routing_cfg
             )
+            for mask_record, diagnostic in zip(filtered, routing_diagnostics):
+                prompt_indices = mask_record.get("_clip_winning_prompt_indices")
+                if isinstance(prompt_indices, dict):
+                    diagnostic["winning_prompt_indices"] = dict(prompt_indices)
+                    diagnostic["winning_prompt_index"] = mask_record.get(
+                        "_clip_winning_prompt_index"
+                    )
+                    diagnostic["winning_prompt"] = mask_record.get("_clip_winning_prompt")
         clip_scored_count = len(filtered)
         objects: List[ObjectResult] = []
         for instance_id, mask_record in enumerate(
@@ -328,6 +368,32 @@ class FakeEngine:
                 detail="fake",
             ),
         )
+        clip_prompt_metadata = dict(config.clip_prompt_metadata)
+        if not clip_prompt_metadata and isinstance(config.clip_cfg, dict):
+            labels = config.clip_cfg.get("labels", {})
+            if isinstance(labels, dict):
+                summary = summarize_canonical_labels(labels)
+                if summary.total_prompt_count:
+                    clip_prompt_metadata = summary.as_dict()
+
+        rendered = {}
+        if (
+            service_safe_artifact_names
+            and verbosity >= 3
+            and render_visualizations is not False
+            and config.vis_cfg
+        ):
+            from modules.visualizer import generate_visualizations
+
+            rendered = generate_visualizations(
+                image_rgb,
+                {"sam2": candidates, "clip": filtered, "blip3": routed},
+                config.vis_cfg,
+                default_alpha=config.alpha,
+                verbosity=verbosity,
+                final_objects=tuple(objects),
+            )
+
         result = PipelineResult(
             image_height=int(height),
             image_width=int(width),
@@ -356,7 +422,7 @@ class FakeEngine:
                     else {}
                 ),
             },
-            rendered={},
+            rendered=rendered,
             warnings=tuple(result_warnings),
             timings={
                 "stage.sam2": 0.5,
@@ -377,6 +443,7 @@ class FakeEngine:
             post_filter_diagnostics=post_filter_diagnostics,
             sam2_metadata=sam2_metadata,
             clip_routing_diagnostics=tuple(routing_diagnostics),
+            clip_prompt_metadata=clip_prompt_metadata,
         )
         return SingleImageOutcome(
             result=result,

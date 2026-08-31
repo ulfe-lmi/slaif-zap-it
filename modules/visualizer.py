@@ -448,12 +448,13 @@ def generate_visualizations(
     log = log_print_func or (lambda *a, **k: None)
     outputs: Dict[str, np.ndarray] = {}
 
-    for stage_name, entry in _iter_stage_entries(vis_cfg):
+    for stream_index, (stage_name, entry) in enumerate(_iter_stage_entries(vis_cfg), start=1):
         vis_id = entry["id"]
         renderer = entry["renderer"].lower()
         masks = list(masks_by_stage.get(stage_name, []))
         log(
-            f"[visualizer] => rendering '{vis_id}' using stage '{stage_name}' and renderer '{renderer}'",
+            f"[visualizer] => rendering stream-{stream_index:04d} using stage "
+            f"'{stage_name}' and renderer '{renderer}'",
             2,
             verbosity,
         )
@@ -478,6 +479,6 @@ def generate_visualizations(
         elif renderer == "panoptic":
             outputs[vis_id] = build_panoptic_final(image_np, masks)
         else:
-            raise ValueError(f"Unknown renderer '{renderer}' for visualization '{vis_id}'")
+            raise ValueError(f"Unknown renderer '{renderer}' for visualization stream")
 
     return outputs

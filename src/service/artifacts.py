@@ -14,12 +14,26 @@ from typing import Any, Mapping, Optional
 
 from src.core.sinks import ArtifactSinkError
 
+from .yaml_input import VISUALIZATION_ID_PATTERN
+
 __all__ = ["ArtifactSelection", "ArtifactDeliveryLedger"]
 
 _STAGES = ("sam2", "clip", "blip3", "visualization")
 _CANDIDATE_RE = re.compile(r"CANDIDATE-(\d+)")
 _QUESTION_RE = re.compile(r"QUESTION-(\d+)")
 _MAX_OMISSIONS = 576
+_VISUALIZATION_ID = re.compile(VISUALIZATION_ID_PATTERN)
+
+
+def _validate_visualization_id(value: Optional[str], *, stage: str) -> None:
+    if value is None:
+        return
+    if (
+        stage != "visualization"
+        or not isinstance(value, str)
+        or _VISUALIZATION_ID.fullmatch(value) is None
+    ):
+        raise ArtifactSinkError("visualization_id is only valid for safe visualization streams")
 
 
 def _stage_for_name(name: str) -> str:
@@ -98,6 +112,7 @@ class _LedgerEntry:
     media_type: str = "image/png"
     status: str = "stored"
     payload_size: Optional[int] = None
+    visualization_id: Optional[str] = None
 
     @property
     def delivered(self) -> bool:
@@ -208,6 +223,7 @@ class ArtifactDeliveryLedger:
         estimated_raw_bytes: int,
         media_type: str = "image/png",
         sink: bool = False,
+        visualization_id: Optional[str] = None,
     ) -> str:
         """Offer one artifact and return its public status.
 
@@ -219,6 +235,7 @@ class ArtifactDeliveryLedger:
         normalized_stage = stage or _stage_for_name(name)
         if not isinstance(normalized_stage, str) or normalized_stage not in _STAGES:
             raise ArtifactSinkError("artifact stage is not supported")
+        _validate_visualization_id(visualization_id, stage=normalized_stage)
         if not isinstance(media_type, str) or not media_type:
             raise ArtifactSinkError("artifact media type must be a non-empty string")
         try:
@@ -234,6 +251,7 @@ class ArtifactDeliveryLedger:
                 or existing.question_id != question_id
                 or existing.estimated_raw_bytes != normalized_size
                 or existing.media_type != media_type
+                or existing.visualization_id != visualization_id
             ):
                 raise ArtifactSinkError("contradictory duplicate artifact offer")
             return existing.status
@@ -244,6 +262,7 @@ class ArtifactDeliveryLedger:
             question_id=question_id,
             estimated_raw_bytes=normalized_size,
             media_type=media_type,
+            visualization_id=visualization_id,
         )
         if not self.selection.applied:
             entry.status = "not_selected_stage"
@@ -298,6 +317,7 @@ class ArtifactDeliveryLedger:
         estimated_raw_bytes: int,
         payload_size: int,
         media_type: str,
+        visualization_id: Optional[str] = None,
     ) -> str:
         status = self.offer(
             name,
@@ -305,6 +325,7 @@ class ArtifactDeliveryLedger:
             estimated_raw_bytes=estimated_raw_bytes,
             media_type=media_type,
             sink=True,
+            visualization_id=visualization_id,
         )
         if status == "stored":
             self.mark_payload_size(name, payload_size)
@@ -315,13 +336,19 @@ class ArtifactDeliveryLedger:
         if not name or name in self._by_name:
             return
         source_candidate_id, question_id = self._identity(name)
+        stage = str(item.get("stage", _stage_for_name(name)))
+        visualization_id = item.get("visualization_id")
+        if visualization_id is not None and not isinstance(visualization_id, str):
+            raise ArtifactSinkError("visualization_id must be a string")
+        _validate_visualization_id(visualization_id, stage=stage)
         entry = _LedgerEntry(
             name=name,
-            stage=str(item.get("stage", _stage_for_name(name))),
+            stage=stage,
             source_candidate_id=item.get("source_candidate_id", source_candidate_id),
             question_id=item.get("question_id", question_id),
             estimated_raw_bytes=max(int(item.get("estimated_raw_bytes", 0)), 0),
             status=str(item.get("reason", "omitted_raw_total_limit")),
+            visualization_id=visualization_id,
         )
         self._record(entry)
 
@@ -380,6 +407,11 @@ class ArtifactDeliveryLedger:
                 "question_id": entry.question_id,
                 "estimated_raw_bytes": entry.estimated_raw_bytes,
                 "reason": entry.status,
+                **(
+                    {"visualization_id": entry.visualization_id}
+                    if entry.visualization_id is not None
+                    else {}
+                ),
             }
             for entry in entries
             if (entry.budget_omitted or entry.selection_excluded)

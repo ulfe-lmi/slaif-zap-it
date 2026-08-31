@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Tuple
+from inspect import Parameter, signature
+from typing import Any, Dict, List, Mapping, Tuple
 
 import numpy as np
 from PIL import Image
+
+CLIP_TEXT_CONTEXT_LENGTH = 77
 
 
 class _DryRunClipFilter:
@@ -66,6 +69,10 @@ class _DryRunClipFilter:
                 mask["clip_label"] = winner
                 mask["clip_score"] = scores[winner]
                 mask["clip_prompt"] = self.class_map[winner][0]
+                prompt_indices = {label: 0 for label in labels}
+                mask["_clip_winning_prompt_indices"] = prompt_indices
+                mask["_clip_winning_prompt_index"] = 0
+                mask["_clip_winning_prompt"] = self.class_map[winner][0]
             self.log_print(
                 f"[_DryRunClipFilter] scored {len(masks)} masks over {len(labels)} labels",
                 2,
@@ -86,7 +93,7 @@ class _DryRunClipFilter:
 def _class_map_from(
     clip_config: Dict[str, Any], *, canonical_labels: bool = False
 ) -> Dict[str, List[str]]:
-    """Parse canonical one-prompt labels and explicit trusted legacy labels."""
+    """Parse canonical labels and explicit trusted legacy labels."""
     class_map: Dict[str, List[str]] = {}
     labels_cfg = clip_config.get("labels", None)
     if isinstance(labels_cfg, dict):
@@ -94,12 +101,14 @@ def _class_map_from(
             if isinstance(val, str) and canonical_labels:
                 # Canonical API values are one complete prompt.  Commas and
                 # newlines are prompt content, never an implicit list split.
-                class_map[str(cname)] = [val]
+                class_map[str(cname)] = [val.strip()]
             elif isinstance(val, str):
                 flat = val.replace("\n", ",")
                 class_map[str(cname)] = [p.strip() for p in flat.split(",") if p.strip()]
             elif isinstance(val, (list, tuple)):
-                class_map[str(cname)] = [str(prompt) for prompt in val if isinstance(prompt, str)]
+                class_map[str(cname)] = [
+                    prompt.strip() for prompt in val if isinstance(prompt, str)
+                ]
     for key, val in clip_config.items():
         if isinstance(key, str) and key.lower().startswith("label "):
             cname = key.split("label ", 1)[1].strip()
@@ -152,6 +161,7 @@ class _ClipFilter:
             load_kwargs["local_files_only"] = True
         self.processor = CLIPProcessor.from_pretrained(model_name, **load_kwargs)
         self.model = CLIPModel.from_pretrained(model_name, **load_kwargs).to(device)
+        self._verify_text_context()
         if str(clip_config.get("dtype", "auto")).lower() == "float16" and str(device).startswith(
             "cuda"
         ):
@@ -170,18 +180,90 @@ class _ClipFilter:
     def _rebuild_prompt_index(self) -> None:
         """Recompute the flat prompt/class index from ``class_map``."""
         self.class_idx: List[str] = []
+        self.class_prompt_idx: List[int] = []
         self.all_prompts: List[str] = []
         for cname, p_list in self.class_map.items():
-            for prompt in p_list:
+            for prompt_index, prompt in enumerate(p_list):
                 self.all_prompts.append(prompt)
                 self.class_idx.append(cname)
+                self.class_prompt_idx.append(prompt_index)
+
+    @staticmethod
+    def _call_accepts_keyword(callable_obj: Any, name: str) -> bool:
+        try:
+            parameters = signature(callable_obj).parameters.values()
+        except (TypeError, ValueError):
+            return False
+        return any(
+            parameter.name == name or parameter.kind == Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+
+    def _verify_text_context(self) -> None:
+        """Fail closed if the resident pinned CLIP asset is not context-77."""
+        config = getattr(self.model, "config", None)
+        text_config = getattr(config, "text_config", None)
+        if isinstance(config, dict):
+            text_config = config.get("text_config")
+        if isinstance(text_config, dict):
+            model_limit = text_config.get("max_position_embeddings")
+        else:
+            model_limit = getattr(text_config, "max_position_embeddings", None)
+        tokenizer = getattr(self.processor, "tokenizer", None)
+        tokenizer_limit = getattr(tokenizer, "model_max_length", None)
+        if (
+            type(model_limit) is not int
+            or model_limit != CLIP_TEXT_CONTEXT_LENGTH
+            or type(tokenizer_limit) is not int
+            or tokenizer_limit != CLIP_TEXT_CONTEXT_LENGTH
+        ):
+            raise RuntimeError("pinned CLIP tokenizer/model context must be exactly 77 tokens")
+
+    def _validate_prompt_tokens(self) -> tuple[tuple[int, ...], ...] | None:
+        """Run model-aware token validation when the real processor is present."""
+        if not callable(getattr(self.processor, "tokenizer", None)):
+            return None
+        from src.core.clip_prompts import validate_clip_prompt_tokens
+
+        return validate_clip_prompt_tokens(self.processor, self.class_map)
+
+    @staticmethod
+    def _assert_processor_ids_unchanged(
+        inputs: Mapping[str, Any], expected_ids: tuple[tuple[int, ...], ...]
+    ) -> None:
+        from src.core.clip_prompts import input_ids_as_tuple
+
+        observed = inputs.get("input_ids")
+        if observed is None:
+            return
+        if hasattr(observed, "tolist"):
+            observed = observed.tolist()
+        if not isinstance(observed, (list, tuple)):
+            return
+        rows = observed if observed and isinstance(observed[0], (list, tuple)) else [observed]
+        if len(rows) != len(expected_ids):
+            raise RuntimeError("CLIP processor returned an unexpected prompt batch")
+        for row, expected in zip(rows, expected_ids):
+            actual = input_ids_as_tuple(row)
+            if actual[: len(expected)] != expected:
+                raise RuntimeError("CLIP processor altered an accepted prompt")
 
     def _encode_text_prompts(self) -> None:
         torch = self._torch
+        expected_ids = self._validate_prompt_tokens()
+        processor_kwargs = {
+            "text": self.all_prompts,
+            "return_tensors": "pt",
+            "padding": True,
+        }
+        if self._call_accepts_keyword(self.processor, "max_length"):
+            processor_kwargs["max_length"] = CLIP_TEXT_CONTEXT_LENGTH
+        if self._call_accepts_keyword(self.processor, "truncation"):
+            processor_kwargs["truncation"] = True
         with torch.no_grad():
-            text_inputs = self._move_inputs(
-                self.processor(text=self.all_prompts, return_tensors="pt", padding=True)
-            )
+            text_inputs = self._move_inputs(self.processor(**processor_kwargs))
+            if expected_ids is not None:
+                self._assert_processor_ids_unchanged(text_inputs, expected_ids)
             text_emb = self.model.get_text_features(**text_inputs)
             self.text_embeds = text_emb / text_emb.norm(dim=-1, keepdim=True)
 
@@ -225,14 +307,19 @@ class _ClipFilter:
         return (label, score, prompt)
 
     def classify_single_scores(self, patch: np.ndarray, mask_idx: int):
-        """Classify one literal crop and return the complete label score vector."""
+        """Classify one literal crop and retain the historical four-tuple API."""
+        detailed = self.classify_single_scores_detailed(patch, mask_idx)
+        return detailed[:4]
+
+    def classify_single_scores_detailed(self, patch: np.ndarray, mask_idx: int):
+        """Classify a crop with per-class maximum and prompt-index evidence."""
         import time
 
         torch = self._torch
         t0 = time.time()
 
         if self.text_embeds is None or self.text_embeds.numel() == 0:
-            return (None, 0.0, "no prompt", {})
+            return (None, 0.0, "no prompt", {}, {}, None)
 
         with torch.no_grad():
             inp = self._move_inputs(self.processor(images=patch, return_tensors="pt"))
@@ -244,12 +331,26 @@ class _ClipFilter:
                 max(-1.0, min(1.0, float(sim_row[index]))) for index in range(len(self.all_prompts))
             ]
             label_scores: Dict[str, float] = {}
+            label_prompt_indices: Dict[str, int] = {}
             label_prompts: Dict[str, str] = {}
+            prompt_indices = getattr(self, "class_prompt_idx", None)
+            if not isinstance(prompt_indices, list) or len(prompt_indices) != len(self.class_idx):
+                prompt_indices = []
+                seen_indices: Dict[str, int] = {}
+                for label in self.class_idx:
+                    local_index = seen_indices.get(label, 0)
+                    prompt_indices.append(local_index)
+                    seen_indices[label] = local_index + 1
             for index, label in enumerate(self.class_idx):
                 label = label.strip('"')
                 score = values[index]
-                if label not in label_scores or score > label_scores[label]:
+                prompt_index = int(prompt_indices[index])
+                if label not in label_scores or (
+                    score > label_scores[label]
+                    or (score == label_scores[label] and prompt_index < label_prompt_indices[label])
+                ):
                     label_scores[label] = score
+                    label_prompt_indices[label] = prompt_index
                     label_prompts[label] = self.all_prompts[index]
             ordered_labels = (
                 list(self.class_map)
@@ -265,6 +366,12 @@ class _ClipFilter:
             )
             best_score = ordered_scores[best_label]
             best_prompt = label_prompts[best_label]
+            winning_prompt_indices = {
+                label: label_prompt_indices[label]
+                for label in ordered_labels
+                if label in label_prompt_indices
+            }
+            winning_prompt_index = winning_prompt_indices[best_label]
 
         t1 = time.time()
         self.log_print(
@@ -272,7 +379,14 @@ class _ClipFilter:
             2,
             self.verbosity,
         )
-        return (best_label, best_score, best_prompt, ordered_scores)
+        return (
+            best_label,
+            best_score,
+            best_prompt,
+            ordered_scores,
+            winning_prompt_indices,
+            winning_prompt_index,
+        )
 
     def filter_masks(
         self,
@@ -333,15 +447,33 @@ class _ClipFilter:
             # L3 diagnostics without exposing it as a model-control field.
             m["_clip_crop_metadata"] = dict(view_metadata)
             score_method = getattr(self, "classify_single_scores", None)
-            if callable(score_method) and hasattr(self, "class_idx"):
+            detailed_method = getattr(self, "classify_single_scores_detailed", None)
+            if callable(detailed_method) and hasattr(self, "class_idx"):
+                (
+                    best_lbl,
+                    best_sc,
+                    best_prompt,
+                    score_vector,
+                    winning_prompt_indices,
+                    winning_prompt_index,
+                ) = detailed_method(patch, i)
+            elif callable(score_method) and hasattr(self, "class_idx"):
                 best_lbl, best_sc, best_prompt, score_vector = score_method(patch, i)
+                winning_prompt_indices = {}
+                winning_prompt_index = None
             else:
                 best_lbl, best_sc, best_prompt = self.classify_single(patch, i)
                 score_vector = {str(best_lbl): float(best_sc)} if best_lbl is not None else {}
+                winning_prompt_indices = {}
+                winning_prompt_index = None
             m["clip_label"] = best_lbl
             m["clip_score"] = best_sc
             m["clip_scores"] = dict(score_vector)
             m["clip_prompt"] = best_prompt
+            if winning_prompt_indices:
+                m["_clip_winning_prompt_indices"] = dict(winning_prompt_indices)
+                m["_clip_winning_prompt_index"] = winning_prompt_index
+                m["_clip_winning_prompt"] = best_prompt
 
             if debug_enabled and best_prompt is not None:
                 if safe_artifact_names:

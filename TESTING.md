@@ -93,8 +93,19 @@ an explicit operational order creates and secures it.
   brute-force oracle, and two-phase CLIP/BLIP3 debug admission with zero-call
   negative cases;
 - visualization execution policy, final-object labelled pixel/placement/
-  sanitization/confidence checks, geometry pre-inference rejection, metrics
+  sanitization/confidence checks, fixed service-safe ordinal artifact names with
+  logical visualization IDs, JSON/ZIP/omission parity, geometry pre-inference rejection, metrics
   privacy/cardinality and A/B/A state-isolation checks;
+- canonical CLIP scalar/ordered-array normalization, literal scalar punctuation,
+  independent prompt processor inputs, per-class maximum aggregation and
+  lowest-index ties, semantic-class-only routing, bounded prompt counts/
+  characters/tokens, sanitized `invalid_config` details, pre-SAM2 tokenizer
+  rejection, L3 prompt accounting/winning indices, JSON/ZIP parity, and
+  canonical routed BLIP3 `falsecategory` requirement;
+- operator-owned BLIP3 question capacity accepts 32 and 256, rejects invalid
+  startup values, carries no request-YAML control, and maps planned over-limit
+  work to structured `resource_limit` 413 before BLIP3 generation; uploaded
+  BLIP3 rule definitions remain independently capped at 32;
 
 The explicit lifecycle test tier remains CPU/fake-only unless an order grants a
 live qualification. A live qualification must use the exact order-assigned

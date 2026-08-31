@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import re
 import math
-from typing import Annotated, Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
 from src.core.raw_visualizations import validate_raw_sam2_manifest
 
 from .settings import SERVICE_MODEL_ID
+from .yaml_input import VISUALIZATION_ID_PATTERN
 
 __all__ = [
     "ArtifactDescriptor",
@@ -34,6 +35,9 @@ __all__ = [
     "Sam2ConfigValues",
     "Sam2ResourceAlternative",
     "Sam2ResourceLimitDetails",
+    "Blip3ResourceLimitDetails",
+    "ClipPromptValidationDetails",
+    "ClipPromptMetadata",
     "CandidateViewClipConfig",
     "CandidateViewBlip3Config",
     "CandidateViewsMetadata",
@@ -66,6 +70,15 @@ FiniteNonNegativeFloat = Annotated[float, Field(ge=0)]
 
 class ArtifactDescriptor(BaseModel):
     name: str = Field(description="Logical artifact name; never a filesystem path")
+    visualization_id: Optional[str] = Field(
+        default=None,
+        pattern=VISUALIZATION_ID_PATTERN,
+        max_length=64,
+        description=(
+            "Validated logical visualization metadata; omitted for identity/debug artifacts "
+            "and never used as a path or member name"
+        ),
+    )
     media_type: str
     encoding: str = Field(default="base64", description="Always base64 in JSON responses")
     sha256: str = Field(description="SHA-256 hex digest of the artifact bytes")
@@ -77,6 +90,12 @@ class ArtifactOmission(BaseModel):
     """One bounded optional artifact that was not delivered."""
 
     name: str = Field(description="Fixed logical artifact name")
+    visualization_id: Optional[str] = Field(
+        default=None,
+        pattern=VISUALIZATION_ID_PATTERN,
+        max_length=64,
+        description="Logical visualization metadata; never a path or member name",
+    )
     stage: Literal["sam2", "clip", "blip3", "visualization"]
     source_candidate_id: Optional[int] = Field(default=None, ge=1)
     question_id: Optional[int] = Field(default=None, ge=1)
@@ -354,6 +373,57 @@ class Sam2ResourceLimitDetails(BaseModel):
     causing_values: Dict[str, Any]
     admissible_alternatives: List[Sam2ResourceAlternative] = Field(min_length=1, max_length=3)
     warning: str = Field(max_length=256)
+
+
+class Blip3ResourceLimitDetails(BaseModel):
+    """Sanitized evidence for a planned BLIP3 workload over its startup cap."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    planned_questions: int = Field(ge=0, le=1_000_000)
+    allowed_limit: int = Field(ge=1, le=256)
+    controlling_field: Literal["SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS"]
+    admissible_alternatives: List[str] = Field(min_length=1, max_length=3)
+
+
+class ClipPromptValidationDetails(BaseModel):
+    """Sanitized detail for one rejected canonical CLIP prompt input."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: Literal[
+        "too_many_classes",
+        "invalid_container_type",
+        "empty_prompt_array",
+        "invalid_prompt_type",
+        "empty_prompt",
+        "character_limit",
+        "duplicate_prompt",
+        "per_class_count",
+        "total_count",
+        "token_limit",
+    ]
+    class_identifier: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    prompt_index: Optional[int] = Field(default=None, ge=0, le=63)
+    first_prompt_index: Optional[int] = Field(default=None, ge=0, le=63)
+    actual_type: Optional[str] = Field(default=None, min_length=1, max_length=32)
+    measured_class_count: Optional[int] = Field(default=None, ge=0)
+    measured_per_class_count: Optional[int] = Field(default=None, ge=0)
+    measured_total_count: Optional[int] = Field(default=None, ge=0)
+    measured_character_count: Optional[int] = Field(default=None, ge=0)
+    measured_token_count: Optional[int] = Field(default=None, ge=0)
+    allowed_limit: int = Field(ge=0)
+
+
+class ClipPromptMetadata(BaseModel):
+    """Bounded L3 accounting for effective canonical CLIP prompts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    class_prompt_counts: Dict[str, int] = Field(min_length=1, max_length=32)
+    total_prompt_count: int = Field(ge=1, le=256)
+    tokenizer_limit: Literal[77]
+    duplicate_policy: Literal["reject"]
 
 
 class CandidateViewClipConfig(BaseModel):
@@ -661,6 +731,9 @@ class ClipRoutingDiagnostic(BaseModel):
     source_candidate_id: int = Field(ge=1)
     filtered_index: int = Field(ge=0)
     clip_scores: Dict[str, float]
+    winning_prompt_indices: Dict[str, int] = Field(default_factory=dict, max_length=32)
+    winning_prompt_index: Optional[int] = Field(default=None, ge=0, le=63)
+    winning_prompt: Optional[str] = Field(default=None, max_length=512)
     winner: Optional[str] = None
     winning_label: Optional[str] = None
     chosen_target: Optional[str] = None
@@ -782,6 +855,7 @@ class ServiceMetadata(BaseModel):
     sam2: Sam2Metadata
     candidate_views: CandidateViewsMetadata
     clip_routing: Optional[ClipRoutingConfiguration] = None
+    clip_prompts: Optional[ClipPromptMetadata] = None
     artifacts: Optional[List[ArtifactDescriptor]] = None
     artifact_delivery: Optional[ArtifactDeliveryMetadata] = None
     objects: Optional[List[ObjectRecord]] = None
@@ -828,9 +902,14 @@ class ErrorBody(BaseModel):
     code: str
     message: str = Field(description="Sanitized; never contains raw inputs or internals")
     request_id: str
-    details: Optional[Sam2ResourceLimitDetails] = Field(
+    details: Optional[
+        Union[Sam2ResourceLimitDetails, Blip3ResourceLimitDetails, ClipPromptValidationDetails]
+    ] = Field(
         default=None,
-        description="Sanitized structured details, present only for applicable resource_limit errors",
+        description=(
+            "Sanitized structured details for SAM2/BLIP3 resource limits or canonical CLIP "
+            "prompt validation errors"
+        ),
     )
 
 

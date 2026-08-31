@@ -16,7 +16,7 @@ from PIL import Image, ImageFilter
 from src.core.errors import CoreError
 
 
-MAX_SERVICE_QUESTIONS = 32
+MAX_SERVICE_QUESTIONS = 256
 MAX_SERVICE_NEW_TOKENS = 32
 BLIP3_FIXED_INSTRUCTION = (
     "The unblurred region inside the yellow boundary is the selected candidate. "
@@ -394,6 +394,37 @@ def compose_verification_query(target_question: str) -> str:
 class Blip3ResourceLimitError(ValueError):
     """Raised before generation when the service BLIP3 budget is exceeded."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        planned_questions: int | None = None,
+        allowed_limit: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.planned_questions = planned_questions
+        self.allowed_limit = allowed_limit
+
+    @property
+    def details(self) -> dict[str, Any] | None:
+        """Return bounded client-safe planning evidence when available."""
+        if self.planned_questions is None or self.allowed_limit is None:
+            return None
+        alternatives = [
+            "set clip_routing.max_candidates to a lower deterministic cap",
+            "tighten the clip_routing predicates to route fewer candidates",
+        ]
+        if self.allowed_limit < MAX_SERVICE_QUESTIONS:
+            alternatives.append(
+                "raise SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS only up to the 256-question maximum"
+            )
+        return {
+            "planned_questions": int(self.planned_questions),
+            "allowed_limit": int(self.allowed_limit),
+            "controlling_field": "SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS",
+            "admissible_alternatives": alternatives,
+        }
+
 
 # -------------------------------------------------------------------------
 # Safe fallback if transformers isn't present during dry-run
@@ -733,6 +764,33 @@ class _Blip3Filter:
         stem = re.sub(r"[^A-Za-z0-9_.-]", "_", stem).strip("._")
         return stem[:96] or "image"
 
+    @staticmethod
+    def _planned_question_count(masks, any_rules, label_rules) -> int:
+        """Count every request question before any candidate view/model call."""
+        planned_questions = 0
+        for mask in masks:
+            routing = mask.get("clip_routing")
+            if isinstance(routing, dict):
+                if mask.get("_route_to_blip3") and routing.get("chosen_target") in label_rules:
+                    planned_questions += 1
+                continue
+            score = float(mask.get("clip_score", 0.0))
+            planned_questions += sum(
+                1 for threshold, _key, _rule in any_rules if score <= threshold
+            )
+            if mask.get("clip_label") in label_rules:
+                planned_questions += 1
+        return planned_questions
+
+    def _enforce_question_limit(self, planned_questions: int) -> None:
+        """Reject a planned workload before composition or BLIP3 generation."""
+        if self.max_questions is not None and planned_questions > self.max_questions:
+            raise Blip3ResourceLimitError(
+                f"BLIP3 candidate count exceeds the fixed {self.max_questions}-question limit",
+                planned_questions=planned_questions,
+                allowed_limit=self.max_questions,
+            )
+
     def _write_debug_artifact(
         self,
         model_input: np.ndarray,
@@ -800,23 +858,9 @@ class _Blip3Filter:
                 label_rules[key] = rule
 
         if self.max_questions is not None:
-            planned_questions = 0
-            for mask in masks:
-                routing = mask.get("clip_routing")
-                if isinstance(routing, dict):
-                    if mask.get("_route_to_blip3") and routing.get("chosen_target") in label_rules:
-                        planned_questions += 1
-                    continue
-                score = float(mask.get("clip_score", 0.0))
-                planned_questions += sum(
-                    1 for threshold, _key, _rule in any_rules if score <= threshold
-                )
-                if mask.get("clip_label") in label_rules:
-                    planned_questions += 1
-            if planned_questions > self.max_questions:
-                raise Blip3ResourceLimitError(
-                    f"BLIP3 candidate count exceeds the fixed {self.max_questions}-question limit"
-                )
+            self._enforce_question_limit(
+                self._planned_question_count(masks, any_rules, label_rules)
+            )
 
         answers = []
         question_index = 0

@@ -79,6 +79,26 @@ Exactly one request = exactly one `image`, one `config`, one result.
 Unknown multipart fields, duplicate fields and missing required parts are
 rejected with stable codes before any expensive work.
 
+### Canonical CLIP labels
+
+`clip.labels.<identifier>` accepts either one string or an ordered, non-empty
+array of strings. A scalar is one indivisible prompt: commas and internal
+newlines are literal content. Array items are independent processor inputs.
+Leading/trailing Unicode whitespace is trimmed before duplicate detection,
+tokenization, hashing and effective-config serialization; internal content is
+unchanged. Each class accepts 1..64 prompts, the request accepts 1..256 total
+prompts, and each normalized prompt is limited to 512 Unicode codepoints and
+77 tokens including the pinned tokenizer's special tokens. Duplicates within a
+class are rejected; equal text in different classes is allowed.
+
+The resident CLIP processor encodes every item separately. Each candidate's
+score for a semantic class is the maximum of its prompt similarities, with the
+lowest prompt index winning an equal-score tie. Routing receives only the
+complete configured-order semantic-class vector; prompt identifiers are never
+routing labels. L3 adds `service.clip_prompts` counts, tokenizer limit and
+duplicate policy, plus per-class and overall winning prompt indices/text in
+`clip_routing_diagnostics`. Lower levels do not add this diagnostic payload.
+
 ## Verbosity levels (monotonic information)
 
 - **L0**: completion envelope + normalized YOLO lines in `choices[0].text`
@@ -94,6 +114,7 @@ rejected with stable codes before any expensive work.
   answer when present, geometry hook when present, one-based
   `source_candidate_id` and zero-based post-SAM2 `filtered_index`).
 - **L3**: L2 + stage statuses, candidate counts, post-filter diagnostics, timings, provenance,
+  CLIP prompt counts and winning-prompt evidence,
   aggregate warnings, bounded annotated/debug artifacts, one bounded
   `blip3_candidate_views` record per applicable candidate, one-for-one debug
   input records, and one exact per-object uncompressed
@@ -158,6 +179,11 @@ Binary artifacts use one stable object shape:
 {"name": "...", "media_type": "...", "encoding": "base64",
  "sha256": "...", "size": 1234, "data": "<base64>"}
 ```
+
+For an L3 service visualization, the descriptor additionally carries
+`visualization_id`, the validated configured stream ID as logical metadata.
+Identity and candidate/debug descriptors omit it. The field never changes the
+fixed service member name (`visualization/stream-####.png`).
 
 ZIP responses contain `manifest.json` (the full envelope without base64
 payloads), `detections.yolo.txt`, `identity-mask.png` when applicable, and
@@ -428,7 +454,7 @@ Stable sanitized envelope on every failure:
 | `missing_part` | 400 | image or config missing |
 | `duplicate_part` | 400 | any field provided twice |
 | `invalid_image` | 400 | corrupt/unknown media outside JPEG/PNG/WebP |
-| `invalid_config` | 400 | non-UTF-8, non-mapping, unparseable YAML |
+| `invalid_config` | 400 | non-UTF-8, non-mapping, unparseable YAML, or invalid/overlong canonical CLIP prompt |
 | `unsafe_config` | 400 | forbidden keys/values, aliases, bound violations |
 | `unsupported_field` | 400 | unknown multipart field / unknown top-level key |
 | `unsupported_verbosity` | 400 | not canonical 0..3 |
@@ -438,7 +464,7 @@ Stable sanitized envelope on every failure:
 | `unauthorized` | 401 | missing/wrong bearer key |
 | `payload_too_large` | 413 | upload/body byte limits |
 | `image_too_large` | 413 | decoded pixels over cap |
-| `resource_limit` | 413 | SAM2 field or estimated-work cap exceeded; details include sanitized alternatives |
+| `resource_limit` | 413 | SAM2 field/estimated-work or planned BLIP3 question cap exceeded; details include sanitized alternatives |
 | `response_too_large` | 413 | essential JSON/ZIP document still exceeds response cap after optional tail omission |
 | `cancelled` | 499* | cancelled before completion |
 | `inference_failure` | 500 | engine failure (sanitized) |
@@ -453,6 +479,30 @@ Stable sanitized envelope on every failure:
 
 Messages never include stack traces, raw YAML/image bytes, host paths,
 secrets or environment data.
+
+Canonical CLIP prompt failures include a bounded `error.details` object with
+the safe class identifier and zero-based prompt index when applicable, a stable
+reason, measured character/token/per-class/total count, actual safe type name,
+the first equal prompt index for duplicates, and the allowed limit. Prompt text
+and tokenizer IDs are never returned. The exact tokenizer's 78-token failure is
+therefore HTTP 400 `invalid_config` before SAM2 or model inference.
+
+The service accepts at most 32 uploaded BLIP3 rule definitions during config
+validation. BLIP3 execution capacity is operator-owned and immutable for the
+process: the `SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` startup setting accepts 1..256
+and defaults to 256 planned questions/request. Canonical routing plans at most
+one question per routed candidate; legacy multi-rule scheduling shares the
+total cap. A planned excess returns HTTP 413 `resource_limit` with `planned_questions`,
+`allowed_limit`, `controlling_field`, and bounded `admissible_alternatives`
+before BLIP3 composition/generation. This is distinct from
+`response_too_large`, which means response assembly itself exceeded its budget.
+
+At L3, service visualization artifacts use fixed ordinal names such as
+`visualization/stream-0001.png`. The validated configured stream ID is logical
+metadata in `visualization_id` on the JSON descriptor, ZIP manifest descriptor,
+and any omission record; it is never a filesystem path or ZIP member name.
+Identity masks and candidate/debug artifacts omit that field. JSON and ZIP
+descriptors retain identical names, IDs, hashes, and sizes for delivered bytes.
 
 ## Data lifecycle
 
@@ -495,9 +545,11 @@ measured evidence and deployment prerequisites.
 - Live readiness requires the operator launcher, a freshly pinned exclusive
   GPU, and the complete local model cache.
 - No streaming; no asynchronous jobs; no video API.
-- BLIP3 request rules are bounded to 32 questions and 32 generated tokens per
-  question. Model identity, revision, dtype, device and residency are fixed
-  operator policy; they cannot be selected by YAML or multipart fields.
+- BLIP3 uploaded request YAML is bounded at 32 rule definitions. Planned BLIP3
+  work is separately bounded by the operator-only 1..256 planned-question
+  capacity (default 256) and 32 generated tokens per question. Model identity,
+  revision, dtype, device and residency are fixed operator policy; they cannot
+  be selected by YAML or multipart fields.
 - Canny/Hough geometry and panoptic visualization remain explicitly unsupported
   service capabilities; `annotated-labelled` is the supported final-object
   labelled visualization. Optional `postsam2processing` impossibility geometry
@@ -511,8 +563,8 @@ measured evidence and deployment prerequisites.
 
 ## Objective 020 semantic contract
 
-API CLIP labels are mappings of safe identifiers to one complete natural-language
-prompt. `candidate_views.clip.mode` is always `raw_bbox_crop`; masked, filled,
+API CLIP labels map safe identifiers to one complete natural-language prompt or
+an ordered array of independent prompts. `candidate_views.clip.mode` is always `raw_bbox_crop`; masked, filled,
 dimmed, or padded views are not accepted by the API. `clip_routing.route_to_blip3`
 uses OR conditions for top-1, top-k, score margin, minimum target score, and
 uncertain winners, with deterministic reasons and a source-ID-ranked cap.
@@ -521,4 +573,7 @@ available in service metadata. The selected target rule asks BLIP3 once using
 the existing delimited question and exact normalized true/false token mapping,
 with an exact true match selecting `newcategory`, an exact false or unmatched
 answer selecting configured `falsecategory`, and the mapping recorded.
+Canonical routed BLIP3 rules require non-empty `question`, `trueresult`,
+`falseresult`, `newcategory`, and `falsecategory`; trusted legacy rules remain
+separate.
 L2 objects carry their own semantic evidence; JSON and ZIP metadata agree.

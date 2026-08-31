@@ -28,6 +28,7 @@ from starlette.requests import ClientDisconnect
 from starlette.responses import Response
 
 from src.core.config import CoreConfig, config_digest
+from src.core.clip_prompts import ClipPromptValidationError
 from src.core.sinks import ArtifactBudget, ArtifactSinkError, BoundedMemoryArtifactSink
 from src.runtime.strategy import RuntimePolicy, UnsupportedProfileError
 
@@ -156,6 +157,7 @@ def create_app(
     model_registry: Any | None = None,
     lifecycle_controller: Any | None = None,
     enable_docs: bool = True,
+    clip_prompt_validator: Optional[Callable[[Mapping[str, Any]], None]] = None,
 ) -> FastAPI:
     """Build the service app around an explicitly injected engine.
 
@@ -567,7 +569,11 @@ def create_app(
         )
         check_deadline()
         core_config = CoreConfig.from_mapping(validated.effective_mapping)
-        core_config = dataclass_replace(core_config, sam2_metadata=validated.sam2_metadata)
+        core_config = dataclass_replace(
+            core_config,
+            sam2_metadata=validated.sam2_metadata,
+            clip_prompt_metadata=validated.clip_prompt_metadata,
+        )
         if runtime_policy is not None:
             try:
                 runtime_policy.validate_config(core_config)
@@ -612,6 +618,20 @@ def create_app(
                 budget = remaining_budget()
                 if budget <= 0:
                     raise ServiceError("request deadline exceeded", code="timeout")
+                if clip_prompt_validator is not None and core_config.clip_cfg:
+                    try:
+                        clip_prompt_validator(core_config.clip_cfg)
+                    except ClipPromptValidationError as exc:
+                        raise ServiceError(
+                            exc.message,
+                            code="invalid_config",
+                            details=exc.details,
+                        ) from exc
+                    except Exception as exc:
+                        raise ServiceError(
+                            "CLIP prompt preflight failed",
+                            code="inference_failure",
+                        ) from exc
                 try:
                     inference_started = time.monotonic()
                     metrics.reset_gpu_peaks()

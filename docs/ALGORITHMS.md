@@ -62,10 +62,14 @@ keep-label filtering occurs after optional relabeling.
 ## CLIP classification
 
 CLIP scores every surviving geometry candidate. In the service, each safe
-machine identifier maps to exactly one natural-language prompt; the trusted CLI
-alone retains multi-prompt and flattened-key compatibility. The service sends
-the untouched rectangular `raw_bbox_crop` to CLIP, preserves the complete
-cosine vector in configuration order, and records its deterministic winner.
+machine identifier maps to one indivisible natural-language prompt or an
+ordered array of independent prompts; the trusted CLI retains its separate
+multi-prompt and flattened-key compatibility. Canonical prompts are trimmed at
+the boundaries and bounded to 64 per class, 256 total, 512 Unicode codepoints
+and 77 pinned-tokenizer tokens, with within-class duplicates rejected. The
+service sends the untouched rectangular `raw_bbox_crop` to CLIP, preserves the
+complete semantic-class cosine vector in configuration order, and records the
+maximum-scoring prompt index per class with lowest-index ties.
 The permissive `clip_routing` conditions, rather than the winner alone, decide
 BLIP3 admission.
 
@@ -83,10 +87,15 @@ service routing selects one target rule per candidate, asks a bounded question,
 compares normalized true/false tokens exactly, and assigns a request-authored
 terminal class. Trusted CLI retains explicit low-score/substring compatibility.
 
-Service requests provide only rule mappings. The model, revision, FP16 dtype,
-tokenizer, processor, device, cache, and residency strategy remain pinned. The
-service limits each request to 32 planned questions and 32 generated tokens per
-question. Each applicable candidate is composed once into one RGB image. Its
+Service requests provide only rule mappings, with at most 32 uploaded BLIP3
+rule definitions. The model, revision, FP16 dtype, tokenizer, processor,
+device, cache, and residency strategy remain pinned. The service limits planned
+BLIP3 work to an immutable operator-owned 1..256 questions/request, defaulting
+to 256, and 32 generated tokens per question. The
+`SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` setting is not request YAML; canonical routing
+plans at most one question per routed candidate, while legacy multi-rule
+scheduling shares the same total cap. A planned excess is a structured
+`resource_limit` 413 before composition or generation. Each applicable candidate is composed once into one RGB image. Its
 inclusive raw-mask bbox determines a bounded centered crop; exact Euclidean
 dilation produces support, and a second exact dilation produces an exterior
 contour. Support D pixels are restored from source bytes while the exterior
@@ -202,7 +211,10 @@ the complete rectangular source crop and supplies all finite cosine similarities
 in configuration order; a permissive OR router chooses which target question
 BLIP3 verifies. BLIP3 receives one separately composed contextual image and its
 request-authored answer mapping determines the terminal label. CLIP identifiers
-are machine-safe keys while their natural-language values are the exact prompts.
+are machine-safe keys while their natural-language values are the exact
+normalized prompts. Routing consumes only the semantic-class score vector,
+never a flattened prompt identifier. Canonical routed BLIP3 rules require
+`question`, `trueresult`, `falseresult`, `newcategory`, and `falsecategory`.
 
 The raw CLIP radius is `floor(context_fraction * max(inclusive_bbox_width,
 inclusive_bbox_height) + 0.5)`, then min/max bounded and clamped to the source.

@@ -79,6 +79,7 @@ class _RawArtifact:
     name: str
     media_type: str
     payload: bytes
+    visualization_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -89,9 +90,15 @@ class _PreparedResponse:
     ledger: ArtifactDeliveryLedger
 
 
-def _artifact(name: str, media_type: str, payload: bytes) -> Dict[str, Any]:
+def _artifact(
+    name: str,
+    media_type: str,
+    payload: bytes,
+    *,
+    visualization_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """Build the public JSON artifact descriptor (small compatibility seam)."""
-    return {
+    descriptor = {
         "name": name,
         "media_type": media_type,
         "encoding": "base64",
@@ -99,6 +106,9 @@ def _artifact(name: str, media_type: str, payload: bytes) -> Dict[str, Any]:
         "size": len(payload),
         "data": base64.b64encode(payload).decode("ascii"),
     }
+    if visualization_id is not None:
+        descriptor["visualization_id"] = visualization_id
+    return descriptor
 
 
 def _encode_png(array: np.ndarray) -> bytes:
@@ -213,7 +223,12 @@ def _stored_sink_artifact(stored: StoredArtifact) -> _RawArtifact:
         if stored.kind == "image-array":
             if stored.array is None:
                 raise ValueError("missing image array")
-            return _RawArtifact(stored.name, "image/png", _encode_png(stored.array))
+            return _RawArtifact(
+                stored.name,
+                "image/png",
+                _encode_png(stored.array),
+                stored.visualization_id,
+            )
         if stored.kind == "record":
             payload = json.dumps(stored.record, default=str, sort_keys=True).encode("utf-8")
             return _RawArtifact(stored.name, "application/json", payload)
@@ -278,6 +293,7 @@ def _collect_raw_artifacts(
                     ),
                     payload_size=len(raw_artifact.payload),
                     media_type=raw_artifact.media_type,
+                    visualization_id=raw_artifact.visualization_id,
                 )
                 if ledger.status_for(raw_artifact.name) == "stored":
                     artifacts.append(raw_artifact)
@@ -286,9 +302,12 @@ def _collect_raw_artifacts(
                 for omission in sink.omissions():
                     ledger.import_omission(omission)
 
-        for visualization_index, (key, array) in enumerate(
-            sorted(result.rendered.items(), key=lambda item: str(item[0])), start=1
-        ):
+        rendered_items = (
+            result.rendered.items()
+            if context.service_safe_artifact_names
+            else sorted(result.rendered.items(), key=lambda item: str(item[0]))
+        )
+        for visualization_index, (key, array) in enumerate(rendered_items, start=1):
             _check_deadline(context)
             safe_key = (
                 f"stream-{visualization_index:04d}"
@@ -297,15 +316,17 @@ def _collect_raw_artifacts(
             )
             payload = _encode_png(array)
             name = f"visualization/{safe_key}.png"
+            visualization_id = str(key) if context.service_safe_artifact_names else None
             status = ledger.offer(
                 name,
                 stage="visualization",
                 estimated_raw_bytes=int(array.nbytes),
                 media_type="image/png",
+                visualization_id=visualization_id,
             )
             ledger.mark_payload_size(name, len(payload))
             if status == "stored":
-                artifacts.append(_RawArtifact(name, "image/png", payload))
+                artifacts.append(_RawArtifact(name, "image/png", payload, visualization_id))
             _check_deadline(context)
     _check_deadline(context)
     return tuple(artifacts), ledger
@@ -326,6 +347,8 @@ def _artifact_descriptor(
         "sha256": hashlib.sha256(artifact.payload).hexdigest(),
         "size": len(artifact.payload),
     }
+    if artifact.visualization_id is not None:
+        descriptor["visualization_id"] = artifact.visualization_id
     if include_data:
         _check_absolute_deadline(deadline_monotonic)
         descriptor["data"] = base64.b64encode(artifact.payload).decode("ascii")
@@ -392,6 +415,8 @@ def _prepare(
         service_meta["clip_routing_diagnostics"] = [
             dict(record) for record in result.clip_routing_diagnostics
         ]
+    if context.verbosity >= 3 and getattr(result, "clip_prompt_metadata", None):
+        service_meta["clip_prompts"] = dict(result.clip_prompt_metadata)
     if context.verbosity >= 1:
         service_meta["artifacts"] = [
             _artifact_descriptor(

@@ -20,6 +20,7 @@ from src.service.yaml_input import parse_hostile_config
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = REPO_ROOT / "configs"
+FIXTURE_CONFIG_DIR = REPO_ROOT / "tests" / "fixtures" / "configs"
 # Every tracked YAML under configs/ is a service example and must pass the same
 # hostile parser and default operator capacity gate as an uploaded request.
 EXAMPLE_CONFIGS = sorted(CONFIG_DIR.glob("*.yaml"))
@@ -61,6 +62,17 @@ def test_example_configs_pass_service_validator_and_core_boundary(config_path):
     assert core.sam2_cfg == validated.sam2_metadata["effective"] | {
         "debug": bool(core.sam2_cfg.get("debug", False))
     }
+
+
+@pytest.mark.parametrize(
+    "config_path", sorted(FIXTURE_CONFIG_DIR.glob("*.yaml")), ids=lambda p: p.name
+)
+def test_shipped_service_fixtures_pass_public_validator_and_operator_limits(config_path):
+    validated = parse_hostile_config(
+        config_path.read_bytes(), verbosity=3, settings=ServiceSettings()
+    )
+    assert validated.clip_prompt_metadata["total_prompt_count"] <= 256
+    assert validated.effective_mapping["clip"]["labels"]
 
 
 def test_roi_false_is_normalized_to_none(tmp_path):

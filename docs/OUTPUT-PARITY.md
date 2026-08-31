@@ -15,9 +15,10 @@ module or helper is not evidence that the live service produces its output.
 | SAM2 candidate masks and quality fields | Candidate masks are filtered and ordered | Public L2 fields when produced; bounded L3 counts/status |
 | Request-local SAM2 generator policy | Resident model is reused; a fresh generator is built from strict effective scalars per request | `service.sam2` at every level and in ZIP manifest; raw candidate count is separate from post-remap L3 count |
 | Post-SAM2 area/bbox filter | Removes candidates before optional classification; one deterministic short-circuit reason and bounded numeric records are retained | Public L3 candidate counts/status and `post_filter_diagnostics` |
-| CLIP labels, complete scores and class map | One service prompt per safe identifier refreshes resident CLIP text embeddings; every surviving candidate receives the full ordered cosine vector before routing | Public L0 class mapping, L2 winner/score, L3 complete vectors and routing provenance |
+| CLIP labels, complete scores and class map | Each safe identifier owns one indivisible scalar prompt or an ordered array of independent prompts; every item refreshes resident CLIP text embeddings, class scores use the maximum prompt similarity with lowest-index ties, and routing sees only semantic classes | Public L0 class mapping, L2 winner/score, L3 complete vectors, prompt accounting and routing provenance |
 | Candidate views for CLIP/BLIP3 | CLIP uses an untouched rectangular raw source crop; trusted CLI may explicitly retain its exact-mask compatibility view; BLIP3 uses one source-space image with exact Euclidean support, exterior contour and Gaussian-blurred scene context | Effective policy at every response level; L3 composition records and exact lossless processor/QA PNGs; this is pixel-boundary evidence, not an accuracy guarantee |
 | BLIP3 verification | Pinned FP16 holder; each candidate is composed once and every applicable QA call reuses the same one-image input; residency remains capacity-selected | Public L2/L3 fields when executed; candidate-local containment rejection is bounded and non-mutating; L3 debug returns the exact sole QA PNG under the tokenized CANDIDATE/QUESTION name |
+| BLIP3 rule/question admission | Uploaded YAML allows at most 32 rule definitions; the separate operator-owned startup limit defaults to 256 and accepts 1..256 planned questions/request; canonical routing plans at most one question per routed candidate and legacy rules share the total cap | Authenticated capability/runtime metadata; planned excess is structured `resource_limit` 413 before BLIP3 generation, distinct from `response_too_large` assembly overflow |
 | Geometry Canny/Hough helpers | Helpers and tests exist, but canonical core does not call them; helpers may write TSV/debug files | Not supported by the service; legacy compatibility only where explicitly wired |
 | `annotated`/`alpha-overlay` in-memory streams | Bounded RGB mask-only overlays; service executes them only at L3 | Bounded operator/service diagnostic |
 | `annotated-labelled` in-memory stream | Final-object RGB overlay with sanitized label and exact instance ID; deterministic, L3-only and Detectron2-free | Bounded operator/service diagnostic |
@@ -63,7 +64,11 @@ inference. Optional streams are admitted after rendering through the same
 request-local ledger as raw-SAM2 and candidate-view artifacts. A count,
 per-item, aggregate-raw or response-byte miss records a typed omission and
 does not replace successful inference with HTTP 413. The CLI retains its
-existing trusted configuration and writer behavior.
+existing trusted configuration and writer behavior. Service response members use
+fixed ordinal names (`visualization/stream-####.png`); the validated configured
+stream ID is logical `visualization_id` metadata only and is omitted for identity
+and non-visualization debug artifacts. JSON and ZIP descriptors/omission records
+preserve the same logical ID without placing it in a path or member name.
 
 RLE, artifact preparation, base64 expansion and ZIP entry assembly share the
 absolute request deadline. RLE transition detection is vectorized in fixed-size

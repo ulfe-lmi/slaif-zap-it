@@ -154,11 +154,16 @@ active inference request.
 | 0 | Completion envelope, normalized five-field YOLO lines, `service.sam2`, and effective candidate-view policy |
 | 1 | Deterministic uint16 identity-mask PNG |
 | 2 | Per-object mask-derived geometry, source candidate ID, filtered index, and available SAM2/CLIP/BLIP3 metadata |
-| 3 | Bounded timings, stage metadata, post-filter diagnostics, RLE masks, overlays, warnings, provenance, and BLIP3 verification PNGs |
+| 3 | Bounded timings, stage metadata, post-filter diagnostics, RLE masks, overlays, warnings, provenance, CLIP prompt accounting/winning indices, and BLIP3 verification PNGs |
 
 Binary artifacts are base64 descriptors in JSON or files in a bounded ZIP.
 Request bytes and intermediate results remain in RAM or the validated
 `/dev/shm` workspace and are removed after every request.
+
+Service L3 visualization members keep fixed ordinal names such as
+`visualization/stream-0001.png`; the validated configured ID is returned only
+as logical `visualization_id` metadata in JSON/ZIP descriptors and omission
+records, never as a path or member name.
 
 `candidate_views.clip` and `candidate_views.blip3` are independent request-local
 algorithm settings. The API CLIP policy is the untouched rectangular
@@ -265,12 +270,25 @@ HESI through the SLAIF project (grant agreement 101254461).
 
 The current pipeline uses SAM2 for high-recall proposals, then sends every
 post-geometry candidate through an untouched rectangular `raw_bbox_crop` to
-CLIP. Each service identifier supplies one natural-language prompt. CLIP
-returns a complete ordered cosine-score vector and a permissive request-local
-`clip_routing` decision; the selected target rule supplies one contextual
+CLIP. Each service identifier supplies one indivisible natural-language prompt
+or an ordered array of independent prompts. Canonical prompts are trimmed at
+their boundaries, validated against 512 Unicode codepoints and the pinned
+77-token context, and duplicate items within a class are rejected. CLIP
+embeds every prompt separately, takes the maximum similarity per semantic
+class, and returns one complete ordered cosine-score vector; a permissive
+request-local `clip_routing` decision consumes only that class vector. L3
+reports per-class counts and winning prompt indices/text. The selected target rule supplies one contextual
 single-image BLIP3 question and exact answer-to-label mapping. Trusted CLI
 compatibility may still use multi-prompt flattened labels.
 Object IDs, stage counts, timings, and losses are preserved in L3 evidence.
+
+Uploaded service YAML accepts at most 32 BLIP3 rule definitions. This structural
+request-configuration ceiling is independent of the immutable operator startup
+question workload setting: `SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` defaults to 256
+and accepts 1..256 planned questions/request. It is never uploaded YAML. Planning
+above the effective question limit returns structured `resource_limit` 413
+evidence before BLIP3 generation; response assembly overflow remains
+`response_too_large`.
 
 This is a deterministic routing contract, not semantic-accuracy evidence.
 Optional artifact delivery is now non-fatal: `diagnostic_artifacts` can narrow

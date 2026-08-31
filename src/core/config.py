@@ -20,6 +20,7 @@ from .mask_views import (
     default_candidate_view_configs,
     effective_candidate_view_configs,
 )
+from .clip_prompts import summarize_canonical_labels
 
 __all__ = [
     "ALGORITHMIC_TOP_LEVEL_FIELDS",
@@ -108,6 +109,7 @@ class CoreConfig:
     resize_val: Any | None
     prep_debug: bool
     clip_cfg: Mapping[str, Any] = field(default_factory=dict)
+    clip_prompt_metadata: Mapping[str, Any] = field(default_factory=dict)
     clip_routing_cfg: Mapping[str, Any] = field(default_factory=dict)
     blip3_cfg: Mapping[str, Any] = field(default_factory=dict)
     sam2_cfg: Mapping[str, Any] = field(default_factory=dict)
@@ -135,6 +137,13 @@ class CoreConfig:
         """
         prep = config.get("preprocessing", {}) or {}
         clip_cfg = config.get("clip", {}) or {}
+        if isinstance(clip_cfg, Mapping) and isinstance(clip_cfg.get("labels", {}), Mapping):
+            prompt_summary = summarize_canonical_labels(clip_cfg.get("labels", {}))
+            clip_prompt_metadata = (
+                prompt_summary.as_dict() if prompt_summary.total_prompt_count else {}
+            )
+        else:
+            clip_prompt_metadata = {}
         clip_routing_cfg = config.get("clip_routing", {}) or {}
         blip3_cfg = config.get("blip3", {}) or {}
         raw_sam2_cfg = config.get("mask_generator", {}) or {}
@@ -172,6 +181,7 @@ class CoreConfig:
             resize_val=prep.get("resize", None),
             prep_debug=bool(prep.get("debug", False)),
             clip_cfg=clip_cfg,
+            clip_prompt_metadata=clip_prompt_metadata,
             clip_routing_cfg=clip_routing_cfg,
             blip3_cfg=blip3_cfg,
             sam2_cfg=sam2_cfg,

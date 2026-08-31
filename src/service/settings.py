@@ -21,6 +21,7 @@ __all__ = [
     "TMP_ROOT_ENV_VAR",
     "DEFAULT_TMP_ROOT",
     "SERVICE_MODEL_ID",
+    "BLIP3_MAX_QUESTIONS_ENV_VAR",
     "SAM2_LIMIT_ENV_VARS",
     "ServiceSettings",
 ]
@@ -36,6 +37,7 @@ DEFAULT_TMP_ROOT = "/dev/shm/slaif-zap-it"
 
 #: Fixed public service/model identifier for this contract version.
 SERVICE_MODEL_ID = "zap-it-1"
+BLIP3_MAX_QUESTIONS_ENV_VAR = "SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS"
 
 SAM2_LIMIT_ENV_VARS = {
     "SLAIF_ZAP_IT_SAM2_MAX_POINTS_PER_SIDE": "sam2_max_points_per_side",
@@ -100,6 +102,7 @@ class ServiceSettings:
     sam2_max_estimated_prompts: int = 8192
     sam2_max_estimated_mask_predictions: int = 24576
     sam2_max_min_mask_region_area: int = 1_000_000
+    blip3_max_questions: int = 256
 
     def __post_init__(self) -> None:
         if self.max_image_upload_bytes <= 0:
@@ -173,6 +176,8 @@ class ServiceSettings:
             raise ValueError("sam2_max_crop_n_layers must be non-negative")
         if self.sam2_max_min_mask_region_area < 0:
             raise ValueError("sam2_max_min_mask_region_area must be non-negative")
+        if type(self.blip3_max_questions) is not int or not 1 <= self.blip3_max_questions <= 256:
+            raise ValueError("blip3_max_questions must be an integer from 1 to 256")
 
     @property
     def sam2_operator_caps(self) -> dict[str, int]:
@@ -225,6 +230,16 @@ class ServiceSettings:
                     kwargs[field_name] = _nonnegative_int(raw, env_name)
                 else:
                     kwargs[field_name] = _positive_int(raw, env_name)
+        raw_blip3_questions = env.get(BLIP3_MAX_QUESTIONS_ENV_VAR)
+        if raw_blip3_questions is not None:
+            if raw_blip3_questions == "":
+                raise ValueError(f"{BLIP3_MAX_QUESTIONS_ENV_VAR} must be an integer from 1 to 256")
+            try:
+                kwargs["blip3_max_questions"] = int(raw_blip3_questions)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"{BLIP3_MAX_QUESTIONS_ENV_VAR} must be an integer from 1 to 256"
+                ) from exc
         raw_queue = env.get("SLAIF_ZAP_IT_QUEUE_DEPTH")
         if raw_queue is not None and raw_queue != "":
             kwargs["queue_depth"] = _nonnegative_int(raw_queue, "SLAIF_ZAP_IT_QUEUE_DEPTH")

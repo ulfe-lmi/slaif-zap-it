@@ -26,6 +26,7 @@ import numpy as np
 
 from modules.visualizer import generate_visualizations as _generate_visualizations
 from .config import CoreConfig, config_digest
+from .clip_prompts import summarize_canonical_labels
 from .errors import CoreError
 from .mask_views import build_mask_views, build_raw_clip_crop
 from .ordering import order_final_objects
@@ -570,6 +571,22 @@ def run_single_image(
             "stage.clip_routing",
             lambda: apply_clip_routing(masked_after_clip, config.clip_routing_cfg),
         )
+        for mask, diagnostic in zip(masked_after_clip, clip_routing_diagnostics):
+            prompt_indices = mask.get("_clip_winning_prompt_indices")
+            if isinstance(prompt_indices, Mapping):
+                diagnostic["winning_prompt_indices"] = {
+                    str(label): int(index) for label, index in prompt_indices.items()
+                }
+                diagnostic["winning_prompt_index"] = (
+                    int(mask["_clip_winning_prompt_index"])
+                    if mask.get("_clip_winning_prompt_index") is not None
+                    else None
+                )
+                diagnostic["winning_prompt"] = (
+                    str(mask["_clip_winning_prompt"])
+                    if mask.get("_clip_winning_prompt") is not None
+                    else None
+                )
         candidate_counts.update(route_counts)
     if config.clip_cfg:
         timings.setdefault("stage.clip_crop", 0.0)
@@ -837,6 +854,13 @@ def run_single_image(
         config_digest=config_digest(config),
         notes=("mask remap: inverse nearest-neighbor to original coordinates",),
     )
+    clip_prompt_metadata = dict(config.clip_prompt_metadata)
+    if not clip_prompt_metadata and isinstance(config.clip_cfg, Mapping):
+        labels = config.clip_cfg.get("labels", {})
+        if isinstance(labels, Mapping):
+            summary = summarize_canonical_labels(labels)
+            if summary.total_prompt_count:
+                clip_prompt_metadata = summary.as_dict()
 
     result = PipelineResult(
         image_height=int(h_orig),
@@ -855,6 +879,7 @@ def run_single_image(
         candidate_view_inputs=tuple(dict(record) for record in candidate_view_inputs),
         blip3_candidate_views=tuple(dict(record) for record in blip3_candidate_views),
         clip_routing_diagnostics=tuple(dict(record) for record in clip_routing_diagnostics),
+        clip_prompt_metadata=clip_prompt_metadata,
     )
     return SingleImageOutcome(
         result=result,

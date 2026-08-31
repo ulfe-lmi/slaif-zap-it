@@ -64,6 +64,7 @@ class StoredArtifact:
     data: Optional[bytes] = None
     array: Optional[np.ndarray] = None
     record: Optional[Any] = None
+    visualization_id: Optional[str] = None
 
 
 def _validate_logical_name(name: str) -> None:
@@ -106,7 +107,14 @@ class ArtifactSink:
         )
         return self._commit(artifact)
 
-    def store_image(self, name: str, array: np.ndarray, *, fmt: str = "jpeg") -> StoredArtifact:
+    def store_image(
+        self,
+        name: str,
+        array: np.ndarray,
+        *,
+        fmt: str = "jpeg",
+        visualization_id: Optional[str] = None,
+    ) -> StoredArtifact:
         _validate_logical_name(name)
         if not isinstance(array, np.ndarray):
             raise ArtifactSinkError(f"store_image expects a numpy array for {name!r}")
@@ -115,6 +123,7 @@ class ArtifactSink:
             kind=_KIND_IMAGE,
             content_type=f"image/{fmt.lower()}",
             array=array,
+            visualization_id=visualization_id,
         )
         return self._commit(artifact)
 

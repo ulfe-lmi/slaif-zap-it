@@ -42,6 +42,22 @@ This is the normalized algorithm boundary. The service performs its hostile
 upload policy validation before constructing `CoreConfig`; the trusted CLI may
 pass its broader legacy configuration through a separate adapter.
 
+Canonical service CLIP labels are normalized to an ordered mapping of semantic
+class identifiers to one or more independent prompts. Scalars remain whole
+strings, including commas and newlines; array items are trimmed at their
+boundaries and encoded separately. The parser enforces 1..64 prompts per class,
+1..256 total, 512 Unicode codepoints and the pinned 77-token context, rejecting
+trimmed duplicates with sanitized `invalid_config` details. Core results carry
+the bounded L3 prompt-count summary; routing continues to consume one score per
+semantic class.
+
+The service accepts at most 32 BLIP3 rule definitions in uploaded YAML. BLIP3
+planning then uses the separate immutable startup setting
+`SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` (default/max 256 planned questions/request),
+not request YAML. A planned excess fails with structured `resource_limit` 413
+before composition or generation; response assembly overflow is separately
+`response_too_large`.
+
 `config_digest(config)` returns a stable SHA-256 over the normalized values
 (provenance hook; excludes wall-clock time).
 

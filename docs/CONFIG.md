@@ -199,7 +199,12 @@ Candidate and question IDs are one-based; `filtered_index` is zero-based and is
 assigned immediately after the SAM2 area/bbox filter. Names never contain
 prompts, labels, rule names, answers, frame names or client paths. Effective
 values and application status are present in every service response, while
-bounded model-input records are L3-only.
+bounded model-input records are L3-only. Final service visualization artifacts
+use fixed ordinal members such as `visualization/stream-0001.png`; their
+validated configured `visualization.id` is returned only as logical
+`visualization_id` metadata in the descriptor/manifest and omission ledger. It
+never becomes a path or ZIP member name. Identity and candidate/debug artifacts
+omit `visualization_id`.
 
 ## `clip` (optional)
 
@@ -209,15 +214,22 @@ CLIP stage is skipped entirely.
 - `debug` (bool): if set, every effective candidate view is written as a
   lossless PNG. The service uses the fixed tokenized name above; trusted legacy
   output prefixes it with a sanitized frame stem.
-- `labels` (mapping): safe identifiers to one complete natural-language prompt
-  string. Commas and line breaks are prompt content, not list syntax.
+- `labels` (mapping): each safe identifier maps to one complete natural-language
+  prompt string or an ordered non-empty array of independent prompt strings.
+  A scalar is never split: commas and line breaks remain literal content.
+  Canonical prompts are trimmed only at their Unicode-whitespace boundaries,
+  then checked for within-class duplicates, 1..64 prompts per class, 1..256
+  total prompts, 512 codepoints and 77 pinned-tokenizer tokens. Equal text in
+  different classes is allowed. Array items are encoded separately and their
+  candidate similarities are aggregated by class maximum.
 
 The trusted loader also supports flattened keys such as `"label goat":
-"prompt1, prompt2"` for legacy CLI compatibility. The service uses exactly one
-natural-language value per safe identifier, preserves every label's cosine
-score in configuration order, and stores the deterministic winner in
-`clip_label`/`clip_score`. When canonical `clip_routing` is present, its OR
-rules—not the winner alone—decide BLIP3 admission.
+"prompt1, prompt2"` for legacy CLI compatibility. The service preserves every
+semantic-class cosine score in configuration order, stores the deterministic
+winner in `clip_label`/`clip_score`, and reports prompt counts/winning indices at
+L3. When canonical `clip_routing` is present, its OR rules—not the winner
+alone—decide BLIP3 admission. Token, character, count, type and duplicate
+violations return structured `invalid_config` 400 errors before model work.
 
 ## `blip3` (optional)
 
@@ -276,12 +288,18 @@ bounded L3 `blip3_candidate_views` list has one record per applicable candidate;
 debug records remain one-for-one with QA artifacts. This is pixel-boundary
 evidence, not a semantic-accuracy guarantee.
 
-The service allows at most 32 nested rules/questions and fixes generation to at
+The service accepts at most 32 bounded nested BLIP3 rule definitions. It plans
+their candidate-question executions against the separate immutable operator-only
+`SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` setting (1..256, default 256). Canonical
+routing plans at most one question per routed candidate; legacy multi-rule
+scheduling shares the same total cap. Planned excess returns structured
+`resource_limit` 413 before BLIP3 generation. Generation remains fixed to at
 most 32 new tokens per question. It rejects `model_name`, `revision`, `dtype`,
 tokenizer/processor controls, paths, URLs, cache/download settings, devices,
 commands and remote-code controls anywhere in an upload.
 
-For canonical service rules, an answer normalized exactly to `trueresult`
+For canonical service rules, `question`, `trueresult`, `falseresult`,
+`newcategory`, and `falsecategory` are all required. An answer normalized exactly to `trueresult`
 selects `newcategory`; an exact `falseresult` selects `falsecategory`; and an
 unmatched answer conservatively selects `falsecategory`. Trusted legacy rules
 retain substring matching and their default `negative` fallback.
@@ -387,11 +405,12 @@ exporter nests the dataset under that root to keep outputs together.
 
 ## Objective 020 migration
 
-Service YAML uses `clip.labels` as `identifier: natural-language prompt` and
-adds `clip_routing.route_to_blip3`. Use `candidate_views.clip.mode:
+Service YAML uses `clip.labels` as `identifier: prompt` or
+`identifier: [prompt, ...]` and adds `clip_routing.route_to_blip3`. Use `candidate_views.clip.mode:
 raw_bbox_crop`; its half-up context radius changes only the source crop
 boundary. Add one matching BLIP3 rule per routing target with `question`,
-`trueresult`, `falseresult`, `newcategory`, and `falsecategory`. Final
+`trueresult`, `falseresult`, `newcategory`, and `falsecategory`; all five
+canonical routing fields are required. Final
 visualization labels name terminal BLIP3 categories.
 
 The old `padding` and `label "name"` forms, `any,<score>` BLIP rules,
