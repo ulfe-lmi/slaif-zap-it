@@ -8,7 +8,7 @@ import io
 import json
 import time
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dataclass_replace
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import numpy as np
@@ -27,6 +27,7 @@ from src.core.sinks import ArtifactSink, ArtifactSinkError, StoredArtifact
 from src.version import __version__
 
 from .errors import ServiceError
+from .artifacts import ArtifactDeliveryLedger, ArtifactSelection
 from .rle import MaskRLEError, SerializationTimeout, encode_mask_rle
 
 __all__ = [
@@ -69,6 +70,8 @@ class ResponseContext:
     deadline_monotonic: Optional[float] = None
     candidate_views: Mapping[str, Any] = field(default_factory=dict)
     clip_routing: Mapping[str, Any] = field(default_factory=dict)
+    artifact_ledger: Optional[ArtifactDeliveryLedger] = None
+    service_safe_artifact_names: bool = False
 
 
 @dataclass(frozen=True)
@@ -83,6 +86,7 @@ class _PreparedResponse:
     document: Dict[str, Any]
     yolo_text: str
     artifacts: tuple[_RawArtifact, ...]
+    ledger: ArtifactDeliveryLedger
 
 
 def _artifact(name: str, media_type: str, payload: bytes) -> Dict[str, Any]:
@@ -228,9 +232,18 @@ def _collect_raw_artifacts(
     outcome: SingleImageOutcome,
     context: ResponseContext,
     sink: Optional[ArtifactSink],
-) -> tuple[_RawArtifact, ...]:
+) -> tuple[tuple[_RawArtifact, ...], ArtifactDeliveryLedger]:
     result = outcome.result
     artifacts: List[_RawArtifact] = []
+    ledger = context.artifact_ledger or ArtifactDeliveryLedger(
+        ArtifactSelection.from_mapping({}, applied=context.verbosity >= 3),
+        max_response_artifacts=context.max_response_artifacts,
+        max_debug_artifacts=context.max_response_artifacts,
+        max_single_artifact_bytes=context.max_single_artifact_bytes,
+        max_total_raw_artifact_bytes=context.max_total_raw_artifact_bytes,
+        max_response_bytes=context.max_response_bytes,
+        verbosity=context.verbosity,
+    )
     _check_deadline(context)
     if context.verbosity >= 1:
         try:
@@ -248,37 +261,54 @@ def _collect_raw_artifacts(
         artifacts.append(_RawArtifact("identity-mask.png", "image/png", payload))
         _check_deadline(context)
     if context.verbosity >= 3:
-        for key, array in sorted(result.rendered.items(), key=lambda item: str(item[0])):
-            _check_deadline(context)
-            safe_key = str(key).replace("\\", "_").strip("/.") or "stream"
-            artifacts.append(
-                _RawArtifact(f"visualization/{safe_key}.png", "image/png", _encode_png(array))
-            )
-            _check_deadline(context)
+        # Sink insertion order reflects the pipeline stages (SAM2, CLIP,
+        # BLIP3, then post-filter debug).  Keep that order ahead of final
+        # visualization streams for deterministic pagination.
         if sink is not None:
             for stored in sink.artifacts():
                 _check_deadline(context)
-                artifacts.append(_stored_sink_artifact(stored))
+                raw_artifact = _stored_sink_artifact(stored)
+                ledger.import_delivered(
+                    raw_artifact.name,
+                    stage=None,
+                    estimated_raw_bytes=(
+                        int(stored.array.nbytes)
+                        if stored.array is not None
+                        else len(stored.data or b"")
+                    ),
+                    payload_size=len(raw_artifact.payload),
+                    media_type=raw_artifact.media_type,
+                )
+                if ledger.status_for(raw_artifact.name) == "stored":
+                    artifacts.append(raw_artifact)
                 _check_deadline(context)
-    if len(artifacts) > context.max_response_artifacts:
-        raise ServiceError(
-            "response artifact count exceeds the configured limit", code="response_too_large"
-        )
-    total = 0
-    for artifact in artifacts:
-        _check_deadline(context)
-        size = len(artifact.payload)
-        if size > context.max_single_artifact_bytes:
-            raise ServiceError(
-                "an artifact exceeds the configured size limit", code="response_too_large"
+            if context.artifact_ledger is None:
+                for omission in sink.omissions():
+                    ledger.import_omission(omission)
+
+        for visualization_index, (key, array) in enumerate(
+            sorted(result.rendered.items(), key=lambda item: str(item[0])), start=1
+        ):
+            _check_deadline(context)
+            safe_key = (
+                f"stream-{visualization_index:04d}"
+                if context.service_safe_artifact_names
+                else str(key).replace("\\", "_").strip("/.") or "stream"
             )
-        total += size
-        if total > context.max_total_raw_artifact_bytes:
-            raise ServiceError(
-                "raw artifacts exceed the configured total size limit", code="response_too_large"
+            payload = _encode_png(array)
+            name = f"visualization/{safe_key}.png"
+            status = ledger.offer(
+                name,
+                stage="visualization",
+                estimated_raw_bytes=int(array.nbytes),
+                media_type="image/png",
             )
+            ledger.mark_payload_size(name, len(payload))
+            if status == "stored":
+                artifacts.append(_RawArtifact(name, "image/png", payload))
+            _check_deadline(context)
     _check_deadline(context)
-    return tuple(artifacts)
+    return tuple(artifacts), ledger
 
 
 def _artifact_descriptor(
@@ -331,7 +361,7 @@ def _prepare(
                     raise ServiceError("mask RLE run limit exceeded", code="response_too_large")
                 rle_records[index] = rle
             _check_deadline(context)
-        artifacts = _collect_raw_artifacts(outcome, context, sink)
+        artifacts, ledger = _collect_raw_artifacts(outcome, context, sink)
         _check_deadline(context)
     except SerializationTimeout as exc:
         raise ServiceError("request serialization exceeded the deadline", code="timeout") from exc
@@ -403,6 +433,9 @@ def _prepare(
         service_meta["blip3_candidate_views"] = [
             dict(record) for record in result.blip3_candidate_views
         ]
+        service_meta["artifact_delivery"] = ledger.document(
+            artifacts={artifact.name: artifact.payload for artifact in artifacts}
+        )
     _check_deadline(context)
     return _PreparedResponse(
         {
@@ -417,6 +450,7 @@ def _prepare(
         },
         yolo_text,
         artifacts,
+        ledger,
     )
 
 
@@ -430,9 +464,63 @@ def _json_size_upper_bound(
     total = len(skeleton)
     for item in prepared.artifacts:
         _check_absolute_deadline(deadline_monotonic)
-        total += 4 * ((len(item.payload) + 2) // 3)
+        # ``_prepare`` uses a two-byte empty data value as its skeleton.  Add
+        # only the replacement base64 characters so the hard check does not
+        # omit an artifact that actually fits.
+        total += max(0, 4 * ((len(item.payload) + 2) // 3) - 2)
     _check_absolute_deadline(deadline_monotonic)
     return total
+
+
+def _refresh_artifact_statuses(value: Any, ledger: ArtifactDeliveryLedger) -> None:
+    """Refresh every nested candidate/debug status after delivery changes."""
+    if isinstance(value, dict):
+        for name_key, status_key in (
+            ("artifact_name", "artifact_status"),
+            ("input_artifact_name", "input_artifact_status"),
+        ):
+            name = value.get(name_key)
+            status = ledger.status_for(name) if isinstance(name, str) else None
+            if status is not None and status_key in value:
+                value[status_key] = status
+        for child in value.values():
+            _refresh_artifact_statuses(child, ledger)
+    elif isinstance(value, list):
+        for child in value:
+            _refresh_artifact_statuses(child, ledger)
+
+
+def _refresh_prepared(
+    prepared: _PreparedResponse,
+    context: ResponseContext,
+    *,
+    include_data: bool = False,
+    json_skeleton: bool = False,
+) -> _PreparedResponse:
+    """Refresh descriptors and the L3 ledger after optional tail omission."""
+    artifacts = tuple(
+        artifact
+        for artifact in prepared.artifacts
+        if (context.verbosity >= 1 and artifact.name == "identity-mask.png")
+        or prepared.ledger.status_for(artifact.name) == "stored"
+    )
+    document = json.loads(json.dumps(prepared.document))
+    if context.verbosity >= 1:
+        document["service"]["artifacts"] = [
+            _artifact_descriptor(
+                artifact,
+                include_data=include_data,
+                json_skeleton=json_skeleton,
+                deadline_monotonic=context.deadline_monotonic,
+            )
+            for artifact in artifacts
+        ]
+    if context.verbosity >= 3:
+        document["service"]["artifact_delivery"] = prepared.ledger.document(
+            artifacts={artifact.name: artifact.payload for artifact in artifacts}
+        )
+        _refresh_artifact_statuses(document["service"], prepared.ledger)
+    return dataclass_replace(prepared, document=document, artifacts=artifacts)
 
 
 def build_completion_json(
@@ -443,29 +531,19 @@ def build_completion_json(
 ) -> Dict[str, Any]:
     """Prepare one bounded JSON response, rejecting before base64 expansion."""
     prepared = _prepare(outcome, context, sink)
-    if (
+    while (
         _json_size_upper_bound(prepared, deadline_monotonic=context.deadline_monotonic)
         > context.max_response_bytes
     ):
-        raise ServiceError(
-            "assembled JSON response exceeds the maximum response size",
-            code="response_too_large",
-        )
-    _check_deadline(context)
-    document = json.loads(json.dumps(prepared.document))
-    _check_deadline(context)
-    if context.verbosity >= 1:
-        descriptors = []
-        for artifact in prepared.artifacts:
-            _check_deadline(context)
-            descriptors.append(
-                _artifact_descriptor(
-                    artifact,
-                    include_data=True,
-                    deadline_monotonic=context.deadline_monotonic,
-                )
+        if not prepared.ledger.drop_last_for_response():
+            raise ServiceError(
+                "assembled JSON response exceeds the maximum response size",
+                code="response_too_large",
             )
-        document["service"]["artifacts"] = descriptors
+        prepared = _refresh_prepared(prepared, context, json_skeleton=True)
+    _check_deadline(context)
+    prepared = _refresh_prepared(prepared, context, include_data=True)
+    document = prepared.document
     _check_deadline(context)
     encoded_size = len(json.dumps(document, ensure_ascii=False).encode("utf-8"))
     _check_deadline(context)
@@ -497,53 +575,32 @@ def build_completion_zip(
 ) -> bytes:
     """Build ZIP directly from prepared raw bytes, without a base64 duplicate."""
     prepared = _prepare(outcome, context, sink)
-    _check_deadline(context)
-    manifest = json.loads(json.dumps(prepared.document))
-    _check_deadline(context)
-    if context.verbosity >= 1:
-        descriptors = []
-        for artifact in prepared.artifacts:
+
+    def assemble(current: _PreparedResponse) -> bytes:
+        current = _refresh_prepared(current, context)
+        manifest_bytes = json.dumps(current.document, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
             _check_deadline(context)
-            descriptors.append(
-                _artifact_descriptor(
-                    artifact,
-                    include_data=False,
-                    deadline_monotonic=context.deadline_monotonic,
-                )
+            _zip_entry(archive, "manifest.json", manifest_bytes)
+            _zip_entry(archive, "detections.yolo.txt", current.yolo_text.encode("utf-8"))
+            for artifact in current.artifacts:
+                _check_deadline(context)
+                _zip_entry(archive, artifact.name, artifact.payload)
+        return buffer.getvalue()
+
+    payload = assemble(prepared)
+    while len(payload) > max_bytes:
+        if not prepared.ledger.drop_last_for_response():
+            raise ServiceError(
+                "assembled ZIP response exceeds the maximum response size",
+                code="response_too_large",
             )
-        manifest["service"]["artifacts"] = descriptors
+        prepared = _refresh_prepared(prepared, context)
+        payload = assemble(prepared)
     _check_deadline(context)
-    manifest_bytes = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    _check_deadline(context)
-    raw_total = (
-        len(manifest_bytes)
-        + len(prepared.yolo_text.encode("utf-8"))
-        + sum(len(item.payload) for item in prepared.artifacts)
-    )
-    zip_overhead = 128 + sum(128 + len(item.name) for item in prepared.artifacts)
-    if raw_total + zip_overhead > max_bytes:
-        raise ServiceError(
-            "assembled ZIP response exceeds the maximum response size",
-            code="response_too_large",
-        )
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        _check_deadline(context)
-        _zip_entry(archive, "manifest.json", manifest_bytes)
-        _check_deadline(context)
-        _zip_entry(archive, "detections.yolo.txt", prepared.yolo_text.encode("utf-8"))
-        _check_deadline(context)
-        for artifact in prepared.artifacts:
-            _check_deadline(context)
-            _zip_entry(archive, artifact.name, artifact.payload)
-            _check_deadline(context)
-    payload = buffer.getvalue()
-    _check_deadline(context)
-    if len(payload) > max_bytes:
-        raise ServiceError(
-            "assembled ZIP response exceeds the maximum response size",
-            code="response_too_large",
-        )
     return payload
 
 

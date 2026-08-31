@@ -216,14 +216,21 @@ inverse at source resolution before nearest-neighbor downscale to at most
 2,000,000 pixels. Equal inputs are deterministic within a pinned environment;
 arbitrary Pillow-version PNG byte identity is outside the claim.
 
-Before readiness or gate admission, a debug request reserves the fixed maximum
-of 11 diagnostic artifacts and the exact RGB formula
-`8 * 960 * 1072 * 3 + 3 * diagnostic_width * diagnostic_height * 3` (the
-2,000,000-pixel case is 42,698,880 bytes), in addition to configured streams.
-Existing per-artifact, total raw-artifact, encoded JSON, ZIP and response-size
-limits remain authoritative. Lower levels do not render or reserve these
-diagnostics, and trusted CLI debug retains its historical rectangular JPEG
-patch names and format.
+Optional L3 artifacts are admitted greedily after the stages produce them. The
+service never reserves the fixed raw-SAM2 maximum or visualization RGB arrays
+before inference. `service.artifact_delivery` records the requested/effective
+selection, page, candidate filter, operator budgets, exact delivered names and
+hashes, and bounded omission reasons (`not_selected_*` or `omitted_*`). Optional
+count, per-artifact, aggregate-raw and response-byte overflow sets
+`truncated: true` and preserves the successful inference. Before the final hard
+response check, admitted optional artifacts are removed from the tail in
+reverse order as needed; each omission rebuilds the immutable artifact tuple,
+descriptors, hashes, byte totals and ZIP members. The required
+`identity-mask.png` is never selected for optional omission. CLIP/BLIP3 debug
+records retain their structured candidate evidence while their artifact status
+becomes `omitted_response_limit`. Only an essential response that still cannot
+fit returns `response_too_large`; trusted CLI debug keeps its historical
+rectangular JPEG patch behavior.
 
 ### Capabilities
 
@@ -240,6 +247,16 @@ topology and process state are not disclosed. `/docs` and `/openapi.json`
 remain disabled on the private-LAN listener, while this authenticated route
 remains available.
 
+`configuration.field_catalog` is the ordered, typed inventory of every accepted
+service YAML leaf. Each record contains an OpenAPI-enumerated `path`, a
+`CapabilityField` descriptor, and explicit required/nullable/default semantics;
+the compatibility `configuration.fields` dictionary is generated from the same
+inventory. L3 response metadata uses named `StageStatus`, `CandidateCounts`,
+`TimingMetadata`, `ProvenanceMetadata` and `ClipRoutingConfiguration` models.
+Timing values are finite, non-negative milliseconds keyed by dynamic
+`stage.<name>` timers; per-label CLIP scores and sanitized runtime model maps
+remain bounded typed maps.
+
 ## Configuration policy (hostile uploads)
 
 Parsing uses `yaml.safe_load` semantics behind bounds enforced during
@@ -250,7 +267,7 @@ Top-level allowlist derived from the core boundary:
 
 - **Accepted** (algorithmic): `alpha`, `preprocessing`, `mask_generator`,
   `postsam2processing`, `clip`, `clip_routing`, `blip3`, `candidate_views`,
-  `visualization`.
+  `visualization`, `diagnostic_artifacts`.
 - **Ignored with warning** (batch-only, never honored):
   `images`, `video`, `export_yolo_det`.
 - **Rejected** (`unsupported_field`): anything else — including legacy
@@ -305,6 +322,27 @@ model-input PNGs. Both contain only bounded numeric provenance, not image
 pixels or client text. BLIP3 capacity is admitted after actual CLIP
 labels/scores and before any QA call.
 
+### Optional diagnostic artifact selection
+
+The optional top-level `diagnostic_artifacts` section is a strict request-local
+delivery selector:
+
+```yaml
+diagnostic_artifacts:
+  stages: [sam2, clip, blip3, visualization]
+  candidate_ids: null
+  page: 1
+  page_size: 48
+```
+
+`stages` is a unique subset of the four fixed stage tokens. `candidate_ids` is
+null or a unique list of one-based source candidate IDs from 1 through 256;
+the requested order is retained while the effective filter is sorted. `page`
+is 1..65535 and `page_size` is 1..48. Pagination follows stage and candidate
+selection in deterministic pipeline/name order. The section narrows eligible
+L3 delivery and never enables a debug flag. At L0-L2 it remains valid but is
+reported as not applied; lower levels do not execute optional diagnostics.
+
 ### Visualization streams
 
 The service accepts bounded RGB streams only at L3. `annotated` and its legacy
@@ -335,7 +373,7 @@ visualization:
 | max objects | 256 | `SLAIF_ZAP_IT_MAX_OBJECTS` |
 | max visualization streams | 8 | `SLAIF_ZAP_IT_MAX_VISUALIZATION_STREAMS` |
 | max response/debug artifacts | 64 / 48 | `SLAIF_ZAP_IT_MAX_RESPONSE_ARTIFACTS`, `SLAIF_ZAP_IT_MAX_DEBUG_ARTIFACTS` |
-| max single/total raw artifacts | 32 / 128 MiB; L3 annotated RGB reservations are deducted from the debug total | `SLAIF_ZAP_IT_MAX_SINGLE_ARTIFACT_BYTES`, `SLAIF_ZAP_IT_MAX_TOTAL_RAW_ARTIFACT_BYTES` |
+| max single/total raw artifacts | 32 / 128 MiB; optional L3 artifacts are greedily admitted and typed omissions are recorded | `SLAIF_ZAP_IT_MAX_SINGLE_ARTIFACT_BYTES`, `SLAIF_ZAP_IT_MAX_TOTAL_RAW_ARTIFACT_BYTES` |
 | max RLE runs/object/response | 250 000 / 1 000 000 | `SLAIF_ZAP_IT_MAX_MASK_RLE_RUNS_PER_OBJECT`, `SLAIF_ZAP_IT_MAX_MASK_RLE_RUNS_TOTAL` |
 | max total response | 256 MiB | `SLAIF_ZAP_IT_MAX_RESPONSE_BYTES` |
 | min available RAM / shm | 2 GiB / 64 MiB | `SLAIF_ZAP_IT_MIN_HOST_AVAILABLE_BYTES`, `SLAIF_ZAP_IT_MIN_SHM_FREE_BYTES` |
@@ -345,9 +383,9 @@ visualization:
 
 Encoded sizes are enforced while streaming (limit+1 pattern) before decode;
 decoded width/height are checked from headers before pixel allocation; L3
-annotated streams are preflighted as `height * width * 3` raw RGB bytes before
-engine execution; host RAM and `/dev/shm` floors are checked at readiness and
-request admission.
+annotated streams are admitted after rendering; their bytes are not reserved
+before engine execution. Host RAM and `/dev/shm` floors are checked at
+readiness and request admission.
 
 ## Concurrency semantics
 
@@ -400,8 +438,8 @@ Stable sanitized envelope on every failure:
 | `unauthorized` | 401 | missing/wrong bearer key |
 | `payload_too_large` | 413 | upload/body byte limits |
 | `image_too_large` | 413 | decoded pixels over cap |
-| `resource_limit` | 413 | SAM2 field or estimated-work cap exceeded; non-retryable |
-| `response_too_large` | 413 | assembled JSON/ZIP over response cap |
+| `resource_limit` | 413 | SAM2 field or estimated-work cap exceeded; details include sanitized alternatives |
+| `response_too_large` | 413 | essential JSON/ZIP document still exceeds response cap after optional tail omission |
 | `cancelled` | 499* | cancelled before completion |
 | `inference_failure` | 500 | engine failure (sanitized) |
 | `internal_error` | 500 | unexpected internal failure (sanitized) |

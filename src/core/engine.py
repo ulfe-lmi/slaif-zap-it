@@ -320,8 +320,11 @@ def run_single_image(
 
     if config.prep_debug and config.roi_val:
         sink = _require_sink("preprocessing.debug")
-        sink.store_image(f"{frame_id}-roi01.jpg", partial_np)
-        log(f" => captured ROI debug => {frame_id}-roi01.jpg", 1, verbosity)
+        roi_name = (
+            "preprocessing-roi.png" if service_safe_artifact_names else f"{frame_id}-roi01.jpg"
+        )
+        sink.store_image(roi_name, partial_np, fmt="png" if service_safe_artifact_names else "jpeg")
+        log(f" => captured ROI debug => {roi_name}", 1, verbosity)
 
     resized_np, resize_info = timed(
         "preprocess.resize", lambda: stages.resize_image(partial_np, config.resize_val)
@@ -511,12 +514,6 @@ def run_single_image(
             }
         )
 
-    if artifact_sink is not None and hasattr(artifact_sink, "ensure_capacity"):
-        debug_artifacts, debug_bytes, debug_sizes = _candidate_view_debug_capacity(
-            image_rgb, filtered_for_clip, config, stage="clip"
-        )
-        artifact_sink.ensure_capacity(debug_artifacts, debug_bytes, debug_sizes)
-
     # -- classification ------------------------------------------------------
     resolved_device = device if device is not None else _resolve_device(None)
     if config.clip_cfg:
@@ -581,11 +578,6 @@ def run_single_image(
         timings.setdefault("stage.clip_routing", 0.0)
 
     if config.blip3_cfg:
-        if artifact_sink is not None and hasattr(artifact_sink, "ensure_capacity"):
-            debug_artifacts, debug_bytes, debug_sizes = _candidate_view_debug_capacity(
-                image_rgb, routed_for_blip3, config, stage="blip3"
-            )
-            artifact_sink.ensure_capacity(debug_artifacts, debug_bytes, debug_sizes)
         log("[blip3] => verifying masks...", 1, verbosity)
         blip3_params = {
             "config": config.blip3_cfg,
@@ -666,9 +658,18 @@ def run_single_image(
             if len(rr) == 0:
                 continue
             patch = image_rgb[rr.min() : rr.max() + 1, cc.min() : cc.max() + 1, :]
-            sink.store_image(f"{frame_id}_sam2-filtered-patch{idx:04d}.jpg", patch)
+            patch_name = (
+                f"postsam2-filtered-patch-{idx + 1:04d}.png"
+                if service_safe_artifact_names
+                else f"{frame_id}_sam2-filtered-patch{idx:04d}.jpg"
+            )
+            sink.store_image(
+                patch_name,
+                patch,
+                fmt="png" if service_safe_artifact_names else "jpeg",
+            )
             log(
-                f"  => captured final patch => {frame_id}_sam2-filtered-patch{idx:04d}.jpg",
+                f"  => captured final patch => {patch_name}",
                 2,
                 verbosity,
             )

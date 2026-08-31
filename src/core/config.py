@@ -42,6 +42,7 @@ ALGORITHMIC_TOP_LEVEL_FIELDS = frozenset(
         "clip_routing",
         "blip3",
         "candidate_views",
+        "diagnostic_artifacts",
         "visualization",
     }
 )
@@ -122,6 +123,7 @@ class CoreConfig:
     candidate_views: Mapping[str, CandidateViewConfig] = field(
         default_factory=default_candidate_view_configs
     )
+    diagnostic_artifacts: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_mapping(cls, config: Mapping[str, Any]) -> "CoreConfig":
@@ -144,6 +146,7 @@ class CoreConfig:
         postsam2_cfg = config.get("postsam2processing", {}) or {}
         vis_cfg = config.get("visualization", {}) or {}
         candidate_views = effective_candidate_view_configs(config.get("candidate_views"))
+        diagnostic_artifacts = config.get("diagnostic_artifacts", {}) or {}
 
         post_maxsize = postsam2_cfg.get("maxsize", 999_999_999)
         max_w = postsam2_cfg.get("max_w", 999_999_999)
@@ -179,6 +182,7 @@ class CoreConfig:
             max_w=max_w,
             max_h=max_h,
             candidate_views=candidate_views,
+            diagnostic_artifacts=diagnostic_artifacts,
         )
 
     @property

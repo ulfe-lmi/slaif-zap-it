@@ -725,27 +725,24 @@ def test_capabilities_are_authenticated_static_deterministic_and_explicit(monkey
         "min_mask_region_area": ("integer", 0, 64_000_000),
     }
     for field, (kind, lower, upper) in expected_ranges.items():
-        assert body["supported_generator_fields"][field] == {
-            "type": kind,
-            "minimum": lower,
-            "maximum": upper,
-            "allowed": None,
-        }
+        descriptor = body["supported_generator_fields"][field]
+        assert descriptor["type"] == kind
+        assert descriptor["minimum"] == lower
+        assert descriptor["maximum"] == upper
+        assert descriptor["description"]
+        assert descriptor["stage"] == "sam2"
         assert body["intrinsic_ranges"][field] == [lower, upper]
     for field in SAM2_BOOLEAN_FIELDS:
-        assert body["supported_generator_fields"][field] == {
-            "type": "boolean",
-            "minimum": None,
-            "maximum": None,
-            "allowed": [False, True],
-        }
+        descriptor = body["supported_generator_fields"][field]
+        assert descriptor["type"] == "boolean"
+        assert descriptor["allowed"] == [False, True]
+        assert descriptor["description"]
         assert body["intrinsic_ranges"][field] == [False, True]
-    assert body["supported_generator_fields"]["profile"] == {
-        "type": "string",
-        "minimum": None,
-        "maximum": None,
-        "allowed": ["fast", "balanced", "quality"],
-    }
+    assert body["supported_generator_fields"]["profile"]["allowed"] == [
+        "fast",
+        "balanced",
+        "quality",
+    ]
     assert body["supported_generator_fields"]["debug"]["allowed"] == [False, True]
     assert body["operator_maxima"] == ServiceSettings().sam2_operator_caps
     assert body["defaults"] == {field: sam2.SAM2_DEFAULTS[field] for field in SAM2_FIELDS}
@@ -824,6 +821,9 @@ def test_capabilities_are_authenticated_static_deterministic_and_explicit(monkey
         "fixed_controls",
         "raw_sam2_debug",
         "candidate_views",
+        "configuration",
+        "diagnostic_artifacts",
+        "response_evidence",
     }
 
 
@@ -871,7 +871,11 @@ def test_api_rejects_sam2_config_before_gate_or_engine(monkeypatch):
         assert response.status_code == status_code
         body = response.json()
         assert body["error"]["code"] == code
-        assert set(body["error"]) == {"code", "message", "request_id"}
+        if code == "resource_limit":
+            assert set(body["error"]) == {"code", "message", "request_id", "details"}
+            assert body["error"]["details"]["admissible_alternatives"]
+        else:
+            assert set(body["error"]) == {"code", "message", "request_id"}
         assert mask_generator not in response.text
         assert all(
             secret not in response.text

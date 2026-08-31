@@ -911,6 +911,12 @@ class _Blip3Filter:
                                 "filtered_index": filtered_index,
                                 "question_id": public_question_id,
                                 "artifact_name": artifact_name,
+                                "artifact_status": (
+                                    artifact_sink.artifact_status(artifact_name)
+                                    if artifact_sink is not None
+                                    and hasattr(artifact_sink, "artifact_status")
+                                    else "emitted"
+                                ),
                                 "raw_mask_bbox_xyxy_inclusive": list(
                                     verification.raw_mask_bbox_xyxy_inclusive
                                 ),
@@ -993,7 +999,15 @@ class _Blip3Filter:
                     "configured_false_label": str(cfg.get("falsecategory", "negative")),
                     "mapping_outcome": mapping_outcome,
                     "input_artifact_name": artifact_name,
-                    "input_artifact_status": "emitted" if artifact_name else "not_requested",
+                    "input_artifact_status": (
+                        artifact_sink.artifact_status(artifact_name)
+                        if artifact_name
+                        and artifact_sink is not None
+                        and hasattr(artifact_sink, "artifact_status")
+                        else "emitted"
+                        if artifact_name
+                        else "not_requested"
+                    ),
                     "final_label": final_label,
                 }
                 m.setdefault("blip3_verifications", []).append(verification_record)

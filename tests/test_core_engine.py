@@ -13,7 +13,6 @@ from src.core import (
     ArtifactBudget,
     BoundedMemoryArtifactSink,
     MemoryArtifactSink,
-    ArtifactSinkError,
     render_identity_png,
     render_yolo,
     run_single_image,
@@ -328,26 +327,25 @@ def test_blip3_debug_without_a_sink_fails_closed():
         )
 
 
-def test_clip_debug_capacity_is_rejected_before_clip_calls():
+def test_clip_debug_capacity_omission_does_not_skip_clip_calls():
     calls = []
 
     def forbidden_clip(state, params, image, **kwargs):
         calls.append("clip")
-        raise AssertionError("CLIP must not run after debug admission fails")
+        return state, params["masks"], {}
 
     mask = {"segmentation": seg([(2, 2)], (8, 8)), "area": 1}
     config = base_config(
         clip_cfg={"debug": True, "labels": {"thing": "a thing"}},
     )
     sink = BoundedMemoryArtifactSink(ArtifactBudget(max_artifacts=1))
-    with pytest.raises(ArtifactSinkError):
-        run(
-            [mask, mask],
-            config,
-            sink=sink,
-            stages=make_stages([mask, mask], clip_fn=forbidden_clip),
-        )
-    assert calls == []
+    run(
+        [mask, mask],
+        config,
+        sink=sink,
+        stages=make_stages([mask, mask], clip_fn=forbidden_clip),
+    )
+    assert calls == ["clip"]
     assert sink.names() == ()
 
 
@@ -366,7 +364,7 @@ def test_clip_debug_capacity_is_rejected_before_clip_calls():
         ),
     ],
 )
-def test_blip_debug_capacity_uses_actual_post_clip_values_before_qa(rule, score, label):
+def test_blip_debug_capacity_uses_actual_post_clip_values_without_skipping_qa(rule, score, label):
     calls = []
 
     def clip_fn(state, params, image, **kwargs):
@@ -377,7 +375,7 @@ def test_blip_debug_capacity_uses_actual_post_clip_values_before_qa(rule, score,
 
     def forbidden_blip(state, params, image, **kwargs):
         calls.append("blip3")
-        raise AssertionError("BLIP3 must not run after debug admission fails")
+        return state, params["masks"], {}
 
     mask = {"segmentation": np.ones((8, 8), dtype=bool), "area": 64}
     config = base_config(clip_cfg={"enabled": True}, blip3_cfg=rule)
@@ -389,14 +387,14 @@ def test_blip_debug_capacity_uses_actual_post_clip_values_before_qa(rule, score,
         sink = BoundedMemoryArtifactSink(budget)
         if budget.max_artifacts == 1:
             sink.store_bytes("existing.bin", b"x")
-        with pytest.raises(ArtifactSinkError):
-            run(
-                [mask],
-                config,
-                sink=sink,
-                stages=make_stages([mask], clip_fn=clip_fn, blip3_fn=forbidden_blip),
-            )
-        assert calls == []
+        calls.clear()
+        run(
+            [mask],
+            config,
+            sink=sink,
+            stages=make_stages([mask], clip_fn=clip_fn, blip3_fn=forbidden_blip),
+        )
+        assert calls == ["blip3"]
         assert sink.names() in ((), ("existing.bin",))
 
 

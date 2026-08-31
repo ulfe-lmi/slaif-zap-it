@@ -815,14 +815,17 @@ def test_single_image_composition_retains_only_crop_bounded_arrays():
 
 def test_capability_discloses_contour_rgb_limits_and_record_names():
     capabilities = build_capabilities(ServiceSettings())
-    assert capabilities["candidate_views"]["blip3"]["fields"]["contour_rgb"] == {
-        "type": "array",
-        "min_items": 3,
-        "max_items": 3,
-        "item_type": "integer",
-        "item_minimum": 0,
-        "item_maximum": 255,
-    }
+    assert (
+        capabilities["candidate_views"]["blip3"]["fields"]["contour_rgb"].items()
+        >= {
+            "type": "array",
+            "min_items": 3,
+            "max_items": 3,
+            "item_type": "integer",
+            "item_minimum": 0,
+            "item_maximum": 255,
+        }.items()
+    )
     assert "min_items" not in capabilities["candidate_views"]["clip"]["fields"]["context_fraction"]
     base = {
         "stage": "clip",

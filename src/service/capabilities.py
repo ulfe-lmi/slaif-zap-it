@@ -27,9 +27,15 @@ from src.runtime.models import APPROVED_MODEL_SPECS
 
 from .envelope import SCHEMA_VERSION
 from .settings import SERVICE_MODEL_ID, ServiceSettings
+from .yaml_input import service_config_leaf_paths
 
 __all__ = [
     "CapabilityField",
+    "CapabilityCatalogEntry",
+    "CapabilitySection",
+    "ConfigurationCapabilities",
+    "DiagnosticArtifactCapability",
+    "ResponseEvidenceCapability",
     "CandidateViewCapabilityStage",
     "CandidateViewsCapability",
     "FixedControls",
@@ -53,6 +59,61 @@ class CapabilityField(BaseModel):
     )
     item_minimum: int | float | None = Field(default=None, exclude_if=lambda value: value is None)
     item_maximum: int | float | None = Field(default=None, exclude_if=lambda value: value is None)
+    nullable: bool = False
+    default: Any = None
+    units: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    stage: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    description: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    profile_interaction: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    operator_limit: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+_CAPABILITY_PATHS = service_config_leaf_paths()
+CapabilityPath = Literal[_CAPABILITY_PATHS]
+
+
+class CapabilityCatalogEntry(BaseModel):
+    """One ordered, OpenAPI-enumerated configuration leaf descriptor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: CapabilityPath
+    descriptor: CapabilityField
+    required: bool = Field(description="Whether the leaf is required when its parent is used")
+    nullable: bool = Field(description="Whether the leaf explicitly accepts null")
+    default: Any = Field(description="Effective default; null means no non-null default")
+
+
+class CapabilitySection(BaseModel):
+    """Typed inventory for one fixed configuration surface."""
+
+    fields: Dict[str, CapabilityField]
+    description: str
+
+
+class ConfigurationCapabilities(BaseModel):
+    """Canonical machine-readable inventory of accepted YAML leaf paths."""
+
+    fields: Dict[str, CapabilityField]
+    sections: Dict[str, CapabilitySection]
+    dynamic_fields: Dict[str, CapabilityField]
+    field_catalog: List[CapabilityCatalogEntry]
+
+
+class DiagnosticArtifactCapability(BaseModel):
+    """Typed capability surface for request-local L3 artifact selection."""
+
+    fields: Dict[str, CapabilityField]
+    default_selection: Dict[str, Any]
+    semantics: Dict[str, str]
+
+
+class ResponseEvidenceCapability(BaseModel):
+    """Named response evidence surfaces disclosed by the API."""
+
+    levels: Dict[str, str]
+    artifact_delivery: Dict[str, str]
+    error_details: Dict[str, str]
 
 
 class FixedControls(BaseModel):
@@ -146,6 +207,40 @@ class CapabilitiesResponse(BaseModel):
     fixed_controls: FixedControls
     raw_sam2_debug: RawSam2DebugPolicy
     candidate_views: CandidateViewsCapability
+    configuration: ConfigurationCapabilities
+    diagnostic_artifacts: DiagnosticArtifactCapability
+    response_evidence: ResponseEvidenceCapability
+
+
+def _cap(
+    kind: Literal["integer", "number", "boolean", "string", "array"],
+    *,
+    description: str,
+    default: Any = None,
+    minimum: int | float | None = None,
+    maximum: int | float | None = None,
+    allowed: List[Any] | None = None,
+    stage: str | None = None,
+    nullable: bool = False,
+    units: str | None = None,
+    profile_interaction: str | None = None,
+    operator_limit: str | None = None,
+    **kwargs: Any,
+) -> CapabilityField:
+    return CapabilityField(
+        type=kind,
+        description=description,
+        default=default,
+        minimum=minimum,
+        maximum=maximum,
+        allowed=allowed,
+        stage=stage,
+        nullable=nullable,
+        units=units,
+        profile_interaction=profile_interaction,
+        operator_limit=operator_limit,
+        **kwargs,
+    )
 
 
 def _field_descriptions() -> Dict[str, CapabilityField]:
@@ -163,54 +258,446 @@ def _field_descriptions() -> Dict[str, CapabilityField]:
         "crop_n_points_downscale_factor": ("integer", 1, 32),
         "min_mask_region_area": ("integer", 0, 64_000_000),
     }
+    operator_fields = {
+        "points_per_side",
+        "points_per_batch",
+        "crop_n_layers",
+        "min_mask_region_area",
+    }
     fields = {
-        name: CapabilityField(type=kind, minimum=lower, maximum=upper)
+        name: _cap(
+            kind,
+            minimum=lower,
+            maximum=upper,
+            default=SAM2_DEFAULTS[name],
+            description=f"Safe SAM2 {name} value.",
+            stage="sam2",
+            units="pixels" if "area" in name else "count" if kind == "integer" else None,
+            profile_interaction="explicit value overrides profile, then default",
+            operator_limit=name if name in operator_fields else None,
+        )
         for name, (kind, lower, upper) in numeric_ranges.items()
     }
     fields.update(
         {
-            "use_m2m": CapabilityField(type="boolean", allowed=[False, True]),
-            "multimask_output": CapabilityField(type="boolean", allowed=[False, True]),
-            "debug": CapabilityField(type="boolean", allowed=[False, True]),
-            "profile": CapabilityField(type="string", allowed=list(SAM2_PROFILES)),
+            "use_m2m": _cap(
+                "boolean",
+                allowed=[False, True],
+                default=False,
+                stage="sam2",
+                description="Enable SAM2 mask-to-mask refinement.",
+            ),
+            "multimask_output": _cap(
+                "boolean",
+                allowed=[False, True],
+                default=True,
+                stage="sam2",
+                description="Emit multiple predictions per prompt.",
+            ),
+            "debug": _cap(
+                "boolean",
+                allowed=[False, True],
+                default=False,
+                stage="sam2",
+                description="Enable raw SAM2 diagnostics at L3 only.",
+            ),
+            "profile": _cap(
+                "string",
+                allowed=list(SAM2_PROFILES),
+                nullable=True,
+                stage="sam2",
+                description="Optional preset applied before explicit values.",
+            ),
         }
     )
     return fields
 
 
+def _decorate_candidate_fields(
+    fields: Dict[str, CapabilityField], *, stage: str
+) -> Dict[str, CapabilityField]:
+    return {
+        name: field.model_copy(
+            update={
+                "default": CANDIDATE_VIEW_DEFAULTS[stage].get(name),
+                "stage": stage,
+                "description": f"Request-local {stage} candidate-view {name} policy.",
+                "profile_interaction": "independent from SAM2 profile",
+            }
+        )
+        for name, field in fields.items()
+    }
+
+
 def _candidate_view_fields(*, include_contour: bool) -> Dict[str, CapabilityField]:
     if include_contour:
-        return {
-            "mode": CapabilityField(type="string", allowed=["single_dilated_blur"]),
+        return _decorate_candidate_fields(
+            {
+                "mode": CapabilityField(type="string", allowed=["single_dilated_blur"]),
+                "context_fraction": CapabilityField(type="number", minimum=0.0, maximum=0.5),
+                "min_context_pixels": CapabilityField(type="integer", minimum=0, maximum=256),
+                "max_context_pixels": CapabilityField(type="integer", minimum=0, maximum=512),
+                "crop_extent_multiplier": CapabilityField(type="number", minimum=1.0, maximum=2.0),
+                "blur_sigma_fraction": CapabilityField(type="number", minimum=0.0, maximum=0.5),
+                "contour_enabled": CapabilityField(type="boolean", allowed=[False, True]),
+                "contour_fraction": CapabilityField(type="number", minimum=0.0, maximum=0.25),
+                "contour_min_pixels": CapabilityField(type="integer", minimum=1, maximum=3),
+                "contour_max_pixels": CapabilityField(type="integer", minimum=1, maximum=3),
+                "contour_rgb": CapabilityField(
+                    type="array",
+                    min_items=3,
+                    max_items=3,
+                    item_type="integer",
+                    item_minimum=0,
+                    item_maximum=255,
+                ),
+            },
+            stage="blip3",
+        )
+    return _decorate_candidate_fields(
+        {
+            "mode": CapabilityField(type="string", allowed=["raw_bbox_crop"]),
             "context_fraction": CapabilityField(type="number", minimum=0.0, maximum=0.5),
             "min_context_pixels": CapabilityField(type="integer", minimum=0, maximum=256),
             "max_context_pixels": CapabilityField(type="integer", minimum=0, maximum=512),
-            "crop_extent_multiplier": CapabilityField(type="number", minimum=1.0, maximum=2.0),
-            "blur_sigma_fraction": CapabilityField(type="number", minimum=0.0, maximum=0.5),
-            "contour_enabled": CapabilityField(type="boolean", allowed=[False, True]),
-            "contour_fraction": CapabilityField(type="number", minimum=0.0, maximum=0.25),
-            "contour_min_pixels": CapabilityField(type="integer", minimum=1, maximum=3),
-            "contour_max_pixels": CapabilityField(type="integer", minimum=1, maximum=3),
-            "contour_rgb": CapabilityField(
-                type="array",
-                min_items=3,
-                max_items=3,
-                item_type="integer",
-                item_minimum=0,
-                item_maximum=255,
-            ),
-        }
-    return {
-        "mode": CapabilityField(type="string", allowed=["raw_bbox_crop"]),
-        "context_fraction": CapabilityField(type="number", minimum=0.0, maximum=0.5),
-        "min_context_pixels": CapabilityField(type="integer", minimum=0, maximum=256),
-        "max_context_pixels": CapabilityField(type="integer", minimum=0, maximum=512),
+        },
+        stage="clip",
+    )
+
+
+def _configuration_capabilities() -> ConfigurationCapabilities:
+    """Return the single canonical inventory used by validation and docs."""
+    sam2 = _field_descriptions()
+    preprocessing = {
+        "roi": _cap(
+            "string",
+            nullable=True,
+            stage="preprocessing",
+            description="Optional source ROI string; false disables ROI.",
+        ),
+        "resize": _cap(
+            "number",
+            nullable=True,
+            minimum=0.000001,
+            stage="preprocessing",
+            description="Positive resize factor.",
+            units="factor",
+        ),
+        "debug": _cap(
+            "boolean",
+            default=False,
+            stage="preprocessing",
+            description="Emit the trusted pipeline ROI debug artifact at L3.",
+        ),
     }
+    geometry = {
+        name: _cap(
+            "boolean" if name in {"allow_border_touching", "debug"} else "number",
+            minimum=None if name in {"allow_border_touching", "debug"} else 0,
+            maximum=None
+            if name in {"allow_border_touching", "debug"}
+            else (1000 if "aspect" in name else 64_000_000 if "area" in name else 32_768),
+            allowed=[False, True] if name in {"allow_border_touching", "debug"} else None,
+            nullable=True,
+            default=(
+                True if name == "allow_border_touching" else False if name == "debug" else None
+            ),
+            stage="postsam2processing",
+            description=f"Canonical post-SAM2 {name} constraint.",
+            operator_limit="min_mask_region_area" if name == "min_area" else None,
+        )
+        for name in (
+            "min_area",
+            "max_area",
+            "min_width",
+            "max_width",
+            "min_height",
+            "max_height",
+            "min_aspect_ratio",
+            "max_aspect_ratio",
+            "allow_border_touching",
+            "debug",
+        )
+    }
+    geometry.update(
+        {
+            alias: _cap(
+                "integer",
+                minimum=0,
+                stage="postsam2processing",
+                description=f"Legacy alias for postsam2processing.{canonical}.",
+            )
+            for alias, canonical in {
+                "maxsize": "max_area",
+                "max_w": "max_width",
+                "max_h": "max_height",
+            }.items()
+        }
+    )
+    clip_fields = {
+        "debug": _cap(
+            "boolean",
+            default=False,
+            stage="clip",
+            description="Enable CLIP input PNG diagnostics at L3.",
+        ),
+        "labels.<identifier>": _cap(
+            "string",
+            minimum=1,
+            maximum=512,
+            stage="clip",
+            description="Dynamic CLIP label prompt.",
+            units="characters",
+        ),
+    }
+    routing_fields = {
+        f"route_to_blip3.{name}": _cap(
+            "array"
+            if name in {"labels", "uncertain_labels"}
+            else "integer"
+            if name in {"top_k", "max_candidates"}
+            else "number",
+            minimum=(
+                1
+                if name in {"top_k", "max_candidates"}
+                else 0.0
+                if name == "score_margin_from_best"
+                else -1.0
+                if name == "minimum_target_score"
+                else None
+            ),
+            maximum=(
+                256
+                if name == "max_candidates"
+                else 2.0
+                if name == "score_margin_from_best"
+                else 1.0
+                if name == "minimum_target_score"
+                else None
+            ),
+            nullable=name
+            in {"top_k", "score_margin_from_best", "minimum_target_score", "max_candidates"},
+            stage="clip_routing",
+            description=f"CLIP routing {name} policy.",
+            units="cosine" if "score" in name else None,
+        )
+        for name in (
+            "labels",
+            "top_k",
+            "score_margin_from_best",
+            "minimum_target_score",
+            "uncertain_labels",
+            "max_candidates",
+        )
+    }
+    blip_fields = {
+        f"<routing_label>.{name}": _cap(
+            "boolean" if name == "debug" else "string",
+            minimum=None if name == "debug" else 1,
+            maximum=None if name == "debug" else 2048,
+            allowed=[False, True] if name == "debug" else None,
+            stage="blip3",
+            description=f"Dynamic BLIP3 rule {name}.",
+        )
+        for name in (
+            "question",
+            "trueresult",
+            "falseresult",
+            "newcategory",
+            "falsecategory",
+            "debug",
+        )
+    }
+    candidate_fields = {
+        f"clip.{name}": field
+        for name, field in _candidate_view_fields(include_contour=False).items()
+    }
+    candidate_fields.update(
+        {
+            f"blip3.{name}": field
+            for name, field in _candidate_view_fields(include_contour=True).items()
+        }
+    )
+    for path, field in tuple(candidate_fields.items()):
+        stage, name = path.split(".", 1)
+        candidate_fields[path] = field.model_copy(
+            update={
+                "default": CANDIDATE_VIEW_DEFAULTS[stage].get(name),
+                "stage": stage,
+                "description": f"Request-local {stage} candidate-view {name} policy.",
+                "profile_interaction": "independent from SAM2 profile",
+            }
+        )
+    visualization = {
+        "alpha": _cap(
+            "number",
+            minimum=0.0,
+            maximum=1.0,
+            default=0.6,
+            stage="visualization",
+            description="Default overlay alpha.",
+        ),
+        "labels": _cap(
+            "array",
+            item_type="string",
+            stage="label_filter",
+            description="Terminal labels retained for output.",
+        ),
+    }
+    for stage in ("sam2", "clip", "blip3"):
+        for field_name, field in {
+            "id": _cap(
+                "string",
+                minimum=1,
+                maximum=64,
+                stage="visualization",
+                description="Safe visualization identifier.",
+            ),
+            "renderer": _cap(
+                "string",
+                allowed=["annotated", "alpha-overlay", "annotated-labelled"],
+                stage="visualization",
+                description="Supported fixed renderer enum.",
+            ),
+            "alpha": _cap(
+                "number",
+                minimum=0.0,
+                maximum=1.0,
+                nullable=True,
+                stage="visualization",
+                description="Optional stream alpha.",
+            ),
+            "show_confidence": _cap(
+                "boolean",
+                default=False,
+                nullable=True,
+                stage="visualization",
+                description="Show bounded CLIP confidence on labelled output.",
+            ),
+        }.items():
+            visualization[f"{stage}.<index>.{field_name}"] = field
+    diagnostic = {
+        "stages": _cap(
+            "array",
+            allowed=list(("sam2", "clip", "blip3", "visualization")),
+            stage="artifact_delivery",
+            description="Optional stages to deliver.",
+        ),
+        "candidate_ids": _cap(
+            "array",
+            nullable=True,
+            minimum=1,
+            maximum=256,
+            item_type="integer",
+            item_minimum=1,
+            item_maximum=256,
+            stage="artifact_delivery",
+            description="Optional one-based source candidate filter.",
+        ),
+        "page": _cap(
+            "integer",
+            minimum=1,
+            maximum=65535,
+            default=1,
+            stage="artifact_delivery",
+            description="One-based selected artifact page.",
+        ),
+        "page_size": _cap(
+            "integer",
+            minimum=1,
+            maximum=48,
+            default=48,
+            stage="artifact_delivery",
+            description="Selected artifacts per page.",
+        ),
+    }
+    sections = {
+        "root": CapabilitySection(
+            fields={
+                "alpha": _cap(
+                    "number",
+                    minimum=0.0,
+                    maximum=1.0,
+                    default=0.6,
+                    stage="pipeline",
+                    description="Global mask blend alpha.",
+                )
+            },
+            description="Top-level algorithm control.",
+        ),
+        "preprocessing": CapabilitySection(
+            fields=preprocessing, description="ROI and resize controls."
+        ),
+        "mask_generator": CapabilitySection(
+            fields=sam2, description="Request-safe SAM2 generator scalars."
+        ),
+        "postsam2processing": CapabilitySection(
+            fields=geometry, description="Canonical geometry and legacy aliases."
+        ),
+        "clip": CapabilitySection(fields=clip_fields, description="CLIP labels and debug control."),
+        "clip_routing": CapabilitySection(
+            fields=routing_fields, description="Complete CLIP-to-BLIP3 routing policy."
+        ),
+        "blip3": CapabilitySection(
+            fields=blip_fields, description="Dynamic BLIP3 verification rules."
+        ),
+        "candidate_views": CapabilitySection(
+            fields=candidate_fields, description="CLIP and BLIP3 candidate-view policies."
+        ),
+        "visualization": CapabilitySection(
+            fields=visualization, description="Safe visualization entries and renderers."
+        ),
+        "diagnostic_artifacts": CapabilitySection(
+            fields=diagnostic, description="Request-local optional artifact selection."
+        ),
+    }
+    flat: Dict[str, CapabilityField] = {}
+    for section_name, section in sections.items():
+        prefix = "" if section_name == "root" else section_name + "."
+        for path, field in section.fields.items():
+            flat[prefix + path] = field
+    if set(flat) != set(service_config_leaf_paths()):
+        raise RuntimeError("service capability inventory drifted from the YAML validator")
+    if any(not field.stage or not field.description for field in flat.values()):
+        raise RuntimeError("service capability catalog contains an undocumented field")
+    required_paths = {
+        "clip.labels.<identifier>",
+        "clip_routing.route_to_blip3.labels",
+        "blip3.<routing_label>.question",
+        "visualization.sam2.<index>.id",
+        "visualization.sam2.<index>.renderer",
+        "visualization.clip.<index>.id",
+        "visualization.clip.<index>.renderer",
+        "visualization.blip3.<index>.id",
+        "visualization.blip3.<index>.renderer",
+    }
+    field_catalog = [
+        CapabilityCatalogEntry(
+            path=path,
+            descriptor=field,
+            required=path in required_paths,
+            nullable=field.nullable,
+            default=field.default,
+        )
+        for path, field in sorted(flat.items())
+    ]
+    dynamic = {
+        path: field
+        for path, field in flat.items()
+        if "<" in path or "identifier" in path or "routing_label" in path
+    }
+    return ConfigurationCapabilities(
+        fields=flat,
+        sections=sections,
+        dynamic_fields=dynamic,
+        field_catalog=field_catalog,
+    )
 
 
 def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
     """Build a deterministic capability document with no request state."""
     sam_spec = APPROVED_MODEL_SPECS["sam2"]
+    configuration = _configuration_capabilities()
     response = CapabilitiesResponse(
         schema_version=SCHEMA_VERSION,
         model_id=SERVICE_MODEL_ID,
@@ -404,7 +891,48 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
                 )
             },
         ),
+        configuration=configuration,
+        diagnostic_artifacts=DiagnosticArtifactCapability(
+            fields=configuration.sections["diagnostic_artifacts"].fields,
+            default_selection={
+                "stages": ["sam2", "clip", "blip3", "visualization"],
+                "candidate_ids": None,
+                "page": 1,
+                "page_size": 48,
+            },
+            semantics={
+                "stage_selection": "Only narrows eligible L3 artifacts; it never enables debug flags.",
+                "candidate_selection": "Filters only CLIP and BLIP3 candidate-specific PNGs by one-based source_candidate_id.",
+                "pagination": "Applied after stage and candidate selection in deterministic pipeline/name order.",
+                "overflow": "Budget omission is non-fatal for optional artifacts; essential response overflow remains response_too_large.",
+            },
+        ),
+        response_evidence=ResponseEvidenceCapability(
+            levels={
+                "0": "YOLO text and minimum envelope metadata.",
+                "1": "L0 plus the uint16 identity mask.",
+                "2": "L1 plus produced per-object algorithm evidence.",
+                "3": "L2 plus bounded stage, provenance, timing, and optional artifact ledger.",
+            },
+            artifact_delivery={
+                "truncated": "True only when an eligible selected optional artifact is omitted by an operator budget.",
+                "omitted": "Bounded typed entries identify fixed name, stage, source/question IDs, estimate, and reason.",
+                "hashes": "JSON descriptors and ZIP manifests identify exact delivered bytes by SHA-256 and size.",
+            },
+            error_details={
+                "resource_limit": "SAM2 capacity rejections include sanitized estimates, causes, limits, and alternatives.",
+                "compatibility": "Other error envelopes retain code, message, and request_id only.",
+            },
+        ),
     )
     if hasattr(response, "model_dump"):
-        return response.model_dump(mode="json", exclude_none=True)
-    return response.dict(exclude_none=True)
+        body = response.model_dump(mode="json", exclude_none=True)
+    else:
+        body = response.dict(exclude_none=True)
+    # The compatibility dictionaries keep their compact historical shape, but
+    # catalog records must state a null default explicitly as part of the
+    # request contract.
+    body["configuration"]["field_catalog"] = [
+        record.model_dump(mode="json", exclude_none=False) for record in configuration.field_catalog
+    ]
+    return body

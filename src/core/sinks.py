@@ -137,6 +137,14 @@ class ArtifactSink:
         except KeyError as exc:  # pragma: no cover - trivial
             raise ArtifactSinkError(f"unknown artifact: {name!r}") from exc
 
+    def artifact_status(self, name: str) -> Optional[str]:
+        """Return the admission status for ``name`` when the sink tracks it."""
+        return "stored" if name in self._artifacts else None
+
+    def omissions(self) -> tuple[Mapping[str, Any], ...]:
+        """Return optional artifacts omitted by a bounded service sink."""
+        return ()
+
     def ensure_capacity(
         self,
         additional_artifacts: int,
@@ -168,29 +176,69 @@ def _raw_artifact_size(artifact: StoredArtifact) -> int:
 
 
 class BoundedMemoryArtifactSink(MemoryArtifactSink):
-    """Memory sink that refuses debug growth before retaining an artifact."""
+    """Memory sink with non-fatal optional-artifact admission.
 
-    def __init__(self, budget: ArtifactBudget | None = None) -> None:
+    Logical-name and type failures remain errors.  A capacity miss records one
+    omission and lets the pipeline continue; the service envelope later merges
+    those records with response-size admission.  ``admission`` is intentionally
+    duck-typed so the core has no dependency on the service package.
+    """
+
+    def __init__(self, budget: ArtifactBudget | None = None, *, admission: Any = None) -> None:
         super().__init__()
         self.budget = budget or ArtifactBudget()
         if self.budget.max_artifacts <= 0:
             raise ValueError("max_artifacts must be positive")
         if self.budget.max_single_bytes <= 0 or self.budget.max_total_bytes < 0:
             raise ValueError("artifact byte budgets must be non-negative")
+        self.admission = admission
         self.raw_bytes = 0
+        self._statuses: Dict[str, str] = {}
+        self._omissions: list[dict[str, Any]] = []
 
     def _commit(self, artifact: StoredArtifact) -> StoredArtifact:
         replacing = artifact.name in self._artifacts
-        if not replacing and len(self._artifacts) >= self.budget.max_artifacts:
-            raise ArtifactSinkError("debug artifact count exceeds the configured limit")
         raw_size = _raw_artifact_size(artifact)
-        if raw_size > self.budget.max_single_bytes:
-            raise ArtifactSinkError("debug artifact exceeds the configured per-artifact limit")
+        if self.admission is not None and not replacing:
+            status = self.admission.offer(
+                artifact.name,
+                estimated_raw_bytes=raw_size,
+                media_type=artifact.content_type or "application/octet-stream",
+                sink=True,
+            )
+            if status != "stored":
+                self._statuses[artifact.name] = status
+                return artifact
+        elif not replacing:
+            if len(self._artifacts) >= self.budget.max_artifacts:
+                return self._omit(artifact, "omitted_count_limit", raw_size)
+        if self.admission is None:
+            if raw_size > self.budget.max_single_bytes:
+                return self._omit(artifact, "omitted_single_size_limit", raw_size)
+            previous_size = _raw_artifact_size(self._artifacts[artifact.name]) if replacing else 0
+            if self.raw_bytes - previous_size + raw_size > self.budget.max_total_bytes:
+                return self._omit(artifact, "omitted_raw_total_limit", raw_size)
         previous_size = _raw_artifact_size(self._artifacts[artifact.name]) if replacing else 0
-        if self.raw_bytes - previous_size + raw_size > self.budget.max_total_bytes:
-            raise ArtifactSinkError("debug artifacts exceed the configured total byte limit")
         self.raw_bytes = self.raw_bytes - previous_size + raw_size
+        self._statuses[artifact.name] = "stored"
         return super()._commit(artifact)
+
+    def _omit(self, artifact: StoredArtifact, reason: str, raw_size: int) -> StoredArtifact:
+        self._statuses[artifact.name] = reason
+        self._omissions.append(
+            {
+                "name": artifact.name,
+                "reason": reason,
+                "estimated_raw_bytes": int(raw_size),
+            }
+        )
+        return artifact
+
+    def artifact_status(self, name: str) -> Optional[str]:
+        return self._statuses.get(name)
+
+    def omissions(self) -> tuple[Mapping[str, Any], ...]:
+        return tuple(self._omissions)
 
     def ensure_capacity(
         self,
@@ -198,20 +246,8 @@ class BoundedMemoryArtifactSink(MemoryArtifactSink):
         additional_bytes: int,
         artifact_sizes: Sequence[int] | None = None,
     ) -> None:
-        """Reject a predictable debug overflow before an expensive stage."""
-        if additional_artifacts < 0 or additional_bytes < 0:
-            raise ArtifactSinkError("debug artifact admission values must be non-negative")
-        sizes = list(artifact_sizes) if artifact_sizes is not None else []
-        if sizes and (len(sizes) != additional_artifacts or any(size < 0 for size in sizes)):
-            raise ArtifactSinkError("debug artifact admission values are inconsistent")
-        if sizes and any(size > self.budget.max_single_bytes for size in sizes):
-            raise ArtifactSinkError("debug artifact exceeds the configured per-artifact limit")
-        if len(self._artifacts) + additional_artifacts > self.budget.max_artifacts:
-            raise ArtifactSinkError("debug artifact count exceeds the configured limit")
-        if additional_bytes > additional_artifacts * self.budget.max_single_bytes:
-            raise ArtifactSinkError("debug artifact exceeds the configured per-artifact limit")
-        if self.raw_bytes + additional_bytes > self.budget.max_total_bytes:
-            raise ArtifactSinkError("debug artifacts exceed the configured total byte limit")
+        """Provide a non-mutating estimate; never gates model execution."""
+        del additional_artifacts, additional_bytes, artifact_sizes
 
 
 class FilesystemArtifactSink(ArtifactSink):

@@ -131,7 +131,8 @@ each object's source mask/RLE.
 ## Visualization
 
 The service supports bounded in-memory annotated and alpha-overlay streams at
-verbosity 3. It preflights raw RGB memory and artifact budgets before inference.
+verbosity 3. It renders optional arrays as normal pipeline work and admits
+their bytes after inference through one deterministic bounded ledger.
 
 The L3 `mask_generator.debug: true` path has a separate raw-SAM2 diagnostic
 renderer because one combined overlay cannot show which overlapping candidate

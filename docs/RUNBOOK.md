@@ -203,7 +203,8 @@ are not reloaded when these scalars change. Intrinsic/type failures return
 non-retryable `resource_limit` 413 before generator construction and inference.
 The manifest's `actual_candidate_count` is the raw generator count, while the
 existing L3 `candidate_counts.sam2_candidates` remains the post-remap,
-non-empty count.
+non-empty count. Capacity rejection details also list sanitized estimates,
+causing values, public limits and admissible request-safe alternatives.
 
 For L3 post-filter evidence, inspect `service.post_filter_diagnostics` beside
 `candidate_counts`. It reports mutually exclusive `maxsize`, `empty_mask`,
@@ -232,8 +233,10 @@ Candidate crops may be enlarged into their fixed 320x240 tiles; the diagnostics
 never upscale.
 Check the typed `service.sam2.raw_visualization` arithmetic, histogram overflow,
 source/diagnostic dimensions and fixed artifact hashes in both JSON and ZIP.
-The request is rejected with `response_too_large` before readiness/gate/engine
-if the fixed 11-artifact or exact RGB reservation cannot fit operator limits.
+The request continues through readiness, gate and engine when optional raw or
+visualization bytes cannot fit. Inspect `service.artifact_delivery` for the
+typed omission reason and `truncated: true`; only an essential response that
+cannot fit returns `response_too_large`.
 
 For a bounded L3 BLIP3 audit, set `debug: true` on one rule. The verifier
 composes one image per applicable candidate: source pixels under exact
