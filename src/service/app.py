@@ -720,9 +720,8 @@ def create_app(
                 response_format="zip",
                 response_bytes=len(payload),
                 objects=len(outcome.result.objects),
-                artifacts=len(outcome.result.rendered)
-                + (1 if parsed.verbosity >= 1 else 0)
-                + len(sink.artifacts()),
+                artifacts=delivery_ledger.document()["delivered_count"]
+                + (1 if parsed.verbosity >= 1 else 0),
             )
             metrics.request_duration.observe(time.monotonic() - started)
             request.state.metrics_recorded = True

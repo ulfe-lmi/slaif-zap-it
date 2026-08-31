@@ -511,6 +511,25 @@ def _refresh_prepared(
         document["service"]["artifact_delivery"] = prepared.ledger.document(
             artifacts={artifact.name: artifact.payload for artifact in prepared.artifacts}
         )
+        for record in document["service"].get("candidate_view_inputs", []):
+            artifact_name = record.get("artifact_name")
+            status = prepared.ledger.status_for(artifact_name) if artifact_name else None
+            if status is not None:
+                record["artifact_status"] = status
+        for record in document["service"].get("objects", []):
+            for key in ("blip3_verification",):
+                verification = record.get(key)
+                if isinstance(verification, dict):
+                    name = verification.get("input_artifact_name")
+                    status = prepared.ledger.status_for(name) if name else None
+                    if status is not None:
+                        verification["input_artifact_status"] = status
+            for verification in record.get("blip3_verifications", []) or []:
+                if isinstance(verification, dict):
+                    name = verification.get("input_artifact_name")
+                    status = prepared.ledger.status_for(name) if name else None
+                    if status is not None:
+                        verification["input_artifact_status"] = status
     return dataclass_replace(prepared, document=document)
 
 
