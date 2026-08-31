@@ -379,7 +379,7 @@ def test_blip_debug_capacity_uses_actual_post_clip_values_before_qa(rule, score,
         calls.append("blip3")
         raise AssertionError("BLIP3 must not run after debug admission fails")
 
-    mask = {"segmentation": seg([(2, 2)], (8, 8)), "area": 1}
+    mask = {"segmentation": np.ones((8, 8), dtype=bool), "area": 64}
     config = base_config(clip_cfg={"enabled": True}, blip3_cfg=rule)
     for budget in (
         ArtifactBudget(max_artifacts=1),

@@ -23,6 +23,7 @@ __all__ = [
     "CandidateViewBlip3Config",
     "CandidateViewsMetadata",
     "CandidateViewInputRecord",
+    "Blip3CandidateViewRecord",
     "ObjectRecord",
     "PostFilterReason",
     "PostFilterLimits",
@@ -61,10 +62,31 @@ class CandidateViewClipConfig(BaseModel):
     applied: bool
 
 
-class CandidateViewBlip3Config(CandidateViewClipConfig):
-    """Effective request-local BLIP3 view policy."""
+class CandidateViewBlip3Config(BaseModel):
+    """Effective request-local single-image BLIP3 view policy."""
 
-    contour_width: int = Field(ge=0, le=16)
+    mode: Literal["single_dilated_blur"]
+    context_fraction: float = Field(ge=0.0, le=0.5)
+    min_context_pixels: int = Field(ge=0, le=256)
+    max_context_pixels: int = Field(ge=0, le=512)
+    crop_extent_multiplier: float = Field(ge=1.0, le=2.0)
+    blur_sigma_fraction: float = Field(ge=0.0, le=0.5)
+    contour_enabled: bool
+    contour_fraction: float = Field(ge=0.0, le=0.25)
+    contour_min_pixels: int = Field(ge=1, le=3)
+    contour_max_pixels: int = Field(ge=1, le=3)
+    contour_rgb: List[int] = Field(min_length=3, max_length=3)
+    applied: bool
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> "CandidateViewBlip3Config":
+        if self.min_context_pixels > self.max_context_pixels:
+            raise ValueError("min_context_pixels must not exceed max_context_pixels")
+        if self.contour_min_pixels > self.contour_max_pixels:
+            raise ValueError("contour_min_pixels must not exceed contour_max_pixels")
+        if any(type(channel) is not int or not 0 <= channel <= 255 for channel in self.contour_rgb):
+            raise ValueError("contour_rgb must contain strict integers from 0 to 255")
+        return self
 
 
 class CandidateViewsMetadata(BaseModel):
@@ -82,12 +104,21 @@ class CandidateViewInputRecord(BaseModel):
     filtered_index: int = Field(ge=0)
     question_id: Optional[int] = Field(default=None, ge=1)
     artifact_name: str
-    target_bbox_xyxy: List[int]
-    context_bbox_xyxy: List[int]
-    effective_radius: int = Field(ge=0, le=512)
-    source_dimensions: Dict[str, int]
-    crop_dimensions: Dict[str, int]
+    target_bbox_xyxy: Optional[List[int]] = None
+    context_bbox_xyxy: Optional[List[int]] = None
+    effective_radius: Optional[int] = Field(default=None, ge=0, le=512)
+    source_dimensions: Optional[Dict[str, int]] = None
+    crop_dimensions: Optional[Dict[str, int]] = None
     model_input_dimensions: Dict[str, int]
+    raw_mask_bbox_xyxy_inclusive: Optional[List[int]] = None
+    support_bbox_xyxy_inclusive: Optional[List[int]] = None
+    crop_bbox_xyxy_exclusive: Optional[List[int]] = None
+    raw_context_radius: Optional[int] = Field(default=None, ge=0)
+    effective_context_radius: Optional[int] = Field(default=None, ge=0, le=512)
+    raw_contour_width: Optional[int] = Field(default=None, ge=0)
+    effective_contour_width: Optional[int] = Field(default=None, ge=0, le=3)
+    effective_blur_sigma: Optional[float] = Field(default=None, ge=0.0, le=20.0)
+    source_composite_dimensions: Optional[Dict[str, int]] = None
 
     @model_validator(mode="after")
     def validate_artifact_identity(self) -> "CandidateViewInputRecord":
@@ -100,6 +131,14 @@ class CandidateViewInputRecord(BaseModel):
             if self.question_id is not None:
                 raise ValueError("CLIP candidate-view records cannot have question_id")
             expected_prefix = "clip-candidate-view-CANDIDATE-"
+            if (
+                self.target_bbox_xyxy is None
+                or self.context_bbox_xyxy is None
+                or self.effective_radius is None
+                or self.source_dimensions is None
+                or self.crop_dimensions is None
+            ):
+                raise ValueError("CLIP candidate-view records require CLIP geometry fields")
         else:
             pattern = re.compile(
                 r"^(?:[A-Za-z0-9][A-Za-z0-9_.-]*-)?"
@@ -108,6 +147,20 @@ class CandidateViewInputRecord(BaseModel):
             if self.question_id is None:
                 raise ValueError("BLIP3 candidate-view records require question_id")
             expected_prefix = "blip3-verification-CANDIDATE-"
+            if (
+                self.raw_mask_bbox_xyxy_inclusive is None
+                or self.support_bbox_xyxy_inclusive is None
+                or self.crop_bbox_xyxy_exclusive is None
+                or self.raw_context_radius is None
+                or self.effective_context_radius is None
+                or self.raw_contour_width is None
+                or self.effective_contour_width is None
+                or self.effective_blur_sigma is None
+                or self.source_composite_dimensions is None
+            ):
+                raise ValueError(
+                    "BLIP3 candidate-view records require single-image geometry fields"
+                )
 
         match = pattern.fullmatch(self.artifact_name)
         if match is None:
@@ -118,6 +171,34 @@ class CandidateViewInputRecord(BaseModel):
             raise ValueError("candidate-view artifact name has the wrong question ID")
         if expected_prefix not in self.artifact_name:
             raise ValueError("candidate-view artifact name is missing its stage token")
+        return self
+
+
+class Blip3CandidateViewRecord(BaseModel):
+    """One bounded L3 composition attempt, independent of debug artifacts."""
+
+    source_candidate_id: int = Field(ge=1)
+    filtered_index: int = Field(ge=0)
+    status: Literal["rendered", "rejected"]
+    reason: Optional[Literal["crop_cannot_contain_support_and_contour"]] = None
+    render_mode: Literal["single_dilated_blur"]
+    raw_mask_bbox_xyxy_inclusive: List[int]
+    support_bbox_xyxy_inclusive: Optional[List[int]] = None
+    crop_bbox_xyxy_exclusive: List[int]
+    raw_context_radius: int = Field(ge=0)
+    effective_context_radius: int = Field(ge=0, le=512)
+    raw_contour_width: int = Field(ge=0)
+    effective_contour_width: int = Field(ge=0, le=3)
+    effective_blur_sigma: float = Field(ge=0.0, le=20.0)
+    source_composite_dimensions: Dict[str, int]
+    model_input_dimensions: Optional[Dict[str, int]] = None
+
+    @model_validator(mode="after")
+    def validate_status_reason(self) -> "Blip3CandidateViewRecord":
+        if self.status == "rendered" and self.reason is not None:
+            raise ValueError("rendered BLIP3 candidate views cannot have a diagnostic")
+        if self.status == "rejected" and self.reason is None:
+            raise ValueError("rejected BLIP3 candidate views require a diagnostic")
         return self
 
 
@@ -242,6 +323,7 @@ class ServiceMetadata(BaseModel):
     provenance: Optional[Dict[str, Any]] = None
     warnings: Optional[List[str]] = None
     candidate_view_inputs: Optional[List[CandidateViewInputRecord]] = None
+    blip3_candidate_views: Optional[List[Blip3CandidateViewRecord]] = None
 
 
 class Choice(BaseModel):

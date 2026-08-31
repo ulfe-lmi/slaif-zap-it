@@ -28,6 +28,10 @@ if not hasattr(Image, "CUBIC"):
 if not hasattr(Image, "ANTIALIAS"):
     Image.ANTIALIAS = Image.LANCZOS
 
+# Load the pure core before the legacy batch adapter.  Core model adapters may
+# use its typed errors, and this ordering keeps package imports acyclic.
+from .core.errors import CoreError  # noqa: E402
+
 from .batch import (
     log_print,
     prepare_dirs,
@@ -46,7 +50,6 @@ from .core import (
     CANDIDATE_VIEW_DEFAULTS,
     CANDIDATE_VIEW_LIMITS,
     CoreConfig,
-    CoreError,
     CandidateViewConfig,
     ArtifactBudget,
     BoundedMemoryArtifactSink,
@@ -66,6 +69,7 @@ from .core import (
     build_mask_views,
     default_candidate_view_configs,
     effective_candidate_view_configs,
+    exact_euclidean_dilate,
     order_final_objects,
     render_identity_png,
     render_yolo,
@@ -111,6 +115,7 @@ __all__ = [
     "build_mask_views",
     "default_candidate_view_configs",
     "effective_candidate_view_configs",
+    "exact_euclidean_dilate",
     "order_final_objects",
     "render_identity_png",
     "render_yolo",

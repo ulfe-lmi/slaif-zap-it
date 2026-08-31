@@ -189,13 +189,17 @@ names are `clip-candidate-view-CANDIDATE-####.png` and
 these tokenized names with a sanitized frame stem and never include prompts,
 labels, rule names or answers. No answer-text artifact is generated.
 
-The BLIP3 paired image is built once per candidate and reused for all questions:
-the left half is target-only, the right half preserves selected mask pixels,
-includes only bounded Euclidean-dilated context with floor integer arithmetic,
-restores right-side target pixels after bilinear resizing, and marks the
-configured exterior contour. The service validator strips nested
+BLIP3 composes one source-space image once per applicable candidate and reuses
+the same final image for all questions: exact Euclidean support pixels are
+restored byte-for-byte, the exterior contour is painted outside support, and
+all other local scene pixels are Pillow-Gaussian-blurred. The centered nominal
+crop uses inclusive raw/support bboxes and a half-open array-slice bbox. A crop
+that cannot contain support plus contour is rejected for that candidate before
+QA/debug work. The service validator strips nested
 BLIP3 debug flags below L3 with one aggregate warning. L3 input records retain
-source candidate ID, filtered index, bboxes, radius and dimensions.
+source candidate ID, filtered index, status, bboxes, radii, widths, sigma and
+source/model dimensions; `blip3_candidate_views` is separate from one-record-
+per-debug-question artifact inputs.
 
 ## Compatibility notes
 

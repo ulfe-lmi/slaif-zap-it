@@ -33,7 +33,7 @@ startup loading.
 | 0 | Envelope, five-field normalized YOLO text, dimensions, class map and config digest |
 | 1 | Level 0 plus uint16 `identity-mask.png` |
 | 2 | Level 1 plus produced object bbox/area/centroid/SAM/CLIP/BLIP/geometry fields |
-| 3 | Level 2 plus stage metadata, post-filter diagnostics, timings, warnings, provenance, bounded debug/annotated artifacts and exact per-object mask RLE |
+| 3 | Level 2 plus stage metadata, post-filter diagnostics, timings, warnings, provenance, one bounded BLIP3 composition record per applicable candidate, bounded debug/annotated artifacts and exact per-object mask RLE |
 
 L3 RLE uses `coco_rle_uncompressed`, `size: [height, width]`,
 `order: column-major`, and alternating background/foreground counts. It is
@@ -68,18 +68,23 @@ agree.
 Candidate-view debug artifacts are L3-only lossless PNGs of the exact arrays
 passed to the semantic processors. CLIP uses
 `clip-candidate-view-CANDIDATE-####.png`; BLIP3 uses
-`blip3-verification-CANDIDATE-####-QUESTION-####.png`. BLIP3's pair places
-target-only pixels on the left and zero-filled, floor-dimmed Euclidean-dilated
-context on the right, separated by four dark pixels. RGB/mask resize order and
-support reapplication are deterministic; right-side target pixels are restored
-after bilinear interpolation so they equal the left target pixels exactly. The
-artifact documents the verifier input but does not guarantee semantic accuracy.
+`blip3-verification-CANDIDATE-####-QUESTION-####.png`. BLIP3 passes one image
+per candidate: exact source pixels in Euclidean support are restored, the
+exterior contour is painted, and every other crop pixel is Gaussian-blurred
+scene context. The source crop uses inclusive raw/support bboxes and a
+half-open array-slice bbox; its endpoints are independently clamped and must
+contain support plus contour. The full composition is bilinearly resized to a
+256-pixel short-side target with a 768-pixel long-side cap. The decoded PNG is
+byte-identical to the sole image passed to QA; this artifact documents pixel
+identity and does not guarantee semantic accuracy.
 
 The exact radius-512 disk dilation uses a local-window squared distance
 transform with a constant number of temporary arrays. Debug resource admission
 is two-phase: CLIP artifacts are admitted before CLIP, and actual post-CLIP
-labels/scores admit BLIP3 debug questions before QA. Both exported BLIP3
-compositor names use this safe mask-aware path.
+labels/scores admit single-image BLIP3 debug questions before QA. The separate
+L3 `blip3_candidate_views` list has one bounded record per applicable candidate,
+including rendered/rejected status and the fixed containment diagnostic. A
+rejected candidate receives no QA call, debug artifact or label mutation.
 
 At L3, `mask_generator.debug: true` enables the bounded raw-SAM2 diagnostic.
 The ordinary combined overlay is insufficient to audit overlap ownership, so

@@ -181,6 +181,7 @@ class PipelineResult:
     post_filter_diagnostics: Mapping[str, Any] = field(default_factory=dict)
     sam2_metadata: Mapping[str, Any] = field(default_factory=dict)
     candidate_view_inputs: Tuple[Mapping[str, Any], ...] = ()
+    blip3_candidate_views: Tuple[Mapping[str, Any], ...] = ()
 
     def object_by_id(self, instance_id: int) -> ObjectResult:
         for obj in self.objects:

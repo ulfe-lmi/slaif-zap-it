@@ -82,19 +82,20 @@ configured true/false substrings, and optionally assign a replacement class.
 Service requests provide only rule mappings. The model, revision, FP16 dtype,
 tokenizer, processor, device, cache, and residency strategy remain pinned. The
 service limits each request to 32 planned questions and 32 generated tokens per
-question. Each question receives a deterministic mask-isolated pair rather than
-an unmasked rectangle. The shared builder computes exact Euclidean dilation from
-the candidate mask, neutralizes pixels outside the mask/support, and crops only
-after masking. The left side is target-only; the right side is bounded dilated
-context with floor-rounded intensity and an optional exterior contour. RGB is
-bilinearly resized and masks are nearest-neighbor resized before support-mask
-reapplication, with a four-pixel divider and a 768-pixel long-side cap.
+question. Each applicable candidate is composed once into one RGB image. Its
+inclusive raw-mask bbox determines a bounded centered crop; exact Euclidean
+dilation produces support, and a second exact dilation produces an exterior
+contour. Support pixels are restored from the source byte-for-byte while all
+other crop pixels are Pillow-Gaussian-blurred scene context. A crop that cannot
+contain support plus contour after independent endpoint clamping is rejected
+for that candidate before image/model work. The fully composed image alone is
+bilinearly resized for QA, with short side 256 and long side capped at 768.
 
 Below 24,576 MiB, BLIP3 lives in host RAM until its stage. SAM2 and CLIP run on
 GPU first; the registry then swaps them out, executes BLIP3 on GPU, and restores
 the baseline. At or above 24,576 MiB, all three pinned FP16 holders remain on
 the assigned GPU and no request-time movement occurs. Objective 009's real
-matrix covers all four supported profiles. The resulting paired images are
+matrix covers all four supported profiles. The resulting single images are
 bounded before the pinned processor maps
 arbitrary aspect ratios to a finite 378-pixel tile grid. The verifier's fixed
 instruction follows the delimited client question and asks whether the region
