@@ -578,13 +578,16 @@ def test_debug_total_budget_exact_boundary_is_accepted():
         ServiceSettings(max_response_bytes=100),
     ],
 )
-def test_debug_resource_admission_rejects_before_engine(settings):
+def test_optional_debug_resource_overflow_is_non_fatal(settings):
     engine = FakeEngine()
     app = create_app(
         engine=engine, settings=settings, readiness_provider=lambda: ReadyState(True, "ready")
     )
     with TestClient(app) as client:
         response = client.post("/v1/completions", files=_request_files(), data={"verbosity": "3"})
-    assert response.status_code == 413
-    assert response.json()["error"]["code"] == "response_too_large"
-    assert engine.calls == []
+    assert len(engine.calls) == 1
+    if settings.max_response_bytes == 100:
+        assert response.status_code == 413
+        assert response.json()["error"]["code"] == "response_too_large"
+    else:
+        assert response.status_code == 200, response.text

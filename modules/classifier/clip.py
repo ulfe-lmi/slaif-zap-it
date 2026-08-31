@@ -365,7 +365,12 @@ class _ClipFilter:
                             "source_candidate_id": source_candidate_id,
                             "filtered_index": int(m.get("_filtered_index", i)),
                             "artifact_name": patch_file,
-                            "artifact_status": "emitted",
+                            "artifact_status": (
+                                artifact_sink.artifact_status(patch_file)
+                                if artifact_sink is not None
+                                and hasattr(artifact_sink, "artifact_status")
+                                else "emitted"
+                            ),
                         }
                     )
                     # The old compatibility view uses different bbox field

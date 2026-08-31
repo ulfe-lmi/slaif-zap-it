@@ -102,9 +102,9 @@ uncovered/white covered, overlap is black at zero with a fixed observed-maximum
 scaled ramp, and uncovered is the exact inverse of union at source resolution.
 The typed `service.sam2.raw_visualization` child reports source and diagnostic
 dimensions, exact coverage counts, bounded overlap histogram/overflow,
-represented IDs and truncation. Preflight reserves at most 11 diagnostic
-artifacts and the exact fixed RGB-array formula before readiness or inference;
-existing encoded response limits still apply. This is bounded visualization
+represented IDs and truncation. Optional diagnostic bytes are admitted by the
+shared post-inference ledger; count and byte misses become typed omissions while
+existing essential response limits still apply. This is bounded visualization
 evidence, not segmentation-quality validation or a solar-array recall/precision
 benchmark.
 
@@ -137,7 +137,7 @@ separate for reasons other than GPU memory, as documented in
 | Response artifacts | 64 | `SLAIF_ZAP_IT_MAX_RESPONSE_ARTIFACTS` |
 | Debug artifacts | 48 | `SLAIF_ZAP_IT_MAX_DEBUG_ARTIFACTS` |
 | Single raw artifact | 32 MiB | `SLAIF_ZAP_IT_MAX_SINGLE_ARTIFACT_BYTES` |
-| Total raw artifacts | 128 MiB; L3 annotated RGB reservations are deducted before debug sink admission; raw-SAM2 debug reserves its fixed worst case before inference | `SLAIF_ZAP_IT_MAX_TOTAL_RAW_ARTIFACT_BYTES` |
+| Total raw artifacts | 128 MiB; optional L3 artifacts are admitted greedily and omitted with typed ledger reasons when over budget | `SLAIF_ZAP_IT_MAX_TOTAL_RAW_ARTIFACT_BYTES` |
 | RLE runs/object | 250,000 | `SLAIF_ZAP_IT_MAX_MASK_RLE_RUNS_PER_OBJECT` |
 | RLE runs/response | 1,000,000 | `SLAIF_ZAP_IT_MAX_MASK_RLE_RUNS_TOTAL` |
 | Response | 256 MiB | `SLAIF_ZAP_IT_MAX_RESPONSE_BYTES` |
@@ -151,15 +151,13 @@ separate for reasons other than GPU memory, as documented in
 | SAM2 minimum region area | 1,000,000 | `SLAIF_ZAP_IT_SAM2_MAX_MIN_MASK_REGION_AREA` |
 
 Budgets are validated at startup and cannot be changed by request YAML. For L3,
-each supported annotated stream reserves exactly `height * width * 3` raw bytes
-before inference; raw SAM2 debug additionally reserves
-`8 * 960 * 1072 * 3 + 3 * diagnostic_width * diagnostic_height * 3` bytes and
-11 artifact slots. A per-stream/fixed-debug overflow or combined overflow is
-rejected before model execution, and the remaining configured-stream bytes are
-the debug sink budget. L0-L2 do not render or reserve visualization arrays. Raw artifacts are checked before
-retention/encoding; JSON checks base64 expansion before encoding, and ZIP writes
-prepared raw bytes directly. RLE and every serialization loop check the absolute
-120-second request deadline. There is no post-hoc artifact truncation.
+supported artifacts are offered in deterministic pipeline/name order after
+stage work. Stage, candidate and page selection exclusions do not set
+`truncated`; operator count/raw/response omissions do. L0-L2 do not render or
+deliver optional diagnostics. JSON checks base64 expansion before encoding and
+ZIP writes prepared raw bytes directly. RLE and every serialization loop check
+the absolute 120-second request deadline. An essential response can still
+return `response_too_large` after optional tail omission.
 
 ## SAM2 capability policy
 
@@ -173,7 +171,8 @@ cache/checkpoint/config paths, output destinations, `point_grids`,
 path, credential, topology and process values are withheld. Invalid intrinsic
 values return `invalid_config` 400. Exceeding an operator field or estimate cap
 returns non-retryable `resource_limit` 413 before readiness, gate acquisition,
-generator construction or inference.
+generator construction or inference and includes sanitized estimates, causes,
+public limits and admissible same-validator alternatives.
 
 Nested BLIP3 debug flags are stripped to false below L3 with one bounded
 aggregate warning. At L3 no duplicate answer-text debug artifact is generated;
@@ -250,6 +249,7 @@ bounded identifiers plus exactly one natural-language value each, `raw_bbox_crop
 is the only API CLIP view, and every surviving candidate receives a complete
 ordered cosine vector before `clip_routing` selects request-authored BLIP3
 rules through deterministic OR conditions. Canonical geometry records losses
-with source IDs and inclusive bboxes. Optional artifact overflow remains
-inference-fatal until Objective 021; CPU/fake evidence does not prove semantic
-accuracy.
+with source IDs and inclusive bboxes. Optional artifact delivery is non-fatal;
+selection, pagination, budgets, exact delivered bytes and typed omissions are
+reported in `service.artifact_delivery`. CPU/fake evidence does not prove
+semantic accuracy.

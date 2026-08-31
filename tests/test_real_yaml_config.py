@@ -14,15 +14,15 @@ import pytest
 import yaml
 
 from src.config import _print_enabled_modules, load_config
+from src.core import CoreConfig
+from src.service.settings import ServiceSettings
+from src.service.yaml_input import parse_hostile_config
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = REPO_ROOT / "configs"
-# Goat YAML is a local-only academic input and is intentionally absent from
-# tracked source distributions. CI tests use the remaining redistributable
-# examples; the opt-in goat harness owns its local regression path.
-EXAMPLE_CONFIGS = sorted(
-    path for path in CONFIG_DIR.glob("*.yaml") if path.name not in {"goats.yaml", "goats2.yaml"}
-)
+# Every tracked YAML under configs/ is a service example and must pass the same
+# hostile parser and default operator capacity gate as an uploaded request.
+EXAMPLE_CONFIGS = sorted(CONFIG_DIR.glob("*.yaml"))
 
 
 def _real_yaml_available() -> bool:
@@ -50,6 +50,17 @@ def test_example_configs_load_through_load_config(config_path):
     assert isinstance(config, dict)
     # load_config always injects an alpha value used by visualizers.
     assert 0.0 <= config["alpha"] <= 1.0
+
+
+@pytest.mark.parametrize("config_path", EXAMPLE_CONFIGS, ids=lambda p: p.name)
+def test_example_configs_pass_service_validator_and_core_boundary(config_path):
+    validated = parse_hostile_config(
+        config_path.read_bytes(), verbosity=3, settings=ServiceSettings()
+    )
+    core = CoreConfig.from_mapping(validated.effective_mapping)
+    assert core.sam2_cfg == validated.sam2_metadata["effective"] | {
+        "debug": bool(core.sam2_cfg.get("debug", False))
+    }
 
 
 def test_roi_false_is_normalized_to_none(tmp_path):

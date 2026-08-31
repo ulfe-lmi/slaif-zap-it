@@ -172,9 +172,9 @@ Sinks accept logical names only (relative, no traversal, no absolute paths):
 
 - `MemoryArtifactSink` — stores bytes/text/image-arrays/records in RAM in
   insertion order; trusted CLI compatibility uses this boundary.
-- `BoundedMemoryArtifactSink` — service-only bounded sink that refuses a new
-  artifact before retention when count, per-item or total raw-byte limits would
-  be exceeded.
+- `BoundedMemoryArtifactSink` — service-only bounded sink that records optional
+  count, per-item or total raw-byte omissions while allowing model work and
+  essential results to continue.
 - `FilesystemArtifactSink(root_dir)` — compatibility adapter for the legacy
   CLI: writes artifacts under the operator-selected output directory with
   atomic writes and mode `0600`.

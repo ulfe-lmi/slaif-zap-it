@@ -273,5 +273,11 @@ compatibility may still use multi-prompt flattened labels.
 Object IDs, stage counts, timings, and losses are preserved in L3 evidence.
 
 This is a deterministic routing contract, not semantic-accuracy evidence.
-Optional artifact overflow remains inference-fatal in this release; Objective
-021 owns structured truncation and pagination.
+Optional artifact delivery is now non-fatal: `diagnostic_artifacts` can narrow
+L3 stages, one-based candidate IDs and a bounded page, while
+`service.artifact_delivery` records exact delivered hashes and typed omissions.
+Old requests that exceeded optional artifact budgets now return successful
+structured inference with `truncated: true`; essential response overflow can
+still return `response_too_large`. The default CLIP `raw_bbox_crop`, BLIP3
+`single_dilated_blur`, trusted-CLI masked mode and batch-only fields remain
+unchanged.

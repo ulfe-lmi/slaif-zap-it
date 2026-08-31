@@ -73,7 +73,10 @@ Operator caps are startup-only: `SLAIF_ZAP_IT_SAM2_MAX_POINTS_PER_SIDE=64`,
 `SLAIF_ZAP_IT_SAM2_MAX_ESTIMATED_PROMPTS=8192`,
 `SLAIF_ZAP_IT_SAM2_MAX_ESTIMATED_MASK_PREDICTIONS=24576`, and
 `SLAIF_ZAP_IT_SAM2_MAX_MIN_MASK_REGION_AREA=1000000`. A request over a field
-cap or estimate cap returns non-retryable `resource_limit` (HTTP 413).
+cap or estimate cap returns non-retryable `resource_limit` (HTTP 413) with
+sanitized requested/effective values, deterministic estimates, causes, public
+limits and same-validator alternatives. Optional artifact capacity is handled
+after inference and is not a configuration rejection.
 Estimated prompts are the sum of `4**layer * int(points_per_side /
 downscale_factor**layer)**2` over layers `0..crop_n_layers`; estimated mask
 predictions multiply that sum by 3 for `multimask_output: true`, otherwise 1.
@@ -291,6 +294,27 @@ the canonical core does not execute them and the API rejects a top-level
 debug files through their legacy adapter. Future service activation requires a
 separate governed scientific-stage order and an in-memory refactor.
 
+## `diagnostic_artifacts`
+
+This optional section narrows which eligible L3 diagnostic bytes are delivered;
+it never turns on a stage debug flag and never selects a path or destination.
+The strict normalized shape is:
+
+```yaml
+diagnostic_artifacts:
+  stages: [sam2, clip, blip3, visualization]
+  candidate_ids: null
+  page: 1
+  page_size: 48
+```
+
+Stages are unique fixed tokens, candidate IDs are unique one-based source IDs
+1..256, pages are 1..65535, and page sizes are 1..48. Candidate filtering
+applies only to CLIP/BLIP3 candidate PNGs; aggregate SAM2 and visualization
+streams are not reinterpreted. Selection and pagination occur in deterministic
+pipeline/name order. At verbosity below 3 the section is valid but `applied`
+is false and no optional diagnostic artifact is delivered.
+
 ## `visualization`
 
 Controls which intermediate and final results are rendered. The loader copies
@@ -374,4 +398,5 @@ The old `padding` and `label "name"` forms, `any,<score>` BLIP rules,
 implicit `negative` mapping, and masked CLIP views are trusted-CLI
 compatibility only. Canonical optional geometry fields replace the old aliases;
 aliases remain accepted with a warning. `geometry` and `blip2` are batch-only.
-Objective 021 changes optional artifact overflow to structured truncation.
+Objective 021 implements non-fatal optional artifact delivery with structured
+selection, pagination and truncation.

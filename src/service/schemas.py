@@ -20,6 +20,13 @@ from .settings import SERVICE_MODEL_ID
 
 __all__ = [
     "ArtifactDescriptor",
+    "ArtifactOmission",
+    "ArtifactSelectionMetadata",
+    "ArtifactBudgetMetadata",
+    "ArtifactDeliveryMetadata",
+    "Sam2ConfigValues",
+    "Sam2ResourceAlternative",
+    "Sam2ResourceLimitDetails",
     "CandidateViewClipConfig",
     "CandidateViewBlip3Config",
     "CandidateViewsMetadata",
@@ -53,6 +60,149 @@ class ArtifactDescriptor(BaseModel):
     sha256: str = Field(description="SHA-256 hex digest of the artifact bytes")
     size: int = Field(ge=0)
     data: str = Field(description="Base64-encoded payload")
+
+
+class ArtifactOmission(BaseModel):
+    """One bounded optional artifact that was not delivered."""
+
+    name: str = Field(description="Fixed logical artifact name")
+    stage: Literal["sam2", "clip", "blip3", "visualization"]
+    source_candidate_id: Optional[int] = Field(default=None, ge=1)
+    question_id: Optional[int] = Field(default=None, ge=1)
+    estimated_raw_bytes: int = Field(ge=0)
+    reason: Literal[
+        "not_selected_stage",
+        "not_selected_candidate",
+        "not_selected_page",
+        "omitted_count_limit",
+        "omitted_single_size_limit",
+        "omitted_raw_total_limit",
+        "omitted_response_limit",
+    ]
+
+
+class ArtifactSelectionMetadata(BaseModel):
+    """Normalized diagnostic-artifact selection in a response."""
+
+    stages: List[Literal["sam2", "clip", "blip3", "visualization"]] = Field(
+        min_length=1, max_length=4
+    )
+    candidate_ids: Optional[List[int]] = Field(default=None, max_length=256)
+    page: int = Field(ge=1, le=65535)
+    page_size: int = Field(ge=1, le=48)
+
+    @model_validator(mode="after")
+    def validate_selection(self) -> "ArtifactSelectionMetadata":
+        if len(set(self.stages)) != len(self.stages):
+            raise ValueError("artifact selection stages must be unique")
+        if self.candidate_ids is not None:
+            if any(type(value) is not int or value <= 0 for value in self.candidate_ids):
+                raise ValueError("artifact selection candidate IDs must be positive integers")
+            if len(set(self.candidate_ids)) != len(self.candidate_ids):
+                raise ValueError("artifact selection candidate IDs must be unique")
+        return self
+
+
+class ArtifactBudgetMetadata(BaseModel):
+    """Operator-owned optional artifact budgets disclosed without host data."""
+
+    max_response_artifacts: int = Field(ge=1)
+    max_debug_artifacts: int = Field(ge=1)
+    max_single_artifact_bytes: int = Field(ge=1)
+    max_total_raw_artifact_bytes: int = Field(ge=1)
+    max_response_bytes: int = Field(ge=1)
+
+
+class ArtifactDeliveryMetadata(BaseModel):
+    """L3 selection, admission, omission, and exact byte accounting."""
+
+    requested: ArtifactSelectionMetadata
+    effective: ArtifactSelectionMetadata
+    applied: bool
+    operator_budgets: ArtifactBudgetMetadata
+    eligible_count: int = Field(ge=0)
+    selected_count: int = Field(ge=0)
+    delivered_count: int = Field(ge=0)
+    selection_excluded_count: int = Field(ge=0)
+    budget_omitted_count: int = Field(ge=0)
+    unreported_overflow_count: int = Field(ge=0)
+    estimated_raw_bytes: int = Field(ge=0)
+    estimated_base64_bytes: int = Field(ge=0)
+    estimated_zip_bytes: int = Field(ge=0)
+    actual_delivered_raw_bytes: int = Field(ge=0)
+    actual_delivered_base64_bytes: int = Field(ge=0)
+    actual_delivered_zip_bytes: Optional[int] = Field(default=None, ge=0)
+    truncated: bool
+    delivered_names: List[str] = Field(max_length=577)
+    omitted: List[ArtifactOmission] = Field(max_length=576)
+    warnings: List[str] = Field(default_factory=list, max_length=1)
+
+    @model_validator(mode="after")
+    def validate_accounting(self) -> "ArtifactDeliveryMetadata":
+        if (
+            self.delivered_count + self.budget_omitted_count + self.selection_excluded_count
+            != self.eligible_count
+        ):
+            raise ValueError("artifact delivery counts do not reconcile")
+        if self.truncated != (self.budget_omitted_count > 0):
+            raise ValueError("artifact delivery truncation does not reconcile")
+        if (
+            self.budget_omitted_count
+            + self.selection_excluded_count
+            - self.unreported_overflow_count
+            != len(self.omitted)
+        ):
+            # Internal overflow is allowed to hide entries, but never undercount
+            # a visible omission record.
+            if self.unreported_overflow_count == 0:
+                raise ValueError("artifact omission ledger does not reconcile")
+        return self
+
+
+class Sam2ConfigValues(BaseModel):
+    """Request-safe SAM2 scalar mapping; omitted fields are genuinely absent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    profile: Optional[Literal["fast", "balanced", "quality"]] = None
+    points_per_side: Optional[int] = Field(default=None, ge=1, le=1024)
+    points_per_batch: Optional[int] = Field(default=None, ge=1, le=1024)
+    pred_iou_thresh: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    stability_score_thresh: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    stability_score_offset: Optional[float] = Field(default=None, ge=0.0, le=10.0)
+    mask_threshold: Optional[float] = Field(default=None, ge=-32.0, le=32.0)
+    box_nms_thresh: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    crop_n_layers: Optional[int] = Field(default=None, ge=0, le=8)
+    crop_nms_thresh: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    crop_overlap_ratio: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    crop_n_points_downscale_factor: Optional[int] = Field(default=None, ge=1, le=32)
+    min_mask_region_area: Optional[int] = Field(default=None, ge=0, le=64_000_000)
+    use_m2m: Optional[bool] = None
+    multimask_output: Optional[bool] = None
+    debug: Optional[bool] = None
+
+
+class Sam2ResourceAlternative(BaseModel):
+    """One complete request-safe SAM2 alternative."""
+
+    mask_generator: Sam2ConfigValues
+    estimated_prompt_count: int = Field(ge=0)
+    estimated_mask_prediction_count: int = Field(ge=0)
+
+
+class Sam2ResourceLimitDetails(BaseModel):
+    """Sanitized evidence for a rejected SAM2 operator-cap request."""
+
+    limit_kind: Literal["field", "estimated_prompt_count", "estimated_mask_prediction_count"]
+    requested: Sam2ConfigValues
+    effective: Sam2ConfigValues
+    selected_profile: Optional[Literal["fast", "balanced", "quality"]] = None
+    estimated_prompt_count: int = Field(ge=0)
+    estimated_mask_prediction_count: int = Field(ge=0)
+    operator_limits: Dict[str, int]
+    causing_values: Dict[str, Any]
+    admissible_alternatives: List[Sam2ResourceAlternative] = Field(min_length=1, max_length=3)
+    warning: str = Field(max_length=256)
 
 
 class CandidateViewClipConfig(BaseModel):
@@ -456,8 +606,8 @@ class RawVisualizationManifest(BaseModel):
 class Sam2Metadata(BaseModel):
     """Request-local SAM2 configuration and execution facts."""
 
-    requested: Dict[str, Any]
-    effective: Dict[str, Any]
+    requested: Sam2ConfigValues
+    effective: Sam2ConfigValues
     sources: Dict[str, Literal["explicit", "profile", "default"]]
     selected_profile: Optional[Literal["fast", "balanced", "quality"]] = None
     estimated_prompt_count: int = Field(ge=0)
@@ -482,6 +632,7 @@ class ServiceMetadata(BaseModel):
     candidate_views: CandidateViewsMetadata
     clip_routing: Optional[Dict[str, Any]] = None
     artifacts: Optional[List[ArtifactDescriptor]] = None
+    artifact_delivery: Optional[ArtifactDeliveryMetadata] = None
     objects: Optional[List[ObjectRecord]] = None
     stage_statuses: Optional[List[Dict[str, Any]]] = None
     candidate_counts: Optional[Dict[str, int]] = None
@@ -515,6 +666,10 @@ class ErrorBody(BaseModel):
     code: str
     message: str = Field(description="Sanitized; never contains raw inputs or internals")
     request_id: str
+    details: Optional[Sam2ResourceLimitDetails] = Field(
+        default=None,
+        description="Sanitized structured details, present only for applicable resource_limit errors",
+    )
 
 
 class ErrorEnvelope(BaseModel):

@@ -32,6 +32,7 @@ from src.core.sinks import ArtifactBudget, ArtifactSinkError, BoundedMemoryArtif
 from src.runtime.strategy import RuntimePolicy, UnsupportedProfileError
 
 from .auth import verify_bearer_key
+from .artifacts import ArtifactDeliveryLedger, ArtifactSelection
 from .capabilities import CapabilitiesResponse, build_capabilities
 from .envelope import (
     SCHEMA_VERSION,
@@ -46,7 +47,7 @@ from .gate import InferenceGate
 from .image_input import decode_image_safely
 from .metrics import CONTENT_TYPE_LATEST, ServiceMetrics
 from .multipart import parse_strict_multipart
-from .resources import check_request_resources, check_visualization_raw_budget
+from .resources import check_request_resources
 from .schemas import (
     CompletionResponse,
     ErrorEnvelope,
@@ -87,7 +88,7 @@ def _request_id_for(request: Request) -> str:
 def _error_response(request: Request, exc: ServiceError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
-        content=error_envelope(exc.code, exc.message, _request_id_for(request)),
+        content=exc.envelope(_request_id_for(request)),
         headers=dict(exc.headers or {}),
     )
 
@@ -574,15 +575,6 @@ def create_app(
                 raise ServiceError(str(exc), code="unsupported_profile") from exc
         check_deadline()
 
-        reserved_artifact_bytes = 0
-        if parsed.verbosity >= 3:
-            reserved_artifact_bytes = check_visualization_raw_budget(
-                core_config,
-                settings_local,
-                height=image_rgb.shape[0],
-                width=image_rgb.shape[1],
-            )
-
         if controller is not None and not controller.is_ready:
             ready = ReadyState(False, controller.readiness_detail())
         else:
@@ -593,14 +585,25 @@ def create_app(
         metrics.readiness.set(1)
 
         class_labels = list(validated.class_labels)
+        delivery_ledger = ArtifactDeliveryLedger(
+            ArtifactSelection.from_mapping(
+                core_config.diagnostic_artifacts,
+                applied=parsed.verbosity >= 3,
+            ),
+            max_response_artifacts=settings_local.max_response_artifacts,
+            max_debug_artifacts=settings_local.max_debug_artifacts,
+            max_single_artifact_bytes=settings_local.max_single_artifact_bytes,
+            max_total_raw_artifact_bytes=settings_local.max_total_raw_artifact_bytes,
+            max_response_bytes=settings_local.max_response_bytes,
+            verbosity=parsed.verbosity,
+        )
         sink = BoundedMemoryArtifactSink(
             ArtifactBudget(
                 max_artifacts=settings_local.max_debug_artifacts,
                 max_single_bytes=settings_local.max_single_artifact_bytes,
-                max_total_bytes=(
-                    settings_local.max_total_raw_artifact_bytes - reserved_artifact_bytes
-                ),
-            )
+                max_total_bytes=settings_local.max_total_raw_artifact_bytes,
+            ),
+            admission=delivery_ledger,
         )
         loop = asyncio.get_running_loop()
         try:
@@ -686,6 +689,8 @@ def create_app(
                 ),
             },
             clip_routing=dict(core_config.clip_routing_cfg),
+            artifact_ledger=delivery_ledger,
+            service_safe_artifact_names=True,
         )
 
         serialization_started = time.monotonic()

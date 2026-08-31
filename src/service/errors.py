@@ -78,17 +78,28 @@ class ServiceError(Exception):
         code: str,
         status_code: Optional[int] = None,
         headers: Optional[Dict[str, str]] = None,
+        details: Optional[Mapping[str, Any]] = None,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.code = code
         self.status_code = status_code or error_status_for(code)
         self.headers = headers
+        self.details = None if details is None else dict(details)
 
     def envelope(self, request_id: str) -> Dict[str, Any]:
-        return error_envelope(self.code, self.message, request_id)
+        return error_envelope(self.code, self.message, request_id, details=self.details)
 
 
-def error_envelope(code: str, message: str, request_id: str) -> Dict[str, Any]:
+def error_envelope(
+    code: str,
+    message: str,
+    request_id: str,
+    *,
+    details: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
     """Build the frozen error envelope shape."""
-    return {"error": {"code": code, "message": message, "request_id": request_id}}
+    error: Dict[str, Any] = {"code": code, "message": message, "request_id": request_id}
+    if details is not None:
+        error["details"] = dict(details)
+    return {"error": error}

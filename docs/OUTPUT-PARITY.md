@@ -59,11 +59,11 @@ The service accepts only bounded in-memory annotated streams under
 logical IDs and a maximum of eight streams. `annotated-labelled` is accepted
 only under `visualization.blip3`; `panoptic`, unknown renderers,
 composite/file/video rules, unsafe IDs and malformed entries are rejected before
-inference. Before L3 inference, the service reserves exactly
-`stream_count * height * width * 3` raw RGB bytes for annotated streams, rejects
-single-stream or combined-budget overflow, and subtracts that reservation from
-the debug sink budget. The CLI retains its existing trusted configuration and
-writer behavior.
+inference. Optional streams are admitted after rendering through the same
+request-local ledger as raw-SAM2 and candidate-view artifacts. A count,
+per-item, aggregate-raw or response-byte miss records a typed omission and
+does not replace successful inference with HTTP 413. The CLI retains its
+existing trusted configuration and writer behavior.
 
 RLE, artifact preparation, base64 expansion and ZIP entry assembly share the
 absolute request deadline. RLE transition detection is vectorized in fixed-size
@@ -89,10 +89,10 @@ source resolution before nearest-neighbor downscale to at most 2,000,000
 pixels. Exact source counts and a bounded 0..255 histogram plus overflow are in
 the optional `service.sam2.raw_visualization` child. The fixed names are
 `sam2-candidates-page-0001.png`..`-0008.png` and the three diagnostic names;
-truncation is explicit. API preflight reserves the exact 11-artifact RGB
-formula before readiness/gate/engine work; encoded response checks remain
-authoritative. Legacy CLI rectangular JPEG patches and all lower levels remain
-unchanged.
+truncation is explicit. The service may omit these optional bytes under its
+ledger budgets while preserving the raw manifest and stage results; only an
+essential response that cannot fit remains `response_too_large`. Legacy CLI
+rectangular JPEG patches and all lower levels remain unchanged.
 
 ## Geometry status
 

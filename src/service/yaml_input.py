@@ -53,6 +53,8 @@ __all__ = [
     "normalize_result_token",
     "SAM2_INTRINSIC_RANGES",
     "SAM2_INTRINSIC_TYPES",
+    "SERVICE_CONFIG_LEAF_PATHS",
+    "service_config_leaf_paths",
     "ValidatedConfig",
     "parse_hostile_config",
 ]
@@ -174,6 +176,9 @@ _DEBUG_FLAG_PATHS = (
     ("clip", "debug"),
 )
 _BLIP3_DEBUG_WARNING = "BLIP3 debug flags ignored at verbosity below 3"
+_DIAGNOSTIC_ARTIFACTS_WARNING = (
+    "diagnostic_artifacts selection is valid but not applied below verbosity 3"
+)
 
 _CANDIDATE_VIEW_STAGES = frozenset({"clip", "blip3"})
 _CANDIDATE_VIEW_CLIP_FIELDS = frozenset(
@@ -203,6 +208,79 @@ _CANDIDATE_VIEW_BLIP3_FIELDS = frozenset(
 _VISUALIZATION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _VISUALIZATION_STAGES = frozenset({"sam2", "clip", "blip3"})
 _VISUALIZATION_ENTRY_KEYS = frozenset({"id", "renderer", "alpha", "show_confidence"})
+_DIAGNOSTIC_ARTIFACT_FIELDS = frozenset({"stages", "candidate_ids", "page", "page_size"})
+_DIAGNOSTIC_ARTIFACT_STAGES = ("sam2", "clip", "blip3", "visualization")
+
+SERVICE_CONFIG_LEAF_PATHS = frozenset(
+    {
+        "alpha",
+        "preprocessing.roi",
+        "preprocessing.resize",
+        "preprocessing.debug",
+        *(f"mask_generator.{field}" for field in (*SAM2_GENERATOR_FIELDS, "profile", "debug")),
+        *(
+            f"postsam2processing.{field}"
+            for field in (
+                "min_area",
+                "max_area",
+                "min_width",
+                "max_width",
+                "min_height",
+                "max_height",
+                "min_aspect_ratio",
+                "max_aspect_ratio",
+                "allow_border_touching",
+                "debug",
+                "maxsize",
+                "max_w",
+                "max_h",
+            )
+        ),
+        "clip.debug",
+        "clip.labels.<identifier>",
+        "clip_routing.route_to_blip3.labels",
+        "clip_routing.route_to_blip3.top_k",
+        "clip_routing.route_to_blip3.score_margin_from_best",
+        "clip_routing.route_to_blip3.minimum_target_score",
+        "clip_routing.route_to_blip3.uncertain_labels",
+        "clip_routing.route_to_blip3.max_candidates",
+        *(
+            f"blip3.<routing_label>.{field}"
+            for field in (
+                "question",
+                "trueresult",
+                "falseresult",
+                "newcategory",
+                "falsecategory",
+                "debug",
+            )
+        ),
+        *(
+            f"candidate_views.{stage}.{field}"
+            for stage, fields in (
+                ("clip", _CANDIDATE_VIEW_CLIP_FIELDS),
+                ("blip3", _CANDIDATE_VIEW_BLIP3_FIELDS),
+            )
+            for field in sorted(fields)
+        ),
+        "visualization.alpha",
+        "visualization.labels",
+        *(
+            f"visualization.{stage}.<index>.{field}"
+            for stage in _VISUALIZATION_STAGES
+            for field in _VISUALIZATION_ENTRY_KEYS
+        ),
+        "diagnostic_artifacts.stages",
+        "diagnostic_artifacts.candidate_ids",
+        "diagnostic_artifacts.page",
+        "diagnostic_artifacts.page_size",
+    }
+)
+
+
+def service_config_leaf_paths() -> tuple[str, ...]:
+    """Return the canonical sorted inventory used by validation and capabilities."""
+    return tuple(sorted(SERVICE_CONFIG_LEAF_PATHS))
 
 
 _ALLOWED_SCALAR_TAGS = frozenset(
@@ -373,6 +451,92 @@ def _strip_debug_flags(mapping: Dict[str, Any], warnings: List[str]) -> None:
         warnings.append(_BLIP3_DEBUG_WARNING)
 
 
+def _validate_preprocessing_policy(value: Any) -> None:
+    if value in (None, {}):
+        return
+    if not isinstance(value, Mapping):
+        raise ServiceError("preprocessing must be a mapping", code="invalid_config")
+    allowed = {"roi", "resize", "debug"}
+    unknown = sorted(set(value).difference(allowed), key=str)
+    if unknown:
+        raise ServiceError(
+            "unsupported preprocessing field(s): " + ", ".join(map(str, unknown)),
+            code="unsupported_field",
+        )
+    if "roi" in value and value["roi"] is not None and type(value["roi"]) not in (bool, str):
+        raise ServiceError(
+            "preprocessing.roi must be false, a string or null", code="invalid_config"
+        )
+    if "resize" in value:
+        resize = value["resize"]
+        if resize is not None and (
+            type(resize) not in (int, float) or not math.isfinite(float(resize)) or resize <= 0
+        ):
+            raise ServiceError(
+                "preprocessing.resize must be a positive finite number or null",
+                code="invalid_config",
+            )
+    if "debug" in value and type(value["debug"]) is not bool:
+        raise ServiceError("preprocessing.debug must be a boolean", code="invalid_config")
+
+
+def _validate_diagnostic_artifacts(value: Any) -> Dict[str, Any]:
+    """Normalize the bounded, request-local optional-artifact selector."""
+    if value is None:
+        raise ServiceError("diagnostic_artifacts must be a mapping", code="invalid_config")
+    if not isinstance(value, Mapping):
+        raise ServiceError("diagnostic_artifacts must be a mapping", code="invalid_config")
+    unknown = sorted(set(value).difference(_DIAGNOSTIC_ARTIFACT_FIELDS), key=str)
+    if unknown:
+        raise ServiceError(
+            "unsupported diagnostic_artifacts field(s): " + ", ".join(map(str, unknown)),
+            code="unsupported_field",
+        )
+
+    stages = value.get("stages", list(_DIAGNOSTIC_ARTIFACT_STAGES))
+    if (
+        type(stages) is not list
+        or not 1 <= len(stages) <= len(_DIAGNOSTIC_ARTIFACT_STAGES)
+        or len(set(stages)) != len(stages)
+        or any(
+            type(stage) is not str or stage not in _DIAGNOSTIC_ARTIFACT_STAGES for stage in stages
+        )
+    ):
+        raise ServiceError(
+            "diagnostic_artifacts.stages must be a unique list of supported stage names",
+            code="invalid_config",
+        )
+    candidate_ids = value.get("candidate_ids")
+    if candidate_ids is not None and (
+        type(candidate_ids) is not list
+        or not 1 <= len(candidate_ids) <= 256
+        or any(type(candidate_id) is not int or candidate_id <= 0 for candidate_id in candidate_ids)
+        or len(set(candidate_ids)) != len(candidate_ids)
+    ):
+        raise ServiceError(
+            "diagnostic_artifacts.candidate_ids must be null or unique positive integers",
+            code="invalid_config",
+        )
+    page = value.get("page", 1)
+    page_size = value.get("page_size", 48)
+    if type(page) is not int or not 1 <= page <= 65535:
+        raise ServiceError(
+            "diagnostic_artifacts.page must be an integer from 1 to 65535",
+            code="invalid_config",
+        )
+    if type(page_size) is not int or not 1 <= page_size <= 48:
+        raise ServiceError(
+            "diagnostic_artifacts.page_size must be an integer from 1 to 48",
+            code="invalid_config",
+        )
+    return {
+        "stages": list(stages),
+        "candidate_ids": None if candidate_ids is None else list(candidate_ids),
+        "page": page,
+        "page_size": page_size,
+    }
+
+
 def _sam2_invalid(field: str, constraint: str) -> ServiceError:
     return ServiceError(f"mask_generator.{field} must satisfy {constraint}", code="invalid_config")
 
@@ -395,6 +559,119 @@ def _validate_sam2_scalar(field: str, value: Any) -> None:
         return
     if not lower <= value <= upper:
         raise _sam2_invalid(field, f"a value from {lower} to {upper}")
+
+
+def _sam2_capacity_alternatives(
+    effective: Mapping[str, Any], caps: Mapping[str, int]
+) -> list[dict[str, Any]]:
+    """Build complete, same-validator alternatives for a rejected request."""
+    candidates: list[dict[str, Any]] = []
+    fast = dict(SAM2_DEFAULTS)
+    fast.update(SAM2_PROFILES["fast"])
+    candidates.append(fast)
+
+    conservative = dict(effective)
+    conservative["points_per_side"] = min(
+        int(conservative["points_per_side"]), int(caps["points_per_side"])
+    )
+    conservative["points_per_batch"] = min(
+        int(conservative["points_per_batch"]), int(caps["points_per_batch"])
+    )
+    conservative["crop_n_layers"] = min(
+        int(conservative["crop_n_layers"]), int(caps["crop_n_layers"])
+    )
+    conservative["min_mask_region_area"] = min(
+        int(conservative["min_mask_region_area"]), int(caps["min_mask_region_area"])
+    )
+    conservative["multimask_output"] = False
+    candidates.append(conservative)
+
+    minimum = dict(conservative)
+    minimum["points_per_side"] = 1
+    minimum["points_per_batch"] = 1
+    minimum["crop_n_layers"] = 0
+    minimum["crop_n_points_downscale_factor"] = 1
+    minimum["multimask_output"] = False
+    minimum["min_mask_region_area"] = 0
+    candidates.append(minimum)
+
+    valid: list[dict[str, Any]] = []
+    seen: set[tuple[tuple[str, Any], ...]] = set()
+    for candidate in candidates:
+        try:
+            for field_name in SAM2_GENERATOR_FIELDS:
+                _validate_sam2_scalar(field_name, candidate[field_name])
+            deepest = int(
+                candidate["points_per_side"]
+                / (candidate["crop_n_points_downscale_factor"] ** candidate["crop_n_layers"])
+            )
+            if deepest < 1:
+                continue
+            prompt_count = estimated_prompt_count(
+                candidate["points_per_side"],
+                candidate["crop_n_layers"],
+                candidate["crop_n_points_downscale_factor"],
+            )
+            prediction_count = prompt_count * (3 if candidate["multimask_output"] else 1)
+            if (
+                candidate["points_per_side"] > caps["points_per_side"]
+                or candidate["points_per_batch"] > caps["points_per_batch"]
+                or candidate["crop_n_layers"] > caps["crop_n_layers"]
+                or candidate["min_mask_region_area"] > caps["min_mask_region_area"]
+                or prompt_count > caps["estimated_prompt_count"]
+                or prediction_count > caps["estimated_mask_prediction_count"]
+            ):
+                continue
+            key = tuple(sorted(candidate.items()))
+            if key in seen:
+                continue
+            seen.add(key)
+            valid.append(
+                {
+                    "mask_generator": dict(candidate),
+                    "estimated_prompt_count": prompt_count,
+                    "estimated_mask_prediction_count": prediction_count,
+                }
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return valid
+
+
+def _sam2_resource_error(
+    *,
+    limit_kind: str,
+    requested: Mapping[str, Any],
+    effective: Mapping[str, Any],
+    profile: str | None,
+    prompts: int,
+    predictions: int,
+    caps: Mapping[str, int],
+    causing_values: Mapping[str, Any],
+) -> ServiceError:
+    alternatives = _sam2_capacity_alternatives(effective, caps)
+    if not alternatives:
+        # The public defaults are intentionally bounded, but retain a truthful
+        # bounded warning if an operator cap makes every alternative invalid.
+        warning = "no request-safe SAM2 alternative fits the current operator caps"
+    else:
+        warning = "reduce the reported SAM2 work-driving values and retry"
+    return ServiceError(
+        "SAM2 configuration exceeds an operator capacity limit",
+        code="resource_limit",
+        details={
+            "limit_kind": limit_kind,
+            "requested": dict(requested),
+            "effective": dict(effective),
+            "selected_profile": profile,
+            "estimated_prompt_count": int(prompts),
+            "estimated_mask_prediction_count": int(predictions),
+            "operator_limits": dict(caps),
+            "causing_values": dict(causing_values),
+            "admissible_alternatives": alternatives[:3],
+            "warning": warning,
+        },
+    )
 
 
 def _validate_sam2_policy(
@@ -458,9 +735,27 @@ def _validate_sam2_policy(
     }
     for cap_field, cap in field_caps.items():
         if effective[cap_field] > cap:
-            raise ServiceError(
-                f"mask_generator.{cap_field} exceeds the operator capacity limit",
-                code="resource_limit",
+            requested = {}
+            if "profile" in value:
+                requested["profile"] = profile
+            requested.update(
+                {field: value[field] for field in SAM2_GENERATOR_FIELDS if field in value}
+            )
+            prompts = estimated_prompt_count(
+                effective["points_per_side"],
+                effective["crop_n_layers"],
+                effective["crop_n_points_downscale_factor"],
+            )
+            predictions = prompts * (3 if effective["multimask_output"] else 1)
+            raise _sam2_resource_error(
+                limit_kind="field",
+                requested=requested,
+                effective=effective,
+                profile=profile,
+                prompts=prompts,
+                predictions=predictions,
+                caps=caps,
+                causing_values={cap_field: effective[cap_field]},
             )
 
     prompts = estimated_prompt_count(
@@ -470,14 +765,47 @@ def _validate_sam2_policy(
     )
     predictions = prompts * (3 if effective["multimask_output"] else 1)
     if prompts > caps["estimated_prompt_count"]:
-        raise ServiceError(
-            "estimated SAM2 prompt count exceeds the operator capacity limit",
-            code="resource_limit",
+        raise _sam2_resource_error(
+            limit_kind="estimated_prompt_count",
+            requested={
+                **({"profile": profile} if "profile" in value else {}),
+                **{field: value[field] for field in SAM2_GENERATOR_FIELDS if field in value},
+            },
+            effective=effective,
+            profile=profile,
+            prompts=prompts,
+            predictions=predictions,
+            caps=caps,
+            causing_values={
+                field: effective[field]
+                for field in (
+                    "points_per_side",
+                    "crop_n_layers",
+                    "crop_n_points_downscale_factor",
+                )
+            },
         )
     if predictions > caps["estimated_mask_prediction_count"]:
-        raise ServiceError(
-            "estimated SAM2 mask prediction count exceeds the operator capacity limit",
-            code="resource_limit",
+        raise _sam2_resource_error(
+            limit_kind="estimated_mask_prediction_count",
+            requested={
+                **({"profile": profile} if "profile" in value else {}),
+                **{field: value[field] for field in SAM2_GENERATOR_FIELDS if field in value},
+            },
+            effective=effective,
+            profile=profile,
+            prompts=prompts,
+            predictions=predictions,
+            caps=caps,
+            causing_values={
+                field: effective[field]
+                for field in (
+                    "points_per_side",
+                    "crop_n_layers",
+                    "crop_n_points_downscale_factor",
+                    "multimask_output",
+                )
+            },
         )
 
     requested = {}
@@ -1114,10 +1442,15 @@ def parse_hostile_config(
     }
     _scan_hostile(effective, "")
 
+    _validate_preprocessing_policy(effective.get("preprocessing"))
+
     clip_config = effective.get("clip")
     _validate_clip_policy(clip_config)
 
     effective["candidate_views"] = _validate_candidate_views(effective.get("candidate_views", {}))
+
+    diagnostic_artifacts = _validate_diagnostic_artifacts(effective.get("diagnostic_artifacts", {}))
+    effective["diagnostic_artifacts"] = diagnostic_artifacts
 
     sam2_config, sam2_metadata = _validate_sam2_policy(
         effective.get("mask_generator", {}), settings=settings
@@ -1143,8 +1476,18 @@ def parse_hostile_config(
     if effective_posts:
         effective["postsam2processing"] = effective_posts
 
+    configured_alpha = effective.get("alpha", DEFAULT_ALPHA)
+    if (
+        type(configured_alpha) not in (int, float)
+        or not math.isfinite(float(configured_alpha))
+        or not 0 <= float(configured_alpha) <= 1
+    ):
+        raise ServiceError("alpha must be a finite number from 0 to 1", code="invalid_config")
     vis_alpha = vis_cfg.get("alpha") if isinstance(vis_cfg, Mapping) else None
-    alpha = float(vis_alpha) if isinstance(vis_alpha, (int, float)) else DEFAULT_ALPHA
+    # Keep the historical contract: visualization.alpha is the service/core
+    # blend control; a standalone legacy top-level alpha is accepted but the
+    # default remains 0.6 when no visualization section supplies it.
+    alpha = float(vis_alpha) if vis_alpha is not None else DEFAULT_ALPHA
     effective["alpha"] = alpha
 
     class_labels: Tuple[str, ...] = ()
@@ -1169,6 +1512,8 @@ def parse_hostile_config(
             class_labels = terminal_labels
 
     if verbosity < 3:
+        if "diagnostic_artifacts" in loaded:
+            warnings.append(_DIAGNOSTIC_ARTIFACTS_WARNING)
         _strip_debug_flags(effective, warnings)
 
     return ValidatedConfig(

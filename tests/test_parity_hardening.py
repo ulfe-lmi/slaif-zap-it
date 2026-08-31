@@ -136,17 +136,19 @@ def test_visualization_policy_is_bounded():
     assert excinfo.value.code == "response_too_large"
 
 
-def test_bounded_sink_rejects_count_and_raw_byte_limits_without_residue():
+def test_bounded_sink_omits_count_and_raw_byte_limits_without_residue():
     sink = BoundedMemoryArtifactSink(
         ArtifactBudget(max_artifacts=1, max_single_bytes=2, max_total_bytes=3)
     )
     sink.store_bytes("one.bin", b"12")
-    with pytest.raises(ValueError):
-        sink.store_bytes("two.bin", b"3")
+    sink.store_bytes("two.bin", b"3")
     assert sink.names() == ("one.bin",)
-    with pytest.raises(ValueError):
-        sink.store_bytes("one.bin", b"123")
+    sink.store_bytes("one.bin", b"123")
     assert sink.get("one.bin").data == b"12"
+    assert [item["reason"] for item in sink.omissions()] == [
+        "omitted_count_limit",
+        "omitted_single_size_limit",
+    ]
 
 
 def test_service_l3_has_exact_rle_and_zip_manifest_parity():
@@ -183,7 +185,7 @@ def test_service_rejects_image_dimensions_before_pixel_allocation():
     assert response.json()["error"]["code"] == "image_too_large"
 
 
-def test_visualization_raw_budget_rejects_before_engine_and_accepts_boundary():
+def test_visualization_raw_budget_is_admitted_after_engine():
     config = b"""alpha: 0.5
 visualization:
   sam2:
@@ -204,9 +206,8 @@ visualization:
     )
     with TestClient(rejected_app) as client:
         rejected = client.post("/v1/completions", files=_files(config), data={"verbosity": "3"})
-    assert rejected.status_code == 413
-    assert rejected.json()["error"]["code"] == "response_too_large"
-    assert rejected_engine.calls == []
+    assert rejected.status_code == 200
+    assert rejected_engine.calls
 
     observed_budgets = []
 
@@ -226,10 +227,10 @@ visualization:
     with TestClient(accepted_app) as client:
         accepted = client.post("/v1/completions", files=_files(config), data={"verbosity": "3"})
     assert accepted.status_code == 200
-    assert observed_budgets == [0]
+    assert observed_budgets == [raw_bytes]
 
 
-def test_l3_zero_visualization_streams_skip_hypothetical_raw_budget():
+def test_l3_zero_visualization_streams_have_no_optional_artifacts():
     raw_stream_bytes = 8 * 6 * 3
     settings = ServiceSettings(
         max_single_artifact_bytes=raw_stream_bytes - 1,
@@ -265,9 +266,8 @@ visualization:
             files=_files(config),
             data={"verbosity": "3"},
         )
-    assert configured.status_code == 413
-    assert configured.json()["error"]["code"] == "response_too_large"
-    assert configured_engine.calls == []
+    assert configured.status_code == 200
+    assert configured_engine.calls
 
 
 @pytest.mark.parametrize("response_format", ["json", "zip"])
