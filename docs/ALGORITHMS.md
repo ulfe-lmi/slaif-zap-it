@@ -75,9 +75,10 @@ the prompt format without depending on private or operator-held fixtures.
 
 ## BLIP3 verification
 
-BLIP3/XGen-MM is an optional visual question-answering verifier. Rules can
-target a CLIP label or low-score candidates, ask a bounded question, interpret
-configured true/false substrings, and optionally assign a replacement class.
+BLIP3/XGen-MM is an optional visual question-answering verifier. Canonical
+service routing selects one target rule per candidate, asks a bounded question,
+compares normalized true/false tokens exactly, and assigns a request-authored
+terminal class. Trusted CLI retains explicit low-score/substring compatibility.
 
 Service requests provide only rule mappings. The model, revision, FP16 dtype,
 tokenizer, processor, device, cache, and residency strategy remain pinned. The
@@ -182,7 +183,23 @@ through the stateless API.
 - Outputs depend on pretrained model behavior, prompts, thresholds, and image
   conditions; they are not guaranteed ground truth.
 - CLIP scores and SAM2 quality values are not calibrated end-to-end confidence.
-- BLIP3 answers are generated text interpreted by configured substring rules.
+- BLIP3 answers are generated text mapped by exact normalized configured tokens
+  in the canonical service route; trusted legacy rules retain explicit
+  substring compatibility.
 - Qualification demonstrates bounded execution and stability, not accuracy or
   fitness for a specific deployment.
 - Model licenses and use restrictions apply independently of repository code.
+
+## Objective 020 responsibility split
+
+SAM2 proposes; optional geometry removes only impossible candidates; CLIP2 sees
+the complete rectangular source crop and supplies all finite cosine similarities
+in configuration order; a permissive OR router chooses which target question
+BLIP3 verifies. BLIP3 receives one separately composed contextual image and its
+request-authored answer mapping determines the terminal label. CLIP identifiers
+are machine-safe keys while their natural-language values are the exact prompts.
+
+The raw CLIP radius is `floor(context_fraction * max(inclusive_bbox_width,
+inclusive_bbox_height) + 0.5)`, then min/max bounded and clamped to the source.
+Semantic accuracy, recall, and precision are not proved by the deterministic
+CPU/fake tests.

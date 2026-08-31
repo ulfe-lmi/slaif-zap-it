@@ -27,6 +27,9 @@ from src.core.results import (
     StageStatus,
 )
 from src.postprocessing import filter_by_area_bbox
+from src.postprocessing import filter_by_geometry
+from src.core.routing import apply_clip_routing
+from modules.verifier.blip3 import compose_verification_query, normalize_blip3_token
 
 from .settings import SERVICE_MODEL_ID
 
@@ -137,9 +140,9 @@ class FakeEngine:
 
         height, width = image_rgb.shape[:2]
         specs: List[Tuple[float, float, float, float]] = []
-        if self.object_count >= 1 and not config.keep_labels:
+        if self.object_count >= 1 and (not config.keep_labels or config.clip_routing_cfg):
             specs.append((0.05, 0.45, 0.05, 0.55))
-        if self.object_count >= 2 and not config.keep_labels:
+        if self.object_count >= 2 and (not config.keep_labels or config.clip_routing_cfg):
             specs.append((0.50, 0.80, 0.60, 0.90))
 
         candidates = []
@@ -175,34 +178,113 @@ class FakeEngine:
             sam2_metadata["raw_visualization"] = raw_summary
             result_warnings.extend(raw_summary.get("warnings", []))
         post_filter_diagnostics: Dict[str, Any] = {}
-        filtered = filter_by_area_bbox(
-            candidates,
-            config.post_maxsize,
-            config.max_w,
-            config.max_h,
-            diagnostics=post_filter_diagnostics,
-            collect_rejections=verbosity >= 3,
+        canonical_geometry = any(
+            field in config.postsam2_cfg
+            for field in (
+                "min_area",
+                "max_area",
+                "min_width",
+                "max_width",
+                "min_height",
+                "max_height",
+                "min_aspect_ratio",
+                "max_aspect_ratio",
+                "allow_border_touching",
+            )
         )
+        if canonical_geometry:
+            filtered = filter_by_geometry(
+                candidates,
+                config.postsam2_cfg,
+                diagnostics=post_filter_diagnostics,
+                collect_rejections=verbosity >= 3,
+            )
+        else:
+            filtered = filter_by_area_bbox(
+                candidates,
+                config.post_maxsize,
+                config.max_w,
+                config.max_h,
+                diagnostics=post_filter_diagnostics,
+                collect_rejections=verbosity >= 3,
+            )
         for filtered_index, mask_record in enumerate(filtered):
             mask_record["_filtered_index"] = filtered_index
-        ordered = sorted(
-            filtered,
-            key=lambda mask: int(np.count_nonzero(mask["segmentation"])),
-            reverse=True,
-        )
-
-        labels_cycle = list(class_labels) or ["object"]
+        clip_labels = list((config.clip_cfg.get("labels", {}) or {}).keys())
+        labels_cycle = clip_labels or list(class_labels) or ["object"]
+        routing_diagnostics = []
+        routed = filtered
+        route_counts = {}
+        if clip_labels:
+            for index, mask_record in enumerate(filtered):
+                scores = {
+                    str(label): round(0.80 - 0.03 * label_index - 0.01 * index, 4)
+                    for label_index, label in enumerate(labels_cycle)
+                }
+                mask_record["clip_scores"] = scores
+                winner = max(scores, key=lambda label: (scores[label], -list(scores).index(label)))
+                mask_record["clip_label"] = winner
+                mask_record["clip_score"] = scores[winner]
+        if config.clip_routing_cfg:
+            routed, routing_diagnostics, route_counts = apply_clip_routing(
+                filtered, config.clip_routing_cfg
+            )
         objects: List[ObjectResult] = []
-        for instance_id, mask_record in enumerate(ordered, start=1):
+        for instance_id, mask_record in enumerate(
+            sorted(
+                routed, key=lambda mask: int(np.count_nonzero(mask["segmentation"])), reverse=True
+            ),
+            start=1,
+        ):
             mask = mask_record["segmentation"]
-            label = labels_cycle[(instance_id - 1) % len(labels_cycle)]
+            label = mask_record.get(
+                "clip_label", labels_cycle[(instance_id - 1) % len(labels_cycle)]
+            )
+            if config.clip_routing_cfg and mask_record.get("clip_routing"):
+                target = mask_record["clip_routing"]["chosen_target"]
+                rule = config.blip3_cfg.get(target, {})
+                label = str(rule.get("newcategory", label))
+                mask_record["blip3_answer"] = str(rule.get("trueresult", "Yes"))
+                mask_record["blip3_verification"] = {
+                    "source_candidate_id": int(mask_record.get("_source_index", instance_id - 1))
+                    + 1,
+                    "filtered_index": int(mask_record.get("_filtered_index", instance_id - 1)),
+                    "question_id": instance_id,
+                    "routing_target_label": target,
+                    "routing_reason": mask_record["clip_routing"].get("primary_reason"),
+                    "configured_question": str(rule.get("question", "")),
+                    "effective_question": compose_verification_query(str(rule.get("question", ""))),
+                    "raw_answer": mask_record["blip3_answer"],
+                    "normalized_answer": normalize_blip3_token(str(rule.get("trueresult", ""))),
+                    "normalized_true_result": normalize_blip3_token(
+                        str(rule.get("trueresult", ""))
+                    ),
+                    "normalized_false_result": normalize_blip3_token(
+                        str(rule.get("falseresult", ""))
+                    ),
+                    "configured_true_result": str(rule.get("trueresult", "")),
+                    "configured_false_result": str(rule.get("falseresult", "")),
+                    "configured_true_label": label,
+                    "configured_false_label": str(rule.get("falsecategory", "negative")),
+                    "mapping_outcome": "true_match",
+                    "input_artifact_name": None,
+                    "input_artifact_status": "not_requested",
+                    "final_label": label,
+                }
             metadata = {
                 "clip_label": str(label),
                 "predicted_iou": mask_record.get("predicted_iou"),
                 "stability_score": mask_record.get("stability_score"),
-                "clip_score": round(0.80 + 0.01 * instance_id, 4),
+                "clip_score": mask_record.get("clip_score", round(0.80 + 0.01 * instance_id, 4)),
                 "area": int(np.count_nonzero(mask)),
             }
+            if "clip_scores" in mask_record:
+                metadata["clip_scores"] = dict(mask_record["clip_scores"])
+            if "clip_routing" in mask_record:
+                metadata["clip_routing"] = dict(mask_record["clip_routing"])
+            for key in ("blip3_answer", "blip3_verification"):
+                if key in mask_record:
+                    metadata[key] = mask_record[key]
             objects.append(
                 ObjectResult(
                     instance_id=instance_id,
@@ -219,9 +301,21 @@ class FakeEngine:
             StageStatus(name="preprocessing", status="executed", detail="fake"),
             StageStatus(name="sam2", status="executed", detail=f"{len(specs)} candidates"),
             StageStatus(
+                name="geometry",
+                status="executed",
+                detail=f"{len(candidates)} evaluated -> {len(filtered)} retained",
+                duration_ms=0.0,
+            ),
+            StageStatus(
                 name="clip",
                 status="executed" if config.clip_cfg else "not_configured",
                 detail="fake",
+            ),
+            StageStatus(
+                name="clip_routing",
+                status="executed" if config.clip_routing_cfg else "not_configured",
+                detail="fake",
+                duration_ms=0.0 if config.clip_routing_cfg else None,
             ),
             StageStatus(
                 name="blip3",
@@ -241,10 +335,35 @@ class FakeEngine:
                 "after_area_bbox": len(filtered),
                 "after_clip": len(filtered),
                 "final": len(objects),
+                **(
+                    {
+                        "raw_sam2_generated": len(specs),
+                        "non_empty_candidates": len(specs),
+                        "geometry_evaluated": int(post_filter_diagnostics.get("evaluated", 0)),
+                        "after_geometry": len(filtered),
+                        "geometry_rejected": int(post_filter_diagnostics.get("rejected", 0)),
+                        "clip_scored": len(filtered),
+                        **route_counts,
+                        "blip3_verified": len(routed) if config.clip_routing_cfg else 0,
+                        "after_final_label_filter": len(objects),
+                    }
+                    if canonical_geometry or config.clip_routing_cfg
+                    else {}
+                ),
             },
             rendered={},
             warnings=tuple(result_warnings),
-            timings={"stage.sam2": 0.5},
+            timings={
+                "stage.sam2": 0.5,
+                "stage.geometry": 0.0 if canonical_geometry else 0.0,
+                "stage.clip_crop": 0.0,
+                "stage.clip_scoring": 0.0,
+                "stage.clip_routing": 0.0,
+                "stage.blip3_composition": 0.0,
+                "stage.blip3_verification": 0.0,
+                "stage.final_filter": 0.0,
+                "stage.ordering": 0.0,
+            },
             provenance=Provenance(
                 config_digest=config_digest(config),
                 core_version="002-a-fake",
@@ -252,6 +371,7 @@ class FakeEngine:
             ),
             post_filter_diagnostics=post_filter_diagnostics,
             sam2_metadata=sam2_metadata,
+            clip_routing_diagnostics=tuple(routing_diagnostics),
         )
         return SingleImageOutcome(
             result=result,

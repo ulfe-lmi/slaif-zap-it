@@ -785,6 +785,15 @@ def test_openapi_documents_contract():
         "empty_mask",
         "max_w",
         "max_h",
+        "min_area",
+        "max_area",
+        "min_width",
+        "max_width",
+        "min_height",
+        "max_height",
+        "min_aspect_ratio",
+        "max_aspect_ratio",
+        "border_touching",
     ]
     assert component_models["PostFilterDiagnostics"]["properties"]["rejections"]["maxItems"] == 256
 

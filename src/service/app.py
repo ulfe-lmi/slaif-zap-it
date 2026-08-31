@@ -685,6 +685,7 @@ def create_app(
                     stage="blip3", applied=bool(core_config.blip3_cfg)
                 ),
             },
+            clip_routing=dict(core_config.clip_routing_cfg),
         )
 
         serialization_started = time.monotonic()

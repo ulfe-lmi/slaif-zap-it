@@ -39,6 +39,7 @@ ALGORITHMIC_TOP_LEVEL_FIELDS = frozenset(
         "mask_generator",
         "postsam2processing",
         "clip",
+        "clip_routing",
         "blip3",
         "candidate_views",
         "visualization",
@@ -106,6 +107,7 @@ class CoreConfig:
     resize_val: Any | None
     prep_debug: bool
     clip_cfg: Mapping[str, Any] = field(default_factory=dict)
+    clip_routing_cfg: Mapping[str, Any] = field(default_factory=dict)
     blip3_cfg: Mapping[str, Any] = field(default_factory=dict)
     sam2_cfg: Mapping[str, Any] = field(default_factory=dict)
     postsam2_cfg: Mapping[str, Any] = field(default_factory=dict)
@@ -131,6 +133,7 @@ class CoreConfig:
         """
         prep = config.get("preprocessing", {}) or {}
         clip_cfg = config.get("clip", {}) or {}
+        clip_routing_cfg = config.get("clip_routing", {}) or {}
         blip3_cfg = config.get("blip3", {}) or {}
         raw_sam2_cfg = config.get("mask_generator", {}) or {}
         sam2_cfg = (
@@ -166,6 +169,7 @@ class CoreConfig:
             resize_val=prep.get("resize", None),
             prep_debug=bool(prep.get("debug", False)),
             clip_cfg=clip_cfg,
+            clip_routing_cfg=clip_routing_cfg,
             blip3_cfg=blip3_cfg,
             sam2_cfg=sam2_cfg,
             postsam2_cfg=postsam2_cfg,

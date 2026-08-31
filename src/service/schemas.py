@@ -9,6 +9,7 @@ dynamic level-gated fields stays honest without duplicating the logic.
 from __future__ import annotations
 
 import re
+import math
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
@@ -24,6 +25,10 @@ __all__ = [
     "CandidateViewsMetadata",
     "CandidateViewInputRecord",
     "Blip3CandidateViewRecord",
+    "ClipRoutingDiagnostic",
+    "ClipRoutingReason",
+    "ClipRoutingCapOutcome",
+    "Blip3VerificationRecord",
     "ObjectRecord",
     "PostFilterReason",
     "PostFilterLimits",
@@ -53,12 +58,10 @@ class ArtifactDescriptor(BaseModel):
 class CandidateViewClipConfig(BaseModel):
     """Effective request-local CLIP view policy."""
 
-    mode: Literal["mask_dilated"]
+    mode: Literal["raw_bbox_crop"]
     context_fraction: float = Field(ge=0.0, le=0.5)
     min_context_pixels: int = Field(ge=0, le=256)
     max_context_pixels: int = Field(ge=0, le=512)
-    outside_fill: Literal["zero"]
-    context_intensity: float = Field(ge=0.0, le=1.0)
     applied: bool
 
 
@@ -104,6 +107,8 @@ class CandidateViewInputRecord(BaseModel):
     filtered_index: int = Field(ge=0)
     question_id: Optional[int] = Field(default=None, ge=1)
     artifact_name: str
+    artifact_status: Optional[str] = None
+    mask_bbox_xyxy_inclusive: Optional[List[int]] = None
     target_bbox_xyxy: Optional[List[int]] = None
     context_bbox_xyxy: Optional[List[int]] = None
     effective_radius: Optional[int] = Field(default=None, ge=0, le=512)
@@ -132,8 +137,7 @@ class CandidateViewInputRecord(BaseModel):
                 raise ValueError("CLIP candidate-view records cannot have question_id")
             expected_prefix = "clip-candidate-view-CANDIDATE-"
             if (
-                self.target_bbox_xyxy is None
-                or self.context_bbox_xyxy is None
+                (self.target_bbox_xyxy is None and self.mask_bbox_xyxy_inclusive is None)
                 or self.effective_radius is None
                 or self.source_dimensions is None
                 or self.crop_dimensions is None
@@ -215,7 +219,11 @@ class ObjectRecord(BaseModel):
     predicted_iou: Optional[float] = None
     stability_score: Optional[float] = None
     clip_score: Optional[float] = None
+    clip_scores: Optional[Dict[str, float]] = None
+    clip_routing: Optional["ClipRoutingDiagnostic"] = None
     blip3_answer: Optional[str] = None
+    blip3_verification: Optional["Blip3VerificationRecord"] = None
+    blip3_verifications: Optional[List["Blip3VerificationRecord"]] = None
     geometry: Optional[Dict[str, Any]] = None
     mask_rle: Optional[Dict[str, Any]] = Field(
         default=None,
@@ -224,34 +232,141 @@ class ObjectRecord(BaseModel):
     warnings: Optional[List[str]] = None
 
 
-PostFilterReason = Literal["maxsize", "empty_mask", "max_w", "max_h"]
+PostFilterReason = Literal[
+    "maxsize",
+    "empty_mask",
+    "max_w",
+    "max_h",
+    "min_area",
+    "max_area",
+    "min_width",
+    "max_width",
+    "min_height",
+    "max_height",
+    "min_aspect_ratio",
+    "max_aspect_ratio",
+    "border_touching",
+]
 
 
 class PostFilterLimits(BaseModel):
-    maxsize: int = Field(ge=0)
-    max_w: int = Field(ge=0)
-    max_h: int = Field(ge=0)
+    maxsize: Optional[int] = Field(default=None, ge=0)
+    max_w: Optional[int] = Field(default=None, ge=0)
+    max_h: Optional[int] = Field(default=None, ge=0)
+    min_area: Optional[int] = Field(default=None, ge=0)
+    max_area: Optional[int] = Field(default=None, ge=0)
+    min_width: Optional[int] = Field(default=None, ge=0)
+    max_width: Optional[int] = Field(default=None, ge=0)
+    min_height: Optional[int] = Field(default=None, ge=0)
+    max_height: Optional[int] = Field(default=None, ge=0)
+    min_aspect_ratio: Optional[float] = Field(default=None, ge=0.0)
+    max_aspect_ratio: Optional[float] = Field(default=None, ge=0.0)
+    allow_border_touching: Optional[bool] = None
 
 
 class PostFilterRejection(BaseModel):
-    source_index: int = Field(ge=0)
+    source_index: Optional[int] = Field(default=None, ge=0)
+    source_candidate_id: Optional[int] = Field(default=None, ge=1)
+    filtered_index: Optional[int] = Field(default=None, ge=0)
     reason: PostFilterReason
     area_px: int = Field(ge=0)
     bbox_width_px: int = Field(ge=0)
     bbox_height_px: int = Field(ge=0)
+    bbox_xyxy_inclusive: Optional[List[int]] = None
+    aspect_ratio: Optional[float] = None
+    border_touching: Optional[bool] = None
+    configured_limit_field: Optional[str] = None
+    configured_limit_value: Any = None
 
 
 class PostFilterDiagnostics(BaseModel):
     limits: PostFilterLimits
-    evaluated: int = Field(ge=0)
-    removed_by_maxsize: int = Field(ge=0)
-    removed_empty_mask: int = Field(ge=0)
-    removed_by_max_w: int = Field(ge=0)
-    removed_by_max_h: int = Field(ge=0)
-    retained: int = Field(ge=0)
-    reason_precedence: List[PostFilterReason] = Field(min_length=4, max_length=4)
+    evaluated: int = Field(default=0, ge=0)
+    removed_by_maxsize: int = Field(default=0, ge=0)
+    removed_empty_mask: int = Field(default=0, ge=0)
+    removed_by_max_w: int = Field(default=0, ge=0)
+    removed_by_max_h: int = Field(default=0, ge=0)
+    retained: int = Field(default=0, ge=0)
+    non_empty: int = Field(default=0, ge=0)
+    rejected: int = Field(default=0, ge=0)
+    reason_precedence: List[PostFilterReason] = Field(min_length=4, max_length=10)
     rejections: List[PostFilterRejection] = Field(max_length=256)
     rejections_truncated: int = Field(ge=0)
+
+
+ClipRoutingReason = Literal[
+    "target_top_1",
+    "target_in_top_k",
+    "target_within_score_margin",
+    "target_exceeded_minimum_score",
+    "explicitly_uncertain",
+    "clear_negative",
+    "max_candidate_limit",
+]
+ClipRoutingCapOutcome = Literal[
+    "not_applicable", "not_applied", "retained", "capped_out", "not_routed"
+]
+
+
+class ClipRoutingDiagnostic(BaseModel):
+    source_candidate_id: int = Field(ge=1)
+    filtered_index: int = Field(ge=0)
+    clip_scores: Dict[str, float]
+    winner: Optional[str] = None
+    winning_label: Optional[str] = None
+    chosen_target: Optional[str] = None
+    target_rank: Optional[int] = Field(default=None, ge=1)
+    chosen_target_rank: Optional[int] = Field(default=None, ge=1)
+    target_score: Optional[float] = None
+    best_score: Optional[float] = None
+    best_score_delta: Optional[float] = None
+    route_to_blip3: bool
+    initially_routed: Optional[bool] = None
+    matched_conditions: List[ClipRoutingReason]
+    primary_reason: ClipRoutingReason
+    primary_reason_before_cap: Optional[ClipRoutingReason] = None
+    matched_conditions_before_cap: Optional[List[ClipRoutingReason]] = None
+    cap_outcome: ClipRoutingCapOutcome
+    crop_metadata: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def validate_cosine_scores(self) -> "ClipRoutingDiagnostic":
+        values = list(self.clip_scores.values())
+        values.extend(value for value in (self.target_score, self.best_score) if value is not None)
+        if any(
+            not math.isfinite(float(value)) or not -1.0 <= float(value) <= 1.0 for value in values
+        ):
+            raise ValueError("CLIP scores must be finite cosine similarities in [-1, 1]")
+        if self.best_score_delta is not None and (
+            not math.isfinite(float(self.best_score_delta)) or self.best_score_delta < 0
+        ):
+            raise ValueError("CLIP best-score delta must be finite and non-negative")
+        return self
+
+
+class Blip3VerificationRecord(BaseModel):
+    source_candidate_id: int = Field(ge=1)
+    filtered_index: int = Field(ge=0)
+    question_id: int = Field(ge=1)
+    routing_target_label: Optional[str] = None
+    routing_reason: Optional[ClipRoutingReason] = None
+    configured_question: str
+    effective_question: str
+    raw_answer: str
+    normalized_answer: str
+    normalized_true_result: str
+    normalized_false_result: str
+    configured_true_result: str
+    configured_false_result: str
+    configured_true_label: str
+    configured_false_label: str
+    mapping_outcome: Literal["true_match", "false_match", "unmatched_answer"]
+    input_artifact_name: Optional[str] = None
+    input_artifact_status: str
+    final_label: str
+
+
+ObjectRecord.model_rebuild()
 
 
 class RawVisualizationDimensions(BaseModel):
@@ -302,6 +417,8 @@ class Sam2Metadata(BaseModel):
     actual_candidate_count: int = Field(ge=0)
     execution_time_ms: float = Field(ge=0)
     resource_warnings: List[str]
+    operator_limits: Dict[str, Optional[int]] = {}
+    field_provenance: Dict[str, Dict[str, Any]] = {}
     raw_visualization: Optional[RawVisualizationManifest] = None
 
 
@@ -314,6 +431,7 @@ class ServiceMetadata(BaseModel):
     config_digest: str
     sam2: Sam2Metadata
     candidate_views: CandidateViewsMetadata
+    clip_routing: Optional[Dict[str, Any]] = None
     artifacts: Optional[List[ArtifactDescriptor]] = None
     objects: Optional[List[ObjectRecord]] = None
     stage_statuses: Optional[List[Dict[str, Any]]] = None
@@ -324,6 +442,7 @@ class ServiceMetadata(BaseModel):
     warnings: Optional[List[str]] = None
     candidate_view_inputs: Optional[List[CandidateViewInputRecord]] = None
     blip3_candidate_views: Optional[List[Blip3CandidateViewRecord]] = None
+    clip_routing_diagnostics: Optional[List[ClipRoutingDiagnostic]] = None
 
 
 class Choice(BaseModel):

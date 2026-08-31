@@ -129,7 +129,18 @@ blip3:
   target:
     question: is this the target?
     trueresult: 'Yes'
+    falseresult: 'No'
+    newcategory: target
+    falsecategory: negative
     debug: {str(debug).lower()}
+clip_routing:
+  route_to_blip3:
+    labels: [target]
+    top_k: 1
+    score_margin_from_best: null
+    minimum_target_score: null
+    uncertain_labels: []
+    max_candidates: null
 candidate_views:
   clip:
     context_fraction: {clip_fraction}
@@ -362,7 +373,18 @@ blip3:
   target:
     question: is this the target?
     trueresult: 'Yes'
+    falseresult: 'No'
+    newcategory: target
+    falsecategory: negative
     debug: true
+clip_routing:
+  route_to_blip3:
+    labels: [target]
+    top_k: 1
+    score_margin_from_best: null
+    minimum_target_score: null
+    uncertain_labels: []
+    max_candidates: null
 postsam2processing:
   max_w: 6
 candidate_views:
@@ -422,6 +444,16 @@ def test_source_identity_survives_filter_semantics_order_visualization_json_and_
         "after_area_bbox": 2,
         "after_clip": 2,
         "final": 2,
+        "raw_sam2_generated": 3,
+        "non_empty_candidates": 3,
+        "geometry_evaluated": 3,
+        "after_geometry": 2,
+        "geometry_rejected": 1,
+        "clip_scored": 2,
+        "initially_routed": 2,
+        "routed_after_cap": 2,
+        "blip3_verified": 2,
+        "after_final_label_filter": 2,
     }
     expected_objects = [(1, 3, 1, 36), (2, 2, 0, 6)]
     assert _identity_tuples(service["objects"]) == expected_objects

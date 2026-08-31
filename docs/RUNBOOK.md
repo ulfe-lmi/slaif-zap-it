@@ -384,3 +384,9 @@ repeatability and first/minimum/median/nearest-rank-p95/maximum latency statisti
 It never
 prints or persists the source YAML, crop, prompts, labels, answers, response
 bodies or bearer key.
+
+For Objective 020 investigations, use only sanitized L3 metadata: raw SAM2
+counts, geometry rejection facts, complete CLIP vectors, routing reasons/cap
+outcomes, BLIP3 mapping records, final counts, and stage timings. CLIP and
+BLIP3 debug PNGs must equal their literal model inputs; the two builders are
+never interchangeable.

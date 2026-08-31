@@ -28,11 +28,19 @@ from .mask_views import (
     CANDIDATE_VIEW_LIMITS,
     CandidateViewConfig,
     MaskViewResult,
+    RawClipCropResult,
     build_candidate_views,
+    build_raw_clip_crop,
     build_mask_views,
     default_candidate_view_configs,
     effective_candidate_view_configs,
     exact_euclidean_dilate,
+)
+from .routing import (
+    ROUTING_PRIMARY_REASONS,
+    ClipRoutingDecision,
+    apply_clip_routing,
+    route_clip_candidate,
 )
 from .ordering import mask_centroid_rc, order_final_objects, ordering_key
 from .renderers import (
@@ -101,6 +109,7 @@ __all__ = [
     "IdentityMaskOverflowError",
     "IdentityMaskProjectionError",
     "MaskViewResult",
+    "RawClipCropResult",
     "MAX_IDENTITY_OBJECTS",
     "MemoryArtifactSink",
     "ObjectResult",
@@ -115,9 +124,14 @@ __all__ = [
     "config_digest",
     "build_candidate_views",
     "build_mask_views",
+    "build_raw_clip_crop",
     "default_candidate_view_configs",
     "effective_candidate_view_configs",
     "exact_euclidean_dilate",
+    "ROUTING_PRIMARY_REASONS",
+    "ClipRoutingDecision",
+    "apply_clip_routing",
+    "route_clip_candidate",
     "default_stage_functions",
     "format_yolo_line",
     "mask_centroid_rc",

@@ -149,3 +149,14 @@ all existing bytes; `check_state.py` reports duplicate IDs and latest human
 adjudication without treating `DEFERRED`, `REJECTED`, or `CHANGE REQUIRED` as
 accepted. These tests are CPU-only and must not become an excuse to add routine
 critical entries.
+
+## Objective 020 deterministic seam checks
+
+The CPU matrix independently verifies source-coordinate raw CLIP crops and
+half-up radius arithmetic, literal processor capture, complete ordered cosine
+vectors, every router branch and cap tie-break, optional geometry precedence
+and rejection facts, exact BLIP3 token mapping, separate debug pixels, stable
+IDs/counts/timings, all shipped YAML examples at levels 0 and 3, and JSON/ZIP
+parity. These checks establish contract fidelity only; they do not establish
+semantic accuracy or recall. Optional artifact overflow remains inference-fatal
+until Objective 021.

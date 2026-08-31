@@ -68,6 +68,7 @@ class ResponseContext:
     max_response_bytes: int = 256 * 1024 * 1024
     deadline_monotonic: Optional[float] = None
     candidate_views: Mapping[str, Any] = field(default_factory=dict)
+    clip_routing: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -140,6 +141,10 @@ def _object_record(
         "clip_score": obj.clip_score,
         "blip3_answer": obj.blip3_answer,
         "geometry": obj.geometry(),
+        "clip_scores": obj.metadata.get("clip_scores"),
+        "clip_routing": obj.metadata.get("clip_routing"),
+        "blip3_verification": obj.metadata.get("blip3_verification"),
+        "blip3_verifications": obj.metadata.get("blip3_verifications"),
     }
     for key, value in optional_fields.items():
         if value is not None:
@@ -191,6 +196,8 @@ def _sam2_manifest(result: Any, *, include_raw_visualization: bool = False) -> D
             float(metadata.get("execution_time_ms", result.timings.get("stage.sam2", 0.0))), 3
         ),
         "resource_warnings": list(metadata.get("resource_warnings", [])),
+        "operator_limits": dict(metadata.get("operator_limits", {})),
+        "field_provenance": dict(metadata.get("field_provenance", {})),
     }
     if include_raw_visualization and metadata.get("raw_visualization") is not None:
         manifest["raw_visualization"] = dict(metadata["raw_visualization"])
@@ -347,7 +354,14 @@ def _prepare(
         "candidate_views": {
             str(stage): dict(values) for stage, values in context.candidate_views.items()
         },
+        "clip_routing": dict(context.clip_routing),
     }
+    if context.verbosity >= 3 and (
+        getattr(result, "clip_routing_diagnostics", ()) or context.clip_routing
+    ):
+        service_meta["clip_routing_diagnostics"] = [
+            dict(record) for record in result.clip_routing_diagnostics
+        ]
     if context.verbosity >= 1:
         service_meta["artifacts"] = [
             _artifact_descriptor(

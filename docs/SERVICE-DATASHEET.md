@@ -13,7 +13,7 @@ It is a ZAP-IT multimodal contract, not generic
 OpenAI text-completion compatibility.
 
 It does not provide public/WAN exposure, TLS, gateway integration, async jobs,
-history, persistence, training, multi-worker CUDA, geometry activation,
+history, persistence, training, multi-worker CUDA, Canny/Hough geometry activation,
 Detectron2 panoptic output, or customer-data handling.
 
 ## Model-control subset
@@ -40,17 +40,12 @@ L3 RLE uses `coco_rle_uncompressed`, `size: [height, width]`,
 round-trippable source-mask truth, including disconnected components and
 overlap. The identity PNG remains a documented single-valued projection.
 
-The L3 `post_filter_diagnostics` field shares the post-SAM2 filter's exact
-short-circuit evaluator: `maxsize`, `empty_mask`, `max_w`, `max_h`, then
-retained. The area comparison is terminal and occurs before segmentation access;
-`maxsize` records carry the exact area and zero bbox dimensions because they were
-not evaluated. Empty masks also carry zero dimensions for their distinct reason.
-Values strictly above a limit are rejected and equal values are retained; other
-bbox dimensions are inclusive extents on the remapped mask. Counts must
-reconcile evaluated with retained and all four removal counters and must
-cross-check `candidate_counts.sam2_candidates`/`after_area_bbox`. Rejection
-records contain only numeric source index, reason, area and bbox dimensions, are
-input-ordered and capped at 256 with `rejections_truncated`. This is
+The L3 `post_filter_diagnostics` field evaluates optional canonical geometry
+rules for every candidate, including empties. Inclusive bbox, area,
+aspect-ratio, and border checks retain equality and use fixed precedence.
+Rejections carry source ID, nullable bbox, area, dimensions, configured limit,
+and reason, are input-ordered and capped at 256 with `rejections_truncated`.
+Counts reconcile evaluated, retained, and each removal reason. This is
 configured-filter evidence, not a SAM2 recall or accuracy claim; the roof test
 is programmatic CPU evidence. JSON and ZIP carry the same diagnostic values,
 while L0-L2 omit the field.
@@ -249,3 +244,10 @@ UUID/process/memory state, set `CUDA_DEVICE_ORDER=PCI_BUS_ID` and the matching
 mode additionally requires an exact RFC1918 host/CIDR and strong fixed bearer.
 Protected GPUs must remain unchanged. Gateway integration and final release
 remain separately governed.
+
+The service accepts domain-neutral routing configuration: CLIP labels are
+bounded identifiers plus natural-language values, `raw_bbox_crop` is the only
+API CLIP view, and `clip_routing` selects request-authored BLIP3 rules through
+deterministic OR conditions. Canonical geometry records losses with source IDs
+and inclusive bboxes. Optional artifact overflow remains inference-fatal until
+Objective 021; CPU/fake evidence does not prove semantic accuracy.

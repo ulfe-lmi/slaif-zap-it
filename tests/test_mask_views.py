@@ -353,12 +353,10 @@ def test_blip3_defaults_are_a_separate_exact_policy_from_clip():
     clip = CandidateViewConfig.from_mapping(None, stage="clip").as_dict(stage="clip")
     blip = CandidateViewConfig.from_mapping(None, stage="blip3").as_dict(stage="blip3")
     assert clip == {
-        "mode": "mask_dilated",
+        "mode": "raw_bbox_crop",
         "context_fraction": 0.1,
         "min_context_pixels": 0,
         "max_context_pixels": 64,
-        "outside_fill": "zero",
-        "context_intensity": 0.35,
     }
     assert blip == {
         "mode": "single_dilated_blur",

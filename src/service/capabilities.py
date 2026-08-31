@@ -123,6 +123,10 @@ class CandidateViewsCapability(BaseModel):
     contour_formula: str
     containment_policy: str
     effective_policy: str
+    clip_labels: Dict[str, CapabilityField]
+    clip_routing: Dict[str, Any]
+    geometry: Dict[str, CapabilityField]
+    blip3_rules: Dict[str, CapabilityField]
 
 
 class CapabilitiesResponse(BaseModel):
@@ -197,12 +201,10 @@ def _candidate_view_fields(*, include_contour: bool) -> Dict[str, CapabilityFiel
             ),
         }
     return {
-        "mode": CapabilityField(type="string", allowed=["mask_dilated"]),
+        "mode": CapabilityField(type="string", allowed=["raw_bbox_crop"]),
         "context_fraction": CapabilityField(type="number", minimum=0.0, maximum=0.5),
         "min_context_pixels": CapabilityField(type="integer", minimum=0, maximum=256),
         "max_context_pixels": CapabilityField(type="integer", minimum=0, maximum=512),
-        "outside_fill": CapabilityField(type="string", allowed=["zero"]),
-        "context_intensity": CapabilityField(type="number", minimum=0.0, maximum=1.0),
     }
 
 
@@ -289,7 +291,8 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
                 debug_trigger="verbosity == 3 and clip.debug == true",
                 fixed_artifact_name="clip-candidate-view-CANDIDATE-0008.png",
                 notes={
-                    "visibility": "exact Euclidean support with legacy zero-fill CLIP behavior",
+                    "visibility": "complete rectangular source crop; no mask-derived pixel alteration",
+                    "legacy": "trusted CLI may explicitly opt into mask_dilated; API never accepts it",
                 },
             ),
             blip3=CandidateViewCapabilityStage(
@@ -310,7 +313,7 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
             ),
             dilation_formula=(
                 "L = max(inclusive raw-mask width, inclusive raw-mask height); "
-                "raw_context_radius = ceil(context_fraction * L); "
+                "CLIP raw_context_radius = floor(context_fraction * L + 0.5); BLIP3 retains its reviewed ceil formula; "
                 "effective_context_radius = min(max(raw_context_radius, "
                 "min_context_pixels), max_context_pixels)"
             ),
@@ -341,6 +344,65 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
                 "L0-L3 expose only the stage field set plus applied; detailed BLIP3 records "
                 "and debug artifacts are L3-only"
             ),
+            clip_labels={
+                "identifier": CapabilityField(
+                    type="string", allowed=["^[A-Za-z][A-Za-z0-9_-]{0,63}$"]
+                ),
+                "prompt": CapabilityField(type="string", minimum=1, maximum=512),
+            },
+            clip_routing={
+                "execution_stage": "after complete CLIP vectors and before BLIP3",
+                "fields": {
+                    "labels": "non-empty unique list of configured label identifiers",
+                    "top_k": "null or integer 1..number of CLIP labels",
+                    "score_margin_from_best": "null or finite number 0..2",
+                    "minimum_target_score": "null or finite cosine score -1..1",
+                    "uncertain_labels": "disjoint configured label identifiers",
+                    "max_candidates": "null or integer 1..256",
+                },
+                "logic": "OR of top-1, top-k, margin, minimum-score and uncertain-label conditions",
+                "score_units": "cosine similarity in [-1, 1]",
+                "reason_precedence": [
+                    "target_top_1",
+                    "target_in_top_k",
+                    "target_within_score_margin",
+                    "target_exceeded_minimum_score",
+                    "explicitly_uncertain",
+                    "clear_negative",
+                ],
+            },
+            geometry={
+                name: CapabilityField(
+                    type=("boolean" if name in {"allow_border_touching", "debug"} else "number"),
+                    minimum=None if name in {"allow_border_touching", "debug"} else 0,
+                    maximum=None
+                    if name in {"allow_border_touching", "debug"}
+                    else (1000 if "aspect" in name else (64_000_000 if "area" in name else 32_768)),
+                    allowed=[False, True] if name in {"allow_border_touching", "debug"} else None,
+                )
+                for name in (
+                    "min_area",
+                    "max_area",
+                    "min_width",
+                    "max_width",
+                    "min_height",
+                    "max_height",
+                    "min_aspect_ratio",
+                    "max_aspect_ratio",
+                    "allow_border_touching",
+                    "debug",
+                )
+            },
+            blip3_rules={
+                name: CapabilityField(type="string", minimum=1, maximum=2048)
+                for name in (
+                    "question",
+                    "trueresult",
+                    "falseresult",
+                    "newcategory",
+                    "falsecategory",
+                )
+            },
         ),
     )
     if hasattr(response, "model_dump"):

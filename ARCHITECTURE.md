@@ -71,8 +71,11 @@ The core does not require a filesystem. Debug-capable modules receive an
 artifact sink. The service uses a bounded memory sink; the trusted CLI can use a
 filesystem sink through its compatibility adapter.
 
-The shared pure candidate-view builder constructs the legacy CLIP view from a
-mask-derived crop. BLIP3 uses a separate pure single-image compositor: an
+The shared pure candidate-view module constructs a complete source-byte-exact
+rectangular CLIP `raw_bbox_crop` from a mask-derived inclusive bbox. Its
+half-up context radius affects only the crop boundary; no mask or fill reaches
+CLIP. An explicitly selected trusted-CLI `mask_dilated` compatibility builder
+remains separate. BLIP3 uses a separate pure single-image compositor: an
 inclusive raw-mask bbox determines a nominal centered crop, exact Euclidean
 dilation determines support, and a second exact dilation determines an exterior
 contour. Source RGB pixels under support D are restored from source bytes; the
@@ -184,15 +187,15 @@ annotated overlays, warnings, timings, and provenance according to verbosity.
 overlay with sanitized labels and exact instance IDs. JSON binary data uses
 bounded base64 descriptors; ZIP uses a deterministic manifest and names.
 
-Post-filter diagnostics are produced by the same short-circuit evaluator as the
-area/bbox filter. They use strict `>` rejection with inclusive threshold
-retention and precedence `maxsize`, `empty_mask`, `max_w`, `max_h`. The terminal
-`maxsize` comparison occurs before segmentation access, so its numeric rejection
-record keeps the exact area and uses zero bbox dimensions because they were not
-evaluated; empty masks use zero dimensions for their distinct reason. Aggregate
-counts reconcile with evaluated and retained candidates. L3 may include only
-numeric rejection records, in input order, capped at 256 with an explicit
-truncation count; lower response levels do not serialize this sidecar.
+Post-filter diagnostics use optional canonical area, bbox, aspect-ratio, and
+border rules with equality retained and fixed first-reason precedence. Every
+candidate, including empty masks, is accounted for; non-empty rejections carry
+their inclusive bbox, dimensions, area, reason, configured limit, and source ID.
+L3 records remain input-ordered and capped at 256 with an explicit truncation
+count; lower response levels do not serialize this sidecar. CLIP routing keeps
+complete score vectors for every post-geometry candidate and applies OR logic
+for top-1, top-k, margin, minimum score, and explicit uncertainty before the
+deterministic candidate cap.
 
 ### Ephemeral storage
 

@@ -23,6 +23,8 @@ __all__ = [
     "CANDIDATE_VIEW_LIMITS",
     "CandidateViewConfig",
     "MaskViewResult",
+    "RawClipCropResult",
+    "build_raw_clip_crop",
     "build_candidate_views",
     "build_mask_views",
     "default_candidate_view_configs",
@@ -33,12 +35,10 @@ __all__ = [
 
 CANDIDATE_VIEW_DEFAULTS: dict[str, dict[str, Any]] = {
     "clip": {
-        "mode": "mask_dilated",
+        "mode": "raw_bbox_crop",
         "context_fraction": 0.10,
         "min_context_pixels": 0,
         "max_context_pixels": 64,
-        "outside_fill": "zero",
-        "context_intensity": 0.35,
     },
     "blip3": {
         "mode": "single_dilated_blur",
@@ -71,12 +71,12 @@ def _invalid(message: str) -> CoreError:
 class CandidateViewConfig:
     """Validated scalar policy for one candidate-view stage."""
 
-    mode: str = "mask_dilated"
+    mode: str = "raw_bbox_crop"
     context_fraction: float = 0.10
     min_context_pixels: int = 0
     max_context_pixels: int = 64
-    outside_fill: str | None = "zero"
-    context_intensity: float | None = 0.35
+    outside_fill: str | None = None
+    context_intensity: float | None = None
     crop_extent_multiplier: float | None = None
     blur_sigma_fraction: float | None = None
     contour_enabled: bool | None = None
@@ -115,9 +115,12 @@ class CandidateViewConfig:
                 "context_fraction",
                 "min_context_pixels",
                 "max_context_pixels",
-                "outside_fill",
-                "context_intensity",
             }
+            # ``mask_dilated`` is deliberately retained only as an explicit
+            # trusted-CLI compatibility mode.  It is not a default and the
+            # service validator never emits it.
+            if value.get("mode", CANDIDATE_VIEW_DEFAULTS["clip"]["mode"]) == "mask_dilated":
+                allowed.update({"outside_fill", "context_intensity"})
         unknown = sorted(set(value).difference(allowed), key=str)
         if unknown:
             raise _invalid(
@@ -126,14 +129,18 @@ class CandidateViewConfig:
             )
         defaults = CANDIDATE_VIEW_DEFAULTS.get(stage, CANDIDATE_VIEW_DEFAULTS["clip"])
         mode = value.get("mode", defaults["mode"])
-        expected_mode = "single_dilated_blur" if stage == "blip3" else "mask_dilated"
-        if type(mode) is not str or mode != expected_mode:
-            raise _invalid(f"candidate_views.{stage}.mode must be {expected_mode!r}")
+        if (
+            type(mode) is not str
+            or (stage == "blip3" and mode != "single_dilated_blur")
+            or (stage == "clip" and mode not in {"raw_bbox_crop", "mask_dilated"})
+        ):
+            expected = "single_dilated_blur" if stage == "blip3" else "raw_bbox_crop"
+            raise _invalid(f"candidate_views.{stage}.mode must be {expected!r}")
 
         outside_fill = None
         intensity = None
-        if stage == "clip":
-            outside_fill = value.get("outside_fill", defaults["outside_fill"])
+        if stage == "clip" and mode == "mask_dilated":
+            outside_fill = value.get("outside_fill", "zero")
             if type(outside_fill) is not str or outside_fill != "zero":
                 raise _invalid(f"candidate_views.{stage}.outside_fill must be 'zero'")
 
@@ -166,8 +173,8 @@ class CandidateViewConfig:
                 f"candidate_views.{stage}.min_context_pixels must not exceed max_context_pixels"
             )
 
-        if stage == "clip":
-            intensity = value.get("context_intensity", defaults["context_intensity"])
+        if stage == "clip" and mode == "mask_dilated":
+            intensity = value.get("context_intensity", 0.35)
             if type(intensity) not in (int, float) or not math.isfinite(float(intensity)):
                 raise _invalid(f"candidate_views.{stage}.context_intensity must be a finite number")
             if not 0.0 <= float(intensity) <= 1.0:
@@ -268,9 +275,10 @@ class CandidateViewConfig:
                 "context_fraction": self.context_fraction,
                 "min_context_pixels": self.min_context_pixels,
                 "max_context_pixels": self.max_context_pixels,
-                "outside_fill": self.outside_fill,
-                "context_intensity": self.context_intensity,
             }
+            if self.mode == "mask_dilated":
+                result["outside_fill"] = self.outside_fill
+                result["context_intensity"] = self.context_intensity
         if applied is not None:
             result["applied"] = bool(applied)
         return result
@@ -297,7 +305,8 @@ def effective_candidate_view_configs(value: Any = None) -> dict[str, CandidateVi
         )
     return {
         stage: CandidateViewConfig.from_mapping(
-            value[stage] if stage in value else None, stage=stage
+            value[stage] if stage in value else CANDIDATE_VIEW_DEFAULTS[stage],
+            stage=stage,
         )
         for stage in ("clip", "blip3")
     }
@@ -486,6 +495,123 @@ class MaskViewResult:
         }
 
 
+@dataclass(frozen=True)
+class RawClipCropResult:
+    """Immutable, unmodified rectangular RGB input for CLIP2."""
+
+    rgb: np.ndarray
+    mask_bbox_xyxy_inclusive: tuple[int, int, int, int]
+    crop_bbox_xyxy_exclusive: tuple[int, int, int, int]
+    raw_context_radius: int
+    effective_context_radius: int
+    source_candidate_id: int
+    metadata: Mapping[str, Any]
+
+    @property
+    def array(self) -> np.ndarray:
+        return self.rgb
+
+    @property
+    def crop(self) -> np.ndarray:
+        """Compatibility alias for callers naming the crop directly."""
+        return self.rgb
+
+    @property
+    def model_input(self) -> np.ndarray:
+        return self.rgb
+
+    def metadata_dict(self) -> dict[str, Any]:
+        return {
+            key: dict(value) if isinstance(value, Mapping) else value
+            for key, value in self.metadata.items()
+        }
+
+
+def build_raw_clip_crop(
+    image_rgb: np.ndarray,
+    segmentation_mask: np.ndarray,
+    source_candidate_id: int,
+    config: CandidateViewConfig | Mapping[str, Any] | None = None,
+    *,
+    filtered_index: int = 0,
+    debug: bool = False,
+) -> RawClipCropResult:
+    """Copy the complete source rectangle surrounding a candidate mask.
+
+    The mask affects only the tight inclusive bounding box.  It never masks,
+    fills, dims, blurs, resizes, or otherwise alters pixels in the returned
+    array; standard CLIP processor conversion happens after this boundary.
+    """
+    _validate_inputs(image_rgb, segmentation_mask, source_candidate_id)
+    if isinstance(config, CandidateViewConfig):
+        view_config = config
+    else:
+        view_config = CandidateViewConfig.from_mapping(
+            CANDIDATE_VIEW_DEFAULTS["clip"] if config is None else config,
+            stage="clip",
+        )
+    if view_config.mode != "raw_bbox_crop":
+        raise _invalid("raw CLIP crop requires candidate_views.clip.mode 'raw_bbox_crop'")
+
+    rows, cols = np.nonzero(segmentation_mask)
+    x0, y0, x1, y1 = int(cols.min()), int(rows.min()), int(cols.max()), int(rows.max())
+    bbox = (x0, y0, x1, y1)
+    bbox_width = x1 - x0 + 1
+    bbox_height = y1 - y0 + 1
+    extent = max(bbox_width, bbox_height)
+    # Explicit half-up rounding avoids Python's banker-rounding at .5.
+    raw_radius = int(math.floor(view_config.context_fraction * extent + 0.5))
+    effective_radius = min(
+        max(raw_radius, view_config.min_context_pixels), view_config.max_context_pixels
+    )
+    height, width = image_rgb.shape[:2]
+    crop_box = (
+        max(0, x0 - effective_radius),
+        max(0, y0 - effective_radius),
+        min(width, x1 + 1 + effective_radius),
+        min(height, y1 + 1 + effective_radius),
+    )
+    cx0, cy0, cx1, cy1 = crop_box
+    crop = np.ascontiguousarray(image_rgb[cy0:cy1, cx0:cx1].copy())
+    crop.setflags(write=False)
+    artifact_name = (
+        f"clip-candidate-view-CANDIDATE-{source_candidate_id:04d}.png" if debug else None
+    )
+    metadata = MappingProxyType(
+        {
+            "stage": "clip",
+            "source_candidate_id": source_candidate_id,
+            "filtered_index": int(filtered_index),
+            "source_dimensions": {"height": int(height), "width": int(width)},
+            "mask_bbox_xyxy_inclusive": list(bbox),
+            "target_bbox_xyxy": list(bbox),
+            "crop_bbox_xyxy_exclusive": list(crop_box),
+            "crop_dimensions": {"height": int(crop.shape[0]), "width": int(crop.shape[1])},
+            "model_input_dimensions": {
+                "height": int(crop.shape[0]),
+                "width": int(crop.shape[1]),
+            },
+            "raw_context_radius": raw_radius,
+            "effective_context_radius": effective_radius,
+            "effective_radius": effective_radius,
+            "dilation": None,
+            "contour": None,
+            "artifact_name": artifact_name,
+            "artifact_status": "requested" if debug else "not_requested",
+            "config": MappingProxyType(view_config.as_dict(stage="clip")),
+        }
+    )
+    return RawClipCropResult(
+        rgb=crop,
+        mask_bbox_xyxy_inclusive=bbox,
+        crop_bbox_xyxy_exclusive=crop_box,
+        raw_context_radius=raw_radius,
+        effective_context_radius=effective_radius,
+        source_candidate_id=source_candidate_id,
+        metadata=metadata,
+    )
+
+
 def build_mask_views(
     image_rgb: np.ndarray,
     segmentation_mask: np.ndarray,
@@ -501,6 +627,15 @@ def build_mask_views(
     if isinstance(config, CandidateViewConfig):
         view_config = config
     else:
+        if config is None and stage == "clip":
+            config = {
+                "mode": "mask_dilated",
+                "context_fraction": 0.10,
+                "min_context_pixels": 0,
+                "max_context_pixels": 64,
+                "outside_fill": "zero",
+                "context_intensity": 0.35,
+            }
         view_config = CandidateViewConfig.from_mapping(config, stage=stage)
 
     target_bbox = _tight_bbox(segmentation_mask)

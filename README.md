@@ -30,8 +30,9 @@ structured labels remain available whether or not a visualization is requested.
 BLIP3 verification is mask-isolated: each candidate receives one deterministic
 RGB image. Exact source pixels under the mask's Euclidean support D are restored
 from source bytes, the exterior is painted with a thin configured-RGB contour,
-and all remaining bounded scene context is Gaussian-blurred. CLIP retains its
-separate mask-derived view. The
+and all remaining bounded scene context is Gaussian-blurred. The API CLIP stage
+uses a separate untouched rectangular raw source crop; the trusted CLI may
+explicitly select its legacy mask-derived view. The
 service's L3 `debug: true` rules expose the exact model inputs as fixed-name
 lossless PNGs; these are pixel-boundary audit artifacts, not guarantees of
 semantic accuracy.
@@ -160,7 +161,8 @@ Request bytes and intermediate results remain in RAM or the validated
 `/dev/shm` workspace and are removed after every request.
 
 `candidate_views.clip` and `candidate_views.blip3` are independent request-local
-algorithm settings. CLIP keeps its legacy `mask_dilated` zero-fill policy.
+algorithm settings. The API CLIP policy is the untouched rectangular
+`raw_bbox_crop`; `mask_dilated` is trusted-CLI compatibility only.
 BLIP3 defaults to `single_dilated_blur`, context fraction `0.20`, context
 limits `0..64`, crop multiplier `2.0`, blur fraction `0.15`, enabled contour
 fraction `0.02`, contour width limits `1..3`, and RGB `[255, 224, 0]`.
@@ -176,18 +178,13 @@ remain `blip3-verification-CANDIDATE-####-QUESTION-####.png` and use one-based
 public IDs; RGB pixels decoded from the lossless PNG equal the sole QA image's
 model-input array.
 
-L3 post-filter diagnostics report one short-circuit outcome per evaluated SAM2
-candidate: `maxsize`, `empty_mask`, `max_w`, `max_h`, or retained, in that
-precedence order. The area comparison is terminal and occurs before segmentation
-access; a `maxsize` rejection records its exact area and `0/0` bbox dimensions
-because bbox dimensions were not evaluated. Empty masks also report `0/0` for
-their distinct reason. Other bbox dimensions are inclusive extents of the
-remapped segmentation. Thresholds are strict for rejection and inclusive for
-retention. Counts satisfy `evaluated = retained + all four removal counts` and
-cross-check `candidate_counts.sam2_candidates` and `after_area_bbox`. Rejection
-records contain only numeric area, bbox dimensions, and source index; at most
-256 are retained in input order, with the remainder in `rejections_truncated`.
-This is configured-filter evidence, not a SAM2 recall or model-accuracy claim.
+L3 post-filter diagnostics evaluate optional canonical area, bbox, aspect-ratio,
+and border rules for every candidate, including empty masks. Rejections carry
+source ID, nullable inclusive bbox, area, dimensions, configured limit and
+reason; counts reconcile exactly and records are capped at 256. CLIP score
+vectors and routing reasons are complete at L3, while the selected BLIP3 rule
+provides the terminal exact answer mapping. This is configured-filter and
+contract evidence, not a SAM2 recall or model-accuracy claim.
 The two-wide-candidate roof regression is programmatic
 CPU filter evidence, not a real roof-image benchmark.
 
@@ -263,3 +260,16 @@ Security reports: janez.pers@fe.uni-lj.si
 
 We acknowledge the support of the EC/EuroHPC JU and the Slovenian Ministry of
 HESI through the SLAIF project (grant agreement 101254461).
+
+## Domain-neutral semantic routing
+
+The current pipeline uses SAM2 for high-recall proposals, then sends every
+post-geometry candidate through an untouched rectangular `raw_bbox_crop` to
+CLIP. CLIP returns a complete ordered cosine-score vector and a permissive
+request-local `clip_routing` decision; the selected target rule supplies one
+contextual single-image BLIP3 question and exact answer-to-label mapping.
+Object IDs, stage counts, timings, and losses are preserved in L3 evidence.
+
+This is a deterministic routing contract, not semantic-accuracy evidence.
+Optional artifact overflow remains inference-fatal in this release; Objective
+021 owns structured truncation and pagination.

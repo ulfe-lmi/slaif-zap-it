@@ -16,7 +16,7 @@ module or helper is not evidence that the live service produces its output.
 | Request-local SAM2 generator policy | Resident model is reused; a fresh generator is built from strict effective scalars per request | `service.sam2` at every level and in ZIP manifest; raw candidate count is separate from post-remap L3 count |
 | Post-SAM2 area/bbox filter | Removes candidates before optional classification; one deterministic short-circuit reason and bounded numeric records are retained | Public L3 candidate counts/status and `post_filter_diagnostics` |
 | CLIP labels, scores and class map | Request labels refresh resident CLIP prompts | Public L0 class mapping, L2 label/score, L3 provenance |
-| Candidate views for CLIP/BLIP3 | CLIP retains its request-local exact-mask zero-fill view; BLIP3 uses one source-space image with exact Euclidean support, exterior contour and Gaussian-blurred scene context | Effective policy at every response level; L3 BLIP3 composition records and exact lossless processor/QA PNGs; this is pixel-boundary evidence, not an accuracy guarantee |
+| Candidate views for CLIP/BLIP3 | CLIP uses an untouched rectangular raw source crop; trusted CLI may explicitly retain its exact-mask compatibility view; BLIP3 uses one source-space image with exact Euclidean support, exterior contour and Gaussian-blurred scene context | Effective policy at every response level; L3 composition records and exact lossless processor/QA PNGs; this is pixel-boundary evidence, not an accuracy guarantee |
 | BLIP3 verification | Pinned FP16 holder; each candidate is composed once and every applicable QA call reuses the same one-image input; residency remains capacity-selected | Public L2/L3 fields when executed; candidate-local containment rejection is bounded and non-mutating; L3 debug returns the exact sole QA PNG under the tokenized CANDIDATE/QUESTION name |
 | Geometry Canny/Hough helpers | Helpers and tests exist, but canonical core does not call them; helpers may write TSV/debug files | Not supported by the service; legacy compatibility only where explicitly wired |
 | `annotated`/`alpha-overlay` in-memory streams | Bounded RGB mask-only overlays; service executes them only at L3 | Bounded operator/service diagnostic |
@@ -42,16 +42,12 @@ module or helper is not evidence that the live service produces its output.
 
 ## Post-filter diagnostic policy
 
-The canonical filter evaluates `maxsize`, empty mask, `max_w`, and `max_h` in
-that exact precedence. The area comparison is terminal and occurs before
-segmentation access; `maxsize` records retain the exact area and carry `0/0` bbox
-dimensions because bbox dimensions were not evaluated. Empty masks also carry
-`0/0` for their distinct reason. Other width and height values are inclusive
-pixel extents over the remapped segmentation. Rejection comparisons are strict;
-threshold equality is retained, and aggregate counts satisfy the
-evaluated/retained invariant. L3 records contain only numeric source index,
-reason, area and bbox dimensions, are ordered by candidate input, and are capped
-at 256 with explicit truncation.
+The canonical filter evaluates optional area, inclusive bbox, aspect-ratio, and
+border rules for every SAM2 candidate, including empty masks. Fixed precedence,
+strict rejection, and equality retention are recorded in L3. Each bounded
+rejection includes source candidate ID, nullable bbox, area, dimensions,
+configured limit and reason; aggregate counts reconcile exactly and records are
+capped at 256 with explicit truncation.
 The field is absent at L0-L2 and is copied unchanged into JSON and ZIP
 manifest responses. The roof/panel regression is generated CPU filter evidence,
 not a real-image or SAM2-recall claim.
@@ -100,7 +96,14 @@ unchanged.
 
 ## Geometry status
 
-Geometry is intentionally not activated in the service. The API rejects a
-top-level `geometry` field with `unsupported_field` before inference. Future
-activation requires a separately governed scientific-stage order and an
-in-memory refactor of the current file-writing helper.
+The service accepts only optional canonical `postsam2processing` geometry
+impossibility rules and reports every evaluated rejection at L3. The unrelated
+top-level `geometry` batch section remains unsupported. Legacy `maxsize`,
+`max_w`, and `max_h` aliases are explicit compatibility inputs with migration
+warnings.
+
+Objective 020 keeps CLIP and BLIP3 image builders independent: CLIP receives an
+untouched rectangular `raw_bbox_crop` and BLIP3 receives its separately
+composed one-image contextual view. Complete CLIP vectors, routing reasons,
+and answer mappings are preserved in L3, while L2 objects contain relevant
+semantic evidence. Semantic accuracy is not inferred from parity tests.

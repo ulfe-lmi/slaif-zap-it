@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import re
+import unicodedata
 from inspect import Parameter, signature
 from typing import Any, Dict, Tuple
 import os
@@ -24,6 +25,13 @@ BLIP3_FIXED_INSTRUCTION = (
 _BLIP3_TARGET_SHORT_SIDE = 256
 _BLIP3_MAX_LONG_SIDE = 768
 BLIP3_CANDIDATE_VIEW_REJECTION_REASON = "crop_cannot_contain_support_and_contour"
+
+
+def normalize_blip3_token(value: str) -> str:
+    """Normalize one configured/result token for exact equality matching."""
+    if not isinstance(value, str):
+        raise TypeError("BLIP3 result tokens must be strings")
+    return unicodedata.normalize("NFKC", value).strip().casefold().rstrip(".!?,;:").strip()
 
 
 class Blip3CandidateViewRejected(CoreError):
@@ -794,6 +802,11 @@ class _Blip3Filter:
         if self.max_questions is not None:
             planned_questions = 0
             for mask in masks:
+                routing = mask.get("clip_routing")
+                if isinstance(routing, dict):
+                    if mask.get("_route_to_blip3") and routing.get("chosen_target") in label_rules:
+                        planned_questions += 1
+                    continue
                 score = float(mask.get("clip_score", 0.0))
                 planned_questions += sum(
                     1 for threshold, _key, _rule in any_rules if score <= threshold
@@ -821,9 +834,20 @@ class _Blip3Filter:
             )
             filtered_index = int(m.get("_filtered_index", idx))
 
-            applicable_rules = [cfg for threshold, _key, cfg in any_rules if score <= threshold]
-            if lbl in label_rules:
-                applicable_rules.append(label_rules[lbl])
+            routing = m.get("clip_routing")
+            canonical_route = isinstance(routing, dict) and "chosen_target" in routing
+            if canonical_route:
+                target_label = routing.get("chosen_target")
+                applicable_rules = (
+                    [label_rules[target_label]]
+                    if m.get("_route_to_blip3") and target_label in label_rules
+                    else []
+                )
+            else:
+                target_label = lbl
+                applicable_rules = [cfg for threshold, _key, cfg in any_rules if score <= threshold]
+                if lbl in label_rules:
+                    applicable_rules.append(label_rules[lbl])
             if not applicable_rules:
                 continue
 
@@ -835,6 +859,7 @@ class _Blip3Filter:
                     view_config,
                 )
             except Blip3CandidateViewRejected as exc:
+                m["_blip3_rejected"] = True
                 record = dict(exc.metadata)
                 record.update(
                     {
@@ -910,52 +935,89 @@ class _Blip3Filter:
                                 },
                             }
                         )
-                return answer
+                return (
+                    answer,
+                    query,
+                    artifact_name if cfg.get("debug") is True else None,
+                    current_question_index + 1,
+                )
+
+            def apply_answer(cfg, answer_info):
+                answer, query, artifact_name, public_question_id = answer_info
+                m["blip3_answer"] = answer
+                answers.append(answer)
+                true_value = str(cfg.get("trueresult", ""))
+                false_value = str(cfg.get("falseresult", ""))
+                true_token = normalize_blip3_token(true_value)
+                false_token = normalize_blip3_token(false_value)
+                answer_token = normalize_blip3_token(str(answer))
+                if canonical_route:
+                    if answer_token == true_token:
+                        mapping_outcome = "true_match"
+                        final_label = str(cfg["newcategory"])
+                    elif answer_token == false_token:
+                        mapping_outcome = "false_match"
+                        final_label = str(cfg["falsecategory"])
+                    else:
+                        mapping_outcome = "unmatched_answer"
+                        final_label = str(cfg["falsecategory"])
+                else:
+                    # Trusted legacy rules retain their historical substring
+                    # behavior and implicit negative category.
+                    answer_lower = str(answer).lower()
+                    if false_value and false_value.lower() in answer_lower:
+                        mapping_outcome = "false_match"
+                        final_label = str(cfg.get("falsecategory", "negative"))
+                    elif true_value and true_value.lower() in answer_lower:
+                        mapping_outcome = "true_match"
+                        final_label = str(cfg.get("newcategory", m.get("clip_label", lbl)))
+                    else:
+                        mapping_outcome = "unmatched_answer"
+                        final_label = str(cfg.get("falsecategory", m.get("clip_label", lbl)))
+                m["clip_label"] = final_label
+                verification_record = {
+                    "source_candidate_id": source_candidate_id,
+                    "filtered_index": filtered_index,
+                    "question_id": public_question_id,
+                    "routing_target_label": target_label,
+                    "routing_reason": (routing.get("primary_reason") if canonical_route else None),
+                    "configured_question": str(cfg.get("question", "")),
+                    "effective_question": query,
+                    "raw_answer": str(answer),
+                    "normalized_answer": answer_token,
+                    "normalized_true_result": true_token,
+                    "normalized_false_result": false_token,
+                    "configured_true_result": true_value,
+                    "configured_false_result": false_value,
+                    "configured_true_label": str(cfg.get("newcategory", "")),
+                    "configured_false_label": str(cfg.get("falsecategory", "negative")),
+                    "mapping_outcome": mapping_outcome,
+                    "input_artifact_name": artifact_name,
+                    "input_artifact_status": "emitted" if artifact_name else "not_requested",
+                    "final_label": final_label,
+                }
+                m.setdefault("blip3_verifications", []).append(verification_record)
+                m["blip3_verification"] = verification_record
+                return mapping_outcome
+
+            if canonical_route:
+                apply_answer(applicable_rules[0], ask(applicable_rules[0]))
+                continue
 
             processed = False
-
             # "any,<thr>" rules: only ask BLIP3 if CLIP score is <= thr
             for thr, _key, cfg in any_rules:
                 if score > thr:
                     continue
-                answer = ask(cfg)
-                m["blip3_answer"] = answer
-                answers.append(answer)
-
-                ans_l = answer.lower()
-                true_s = str(cfg.get("trueresult", "")).lower()
-                false_s = str(cfg.get("falseresult", "")).lower()
-                if false_s and false_s in ans_l:
-                    m["clip_label"] = "negative"
-                    processed = True
-                    break
-                elif true_s and true_s in ans_l:
-                    new_cat = cfg.get("newcategory")
-                    if new_cat:
-                        m["clip_label"] = new_cat
-                    processed = True
-                    break
+                processed = apply_answer(cfg, ask(cfg)) != "unmatched_answer"
+                break
 
             if processed:
                 continue
 
             cfg = label_rules.get(lbl)
-            if not cfg:
-                continue
-
-            answer = ask(cfg)
-            m["blip3_answer"] = answer
-            answers.append(answer)
-
-            ans_l = answer.lower()
-            true_s = str(cfg.get("trueresult", "")).lower()
-            false_s = str(cfg.get("falseresult", "")).lower()
-            if false_s and false_s in ans_l:
-                m["clip_label"] = "negative"
-            elif true_s and true_s in ans_l:
-                new_cat = cfg.get("newcategory")
-                if new_cat:
-                    m["clip_label"] = new_cat
+            if cfg:
+                apply_answer(cfg, ask(cfg))
 
         return masks, answers
 
@@ -996,6 +1058,9 @@ def run(
     log_print_func=None,
 ) -> Tuple[Dict[str, Any], Any, Dict[str, Any]]:
     """Run BLIP-3 verification using the unified module interface."""
+    import time
+
+    started = time.perf_counter()
     log = log_print_func or (lambda *a, **k: None)
     if state is None:
         state = {}
@@ -1068,6 +1133,9 @@ def run(
     meta = {
         "answers": answers,
         "num_masks": len(updated_masks) if updated_masks is not None else 0,
+        "verified_count": len(answers),
+        "composition_time_ms": 0.0,
+        "verification_time_ms": (time.perf_counter() - started) * 1000.0,
     }
     return (state if holder is not None else request_state), updated_masks, meta
 
@@ -1137,6 +1205,7 @@ __all__ = [
     "compose_blip3_verification_image",
     "compose_verification_image",
     "compose_verification_query",
+    "normalize_blip3_token",
     "initialize",
     "initialize_holder",
     "run",
