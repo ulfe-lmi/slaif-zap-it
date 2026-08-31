@@ -386,6 +386,9 @@ def _prepare(
         service_meta["candidate_view_inputs"] = [
             dict(record) for record in result.candidate_view_inputs
         ]
+        service_meta["blip3_candidate_views"] = [
+            dict(record) for record in result.blip3_candidate_views
+        ]
     _check_deadline(context)
     return _PreparedResponse(
         {

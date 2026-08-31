@@ -94,8 +94,9 @@ rejected with stable codes before any expensive work.
   answer when present, geometry hook when present, one-based
   `source_candidate_id` and zero-based post-SAM2 `filtered_index`).
 - **L3**: L2 + stage statuses, candidate counts, post-filter diagnostics, timings, provenance,
-  aggregate warnings, bounded annotated/debug artifacts, one-for-one numeric
-  candidate-view input records, and one exact per-object uncompressed
+  aggregate warnings, bounded annotated/debug artifacts, one bounded
+  `blip3_candidate_views` record per applicable candidate, one-for-one debug
+  input records, and one exact per-object uncompressed
   column-major COCO-style mask RLE. `annotated` remains
   mask-only; the optional `annotated-labelled` stream is final-stage, labelled,
   deterministic and Detectron2-free.
@@ -128,15 +129,18 @@ cap. The field is absent at L0-L2, has no artifact of its own, and is shared by
 the JSON response and ZIP manifest. The two-wide-candidate roof case is a
 programmatic CPU filter regression, not a real-image SAM2 accuracy benchmark.
 
-When a BLIP3 rule executes, the verifier passes a deterministic paired RGB image
-to every QA call: a target-only mask view on the left and the same candidate's
-zero-filled, dimmed Euclidean-dilated context view on the right, with a
-four-pixel dark divider and an exterior-only contour. The bbox is storage-only;
-holes and disconnected components are not bridged. RGB is bilinearly resized,
-masks nearest-neighbor resized, and support masks are reapplied before the
-bounded 256-short-side/768-long-side policy. At L3, an effective rule with
-`debug: true` adds only the exact paired image passed to QA as
-`blip3-verification-CANDIDATE-####-QUESTION-####.png`; CLIP similarly emits
+When a BLIP3 rule executes, the verifier composes one deterministic RGB image
+per applicable candidate and passes that same image to every QA call for the
+candidate. The inclusive raw-mask bbox determines only a centered nominal crop;
+exact Euclidean dilation supplies support and a second exact dilation supplies
+an exterior contour. Source pixels under support D are restored from source
+bytes; exterior contour pixels are painted with the configured RGB color, and
+all remaining source-scene pixels are Gaussian-blurred with Pillow. A clamped
+crop that cannot contain support plus contour is rejected locally before image,
+QA, or debug work. The complete composition is bilinearly resized under the
+256-short-side/768-long-side policy. At L3, an effective rule with `debug: true`
+adds the exact sole QA image as
+`blip3-verification-CANDIDATE-####-QUESTION-####.png`; CLIP retains its separate
 `clip-candidate-view-CANDIDATE-####.png`. Public candidate/question IDs are
 one-based, filtered indices are zero-based, and no client text enters a name.
 
@@ -280,26 +284,35 @@ document order.
 
 ### Candidate-view policy
 
-`candidate_views` is a typed request-local section with `clip` and `blip3`
-children. Both default to `mode: mask_dilated`, `context_fraction: 0.10`,
-`min_context_pixels: 0`, `max_context_pixels: 64`, `outside_fill: zero`, and
-`context_intensity: 0.35`; BLIP3 also defaults to `contour_width: 2`. The exact
-limits are fraction 0..0.5, minimum 0..256, maximum 0..512, intensity 0..1 and
-BLIP3 contour 0..16. Null, bool-as-number, non-finite, unknown, out-of-range,
-cross-field and unsupported values are rejected without clamping. `clip.padding`
-is an unsupported service field; clients must use `candidate_views.clip`.
+`candidate_views` is a typed request-local section with independent `clip` and
+`blip3` children. CLIP keeps its legacy `mode: mask_dilated`, zero-fill,
+`context_fraction: 0.10`, `min_context_pixels: 0`, `max_context_pixels: 64`,
+and `context_intensity: 0.35` defaults. BLIP3 defaults to
+`mode: single_dilated_blur`, `context_fraction: 0.20`, context limits `0..64`,
+`crop_extent_multiplier: 2.0`, `blur_sigma_fraction: 0.15`, enabled contour
+fraction `0.02`, contour width limits `1..3`, and `contour_rgb: [255, 224, 0]`.
+BLIP3 accepts only its new field set; the old `mode: mask_dilated`,
+`outside_fill`, `context_intensity`, and `contour_width` fields are rejected.
+Null, bool-as-number, non-finite, unknown, out-of-range, cross-field and
+unsupported values are rejected without clamping. `clip.padding` remains an
+unsupported service field.
 
-For `L = max(mask_bbox_width, mask_bbox_height)`, the builder reports
-`raw_radius = ceil(context_fraction * L)` and
-`effective_radius = min(max(raw_radius, min_context_pixels),
-max_context_pixels)`. Dilation is an exact Euclidean disk clipped to the source.
-The target is retained only where `M` is true; context is retained only in `D`,
-with `floor(channel * context_intensity)` in `D - M`. Candidate and question
-IDs are one-based; the post-SAM2 `filtered_index` is zero-based. L3 debug records
-are one-for-one with fixed-name lossless model-input PNGs and contain only
-bounded numeric provenance, not image pixels or client text. CLIP capacity is
-admitted before the CLIP processor/model call; BLIP3 capacity is admitted after
-actual CLIP labels/scores and before any QA call.
+For `L = max(raw_mask_width, raw_mask_height)`, BLIP3 reports
+`raw_context_radius = ceil(context_fraction * L)` and
+`effective_context_radius = min(max(raw_context_radius, min_context_pixels),
+max_context_pixels)`. Support is the exact squared-Euclidean disk dilation
+`D`; contour is `exact_euclidean_dilate(D, effective_contour_width) & ~D`.
+`raw_contour_width = ceil(contour_fraction * L)` is bounded by the configured
+1..3 limits. The crop dimensions are `ceil(crop_extent_multiplier * W/H)`;
+raw and support bboxes are inclusive `xyxy`, while the array-slice crop bbox is
+half-open `xyxy`. Gaussian sigma is
+`min(max(blur_sigma_fraction * L, 2), 20)`. Candidate and question IDs are
+one-based; the post-SAM2 `filtered_index` is zero-based. L3
+`blip3_candidate_views` records one composition attempt per applicable
+candidate, while debug records remain one-for-one with fixed-name lossless
+model-input PNGs. Both contain only bounded numeric provenance, not image
+pixels or client text. BLIP3 capacity is admitted after actual CLIP
+labels/scores and before any QA call.
 
 ### Visualization streams
 

@@ -16,7 +16,6 @@ module-level names for backward compatibility.
 from __future__ import annotations
 
 import time
-import math
 from dataclasses import dataclass
 from contextlib import nullcontext
 from contextlib import AbstractContextManager
@@ -134,19 +133,6 @@ def _build_class_mapping(class_labels: Sequence[str]) -> Mapping[str, int]:
     return mapping
 
 
-def _blip_pair_nbytes(crop_shape: tuple[int, int]) -> int:
-    """Return the exact RGB byte size of the bounded BLIP3 pair."""
-    crop_height, crop_width = crop_shape
-    short_side = min(crop_height, crop_width)
-    scale = 256.0 / float(short_side) if short_side < 256 else 1.0
-    long_side = max(crop_height, crop_width)
-    if long_side * scale > 768:
-        scale = 768.0 / float(long_side)
-    scaled_width = max(1, int(math.floor(crop_width * scale + 0.5)))
-    scaled_height = max(1, int(math.floor(crop_height * scale + 0.5)))
-    return scaled_height * (2 * scaled_width + 4) * 3
-
-
 def _candidate_view_debug_capacity(
     image_rgb: np.ndarray,
     masks: Sequence[Mapping[str, Any]],
@@ -221,17 +207,26 @@ def _candidate_view_debug_capacity(
                 if applies and rule.get("debug") is True:
                     debug_questions += 1
             if debug_questions:
-                view = build_mask_views(
-                    image_rgb,
-                    mask["segmentation"],
-                    source_id,
-                    config.candidate_view_config("blip3"),
-                    stage="blip3",
+                from modules.verifier.blip3 import (
+                    Blip3CandidateViewRejected,
+                    single_blip3_view_model_input_nbytes,
                 )
-                artifact_count += debug_questions
-                pair_size = _blip_pair_nbytes(view.context_rgb.shape[:2])
-                raw_bytes += debug_questions * pair_size
-                artifact_sizes.extend([pair_size] * debug_questions)
+
+                try:
+                    model_size = single_blip3_view_model_input_nbytes(
+                        image_rgb.shape,
+                        mask["segmentation"],
+                        source_id,
+                        config.candidate_view_config("blip3"),
+                    )
+                except Blip3CandidateViewRejected:
+                    # Candidate-local containment rejection produces no debug
+                    # artifact and must not consume the shared budget.
+                    model_size = None
+                if model_size is not None:
+                    artifact_count += debug_questions
+                    raw_bytes += debug_questions * model_size
+                    artifact_sizes.extend([model_size] * debug_questions)
     return artifact_count, raw_bytes, artifact_sizes
 
 
@@ -347,6 +342,7 @@ def run_single_image(
 
     candidate_counts: dict[str, int] = {}
     candidate_view_inputs: list[Mapping[str, Any]] = []
+    blip3_candidate_views: list[Mapping[str, Any]] = []
 
     # ``partial_masks`` is the raw automatic-generator result.  Keep that
     # count separate from the historical L3 candidate count, which counts only
@@ -503,6 +499,7 @@ def run_single_image(
             "service_safe_artifact_names": service_safe_artifact_names,
             "candidate_view_config": config.candidate_view_config("blip3"),
             "candidate_view_inputs": candidate_view_inputs,
+            "candidate_view_records": blip3_candidate_views,
         }
         if any(
             isinstance(rule, Mapping) and rule.get("debug", False)
@@ -720,6 +717,7 @@ def run_single_image(
         post_filter_diagnostics=post_filter_diagnostics,
         sam2_metadata=sam2_metadata,
         candidate_view_inputs=tuple(dict(record) for record in candidate_view_inputs),
+        blip3_candidate_views=tuple(dict(record) for record in blip3_candidate_views),
     )
     return SingleImageOutcome(
         result=result,

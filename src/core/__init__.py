@@ -32,6 +32,7 @@ from .mask_views import (
     build_mask_views,
     default_candidate_view_configs,
     effective_candidate_view_configs,
+    exact_euclidean_dilate,
 )
 from .ordering import mask_centroid_rc, order_final_objects, ordering_key
 from .renderers import (
@@ -116,6 +117,7 @@ __all__ = [
     "build_mask_views",
     "default_candidate_view_configs",
     "effective_candidate_view_configs",
+    "exact_euclidean_dilate",
     "default_stage_functions",
     "format_yolo_line",
     "mask_centroid_rc",

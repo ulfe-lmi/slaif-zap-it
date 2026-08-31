@@ -77,14 +77,14 @@ an explicit operational order creates and secures it.
   256-record truncation and the programmatic two-wide-candidate roof regression;
 - L3-only post-filter diagnostics, closed reason schema, L0-L2 omission and
   JSON/ZIP diagnostic parity;
-- BLIP3 mask-aware crop coordinates, scale metadata, disconnected-component
-  preservation, exact selected-pixel identity, 40% exterior dimming, exterior
-  four-pixel contour, fixed instruction ordering, same-crop hard-negative and
-  positive regressions;
+- BLIP3 source-space crop coordinates, exact Euclidean support, disconnected
+  component/hole preservation, exact source-pixel identity, exterior-only
+  contour, Pillow Gaussian blur, fixed instruction ordering, same-candidate
+  image reuse and candidate-local containment rejection;
 - shared candidate-view builder exact Euclidean dilation, zero-fill isolation,
   hole/disconnected/border/tiny-mask behavior, deterministic floor intensity,
   bilinear RGB plus nearest-neighbor support reapplication, immutable inputs,
-  CLIP processor byte identity, BLIP3 pair byte identity, fixed one-based
+  CLIP processor byte identity, BLIP3 sole-image byte identity, fixed one-based
   source/question names, zero-based filtered indices, strict request-local
   configuration, capability disclosure and pre-model debug admission;
 - BLIP3 L3 fixed `blip3-verification-CANDIDATE-####-QUESTION-####.png` names, exact QA/debug
@@ -102,25 +102,28 @@ physical GPU, prove PID/listener continuity across cold-load-infer-drain-
 unload-reload-infer-unload, and record Torch allocated/reserved cold memory
 separately from the small persistent CUDA context.
 
-## Objective 018 mask-view acceptance evidence
+## Objective 019 single-image BLIP3 acceptance evidence
 
 The current generated-array evidence includes one exact 512x512 RGB uint8
 high-contrast striped distractor inside a nonrectangular mask bbox. It asserts
-source-space `M`/Euclidean `D` visibility, byte identity under `M`, zero fill
-outside each support, clipped borders/corners, holes, disconnected components,
-radius formula and deterministic PNG hashes. The tiny-mask case independently
-derives its source-space Euclidean `D`, tight context bbox, center-based
-nearest-neighbor mapping and square contour with bounded test-owned brute-force
-oracles; Pillow bilinear interpolation starts from independently neutralized
-source crops, and zero- and positive-width contours are checked.
+source-space `M`/Euclidean `D` support, source-byte identity under `D`, Gaussian-blurred
+scene context, clipped borders/corners, holes, disconnected components, exact
+radius/contour formulas and deterministic PNG hashes. Independent generated
+arrays derive source geometry and Pillow blur; no external photographs, model
+downloads or CUDA are used. Accepted and containment-rejected crops are tested.
+Crop arithmetic is independently checked for odd/even raw dimensions and nominal
+sizes, non-integer multiplier ceiling, interior and boundary-clamped placement,
+and the asymmetric one-pixel containment regression. Returned composition arrays
+are crop-bounded; no redundant source-shaped masks are retained.
 
 The semantic seams are literal CPU/fake captures: the real CLIP
 `classify_single` path is exercised while a bounded processor records its
-`images=` argument, and the BLIP3 QA holder receives the shared paired image;
-lossless debug PNG decoding is compared with both model inputs. A focused core
+`images=` argument, and the BLIP3 QA holder receives one shared image;
+lossless debug PNG decoding is compared with the exact model input. A focused core
 flow carries one-based source candidate IDs and zero-based post-SAM2 filtered
 indices across removal, CLIP, BLIP3, final area ordering, labelled
-visualization, debug records, JSON objects and ZIP manifest objects.
+visualization, composition records, debug records, JSON objects and ZIP manifest
+objects.
 
 The service matrix validates effective candidate-view policy at verbosity L0,
 L1, L2 and L3, including `applied` false/true behavior. One injected service

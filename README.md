@@ -27,12 +27,14 @@ At L3, `annotated` remains the mask-only overlay. The final-stage
 labels and manifest instance numbers come from the final structured objects;
 structured labels remain available whether or not a visualization is requested.
 
-BLIP3 verification is mask-isolated: each executed question receives a
-deterministic side-by-side RGB image with the selected target only on the left
-and bounded, dimmed dilated context on the right. CLIP receives the same
-mask-derived dilated-context boundary. The service's L3 `debug: true` rules
-expose the exact model inputs as fixed-name lossless PNGs; these are audit
-artifacts, not guarantees of semantic accuracy.
+BLIP3 verification is mask-isolated: each candidate receives one deterministic
+RGB image. Exact source pixels under the mask's Euclidean support D are restored
+from source bytes, the exterior is painted with a thin configured-RGB contour,
+and all remaining bounded scene context is Gaussian-blurred. CLIP retains its
+separate mask-derived view. The
+service's L3 `debug: true` rules expose the exact model inputs as fixed-name
+lossless PNGs; these are pixel-boundary audit artifacts, not guarantees of
+semantic accuracy.
 
 Version `0.1.0` is an unpublished release candidate. The current evidence is a
 local research/development qualification, not a production SLA, accuracy
@@ -157,17 +159,22 @@ Binary artifacts are base64 descriptors in JSON or files in a bounded ZIP.
 Request bytes and intermediate results remain in RAM or the validated
 `/dev/shm` workspace and are removed after every request.
 
-`candidate_views.clip` and `candidate_views.blip3` are request-local algorithm
-settings. Both default to `mask_dilated`, zero fill, 0.10 context fraction,
-zero minimum, 64-pixel maximum and 0.35 context intensity; BLIP3 additionally
-defaults to a two-pixel exterior contour. The effective radius is
-`min(max(ceil(context_fraction * max(mask_bbox_width, mask_bbox_height)),
-min_context_pixels), max_context_pixels)`. The bbox is storage-only: source
-pixels outside the exact mask or dilated support remain zero. CLIP debug names
-are `clip-candidate-view-CANDIDATE-####.png`; BLIP3 names are
-`blip3-verification-CANDIDATE-####-QUESTION-####.png` and use one-based public
-IDs. The sole public fill is `zero`; `clip.padding` is rejected by the service
-and deprecated/ignored by trusted legacy classification.
+`candidate_views.clip` and `candidate_views.blip3` are independent request-local
+algorithm settings. CLIP keeps its legacy `mask_dilated` zero-fill policy.
+BLIP3 defaults to `single_dilated_blur`, context fraction `0.20`, context
+limits `0..64`, crop multiplier `2.0`, blur fraction `0.15`, enabled contour
+fraction `0.02`, contour width limits `1..3`, and RGB `[255, 224, 0]`.
+Capabilities is authoritative for every field and bound. BLIP3 computes
+`R=min(max(ceil(context_fraction * L), min_context_pixels), max_context_pixels)`
+where `L` is the larger inclusive raw-mask dimension, then requires the
+clamped centered crop to contain support and contour. It uses Pillow
+`GaussianBlur` with `sigma=min(max(blur_sigma_fraction * L, 2), 20)` and a
+bilinear RGB resize bounded to short side 256 and long side 768. A failed
+containment check is candidate-local, produces no QA/debug artifact, and is
+reported at L3 as `crop_cannot_contain_support_and_contour`. BLIP3 debug names
+remain `blip3-verification-CANDIDATE-####-QUESTION-####.png` and use one-based
+public IDs; RGB pixels decoded from the lossless PNG equal the sole QA image's
+model-input array.
 
 L3 post-filter diagnostics report one short-circuit outcome per evaluated SAM2
 candidate: `maxsize`, `empty_mask`, `max_w`, `max_h`, or retained, in that

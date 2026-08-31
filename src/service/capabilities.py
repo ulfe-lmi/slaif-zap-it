@@ -42,10 +42,17 @@ __all__ = [
 class CapabilityField(BaseModel):
     """A public field type and bounded intrinsic constraint."""
 
-    type: Literal["integer", "number", "boolean", "string"]
+    type: Literal["integer", "number", "boolean", "string", "array"]
     minimum: int | float | None = None
     maximum: int | float | None = None
     allowed: List[Any] | None = None
+    min_items: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    max_items: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    item_type: Literal["integer", "number", "boolean", "string"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    item_minimum: int | float | None = Field(default=None, exclude_if=lambda value: value is None)
+    item_maximum: int | float | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class FixedControls(BaseModel):
@@ -97,6 +104,7 @@ class CandidateViewCapabilityStage(BaseModel):
     defaults: Dict[str, Any]
     debug_trigger: str
     fixed_artifact_name: str
+    notes: Dict[str, str] = Field(default_factory=dict)
 
 
 class CandidateViewsCapability(BaseModel):
@@ -110,6 +118,11 @@ class CandidateViewsCapability(BaseModel):
     filtered_index: str
     question_id: str
     bbox_policy: str
+    crop_policy: str
+    blur_policy: str
+    contour_formula: str
+    containment_policy: str
+    effective_policy: str
 
 
 class CapabilitiesResponse(BaseModel):
@@ -162,7 +175,28 @@ def _field_descriptions() -> Dict[str, CapabilityField]:
 
 
 def _candidate_view_fields(*, include_contour: bool) -> Dict[str, CapabilityField]:
-    fields = {
+    if include_contour:
+        return {
+            "mode": CapabilityField(type="string", allowed=["single_dilated_blur"]),
+            "context_fraction": CapabilityField(type="number", minimum=0.0, maximum=0.5),
+            "min_context_pixels": CapabilityField(type="integer", minimum=0, maximum=256),
+            "max_context_pixels": CapabilityField(type="integer", minimum=0, maximum=512),
+            "crop_extent_multiplier": CapabilityField(type="number", minimum=1.0, maximum=2.0),
+            "blur_sigma_fraction": CapabilityField(type="number", minimum=0.0, maximum=0.5),
+            "contour_enabled": CapabilityField(type="boolean", allowed=[False, True]),
+            "contour_fraction": CapabilityField(type="number", minimum=0.0, maximum=0.25),
+            "contour_min_pixels": CapabilityField(type="integer", minimum=1, maximum=3),
+            "contour_max_pixels": CapabilityField(type="integer", minimum=1, maximum=3),
+            "contour_rgb": CapabilityField(
+                type="array",
+                min_items=3,
+                max_items=3,
+                item_type="integer",
+                item_minimum=0,
+                item_maximum=255,
+            ),
+        }
+    return {
         "mode": CapabilityField(type="string", allowed=["mask_dilated"]),
         "context_fraction": CapabilityField(type="number", minimum=0.0, maximum=0.5),
         "min_context_pixels": CapabilityField(type="integer", minimum=0, maximum=256),
@@ -170,9 +204,6 @@ def _candidate_view_fields(*, include_contour: bool) -> Dict[str, CapabilityFiel
         "outside_fill": CapabilityField(type="string", allowed=["zero"]),
         "context_intensity": CapabilityField(type="number", minimum=0.0, maximum=1.0),
     }
-    if include_contour:
-        fields["contour_width"] = CapabilityField(type="integer", minimum=0, maximum=16)
-    return fields
 
 
 def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
@@ -257,25 +288,61 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
                 defaults=dict(CANDIDATE_VIEW_DEFAULTS["clip"]),
                 debug_trigger="verbosity == 3 and clip.debug == true",
                 fixed_artifact_name="clip-candidate-view-CANDIDATE-0008.png",
+                notes={
+                    "visibility": "exact Euclidean support with legacy zero-fill CLIP behavior",
+                },
             ),
             blip3=CandidateViewCapabilityStage(
                 fields=_candidate_view_fields(include_contour=True),
                 defaults=dict(CANDIDATE_VIEW_DEFAULTS["blip3"]),
                 debug_trigger=("verbosity == 3 and an effective BLIP3 rule has debug == true"),
                 fixed_artifact_name="blip3-verification-CANDIDATE-0008-QUESTION-0003.png",
+                notes={
+                    "source_composite": (
+                        "RGB source crop; support D pixels are restored from source bytes and "
+                        "exterior contour pixels are painted with configured RGB"
+                    ),
+                    "debug_identity": (
+                        "decoded lossless PNG RGB pixels equal the sole final model-input array"
+                    ),
+                    "contour_rgb": "array of exactly three strict integers, each from 0 to 255",
+                },
             ),
             dilation_formula=(
-                "raw_radius = ceil(context_fraction * max(mask_bbox_width, "
-                "mask_bbox_height)); effective_radius = min(max(raw_radius, "
+                "L = max(inclusive raw-mask width, inclusive raw-mask height); "
+                "raw_context_radius = ceil(context_fraction * L); "
+                "effective_context_radius = min(max(raw_context_radius, "
                 "min_context_pixels), max_context_pixels)"
             ),
-            context_rounding="floor(source_channel * context_intensity)",
+            context_rounding="CLIP only: floor(source_channel * context_intensity); BLIP3 uses Pillow GaussianBlur",
             source_candidate_id="one-based: _source_index + 1",
             filtered_index="zero-based: post-SAM2-filter retained source order",
             question_id="one-based: question index + 1",
-            bbox_policy="storage-only crop; mask/support pixels decide visibility",
+            bbox_policy=(
+                "raw-mask and support bboxes are inclusive xyxy; crop bbox is half-open xyxy"
+            ),
+            crop_policy=(
+                "nominal size = ceil(multiplier * raw inclusive bbox dimensions); start = "
+                "floor(inclusive pixel-center - (nominal size - 1) / 2); endpoints independently "
+                "clamped without shifting"
+            ),
+            blur_policy=(
+                "Pillow ImageFilter.GaussianBlur; sigma=min(max(blur_sigma_fraction * L, 2), 20)"
+            ),
+            contour_formula=(
+                "contour = exact_euclidean_dilate(D, effective_contour_width) & ~D; "
+                "disabled contour is empty"
+            ),
+            containment_policy=(
+                "support plus contour must be wholly inside the clamped crop; otherwise "
+                "candidate-local rejection crop_cannot_contain_support_and_contour"
+            ),
+            effective_policy=(
+                "L0-L3 expose only the stage field set plus applied; detailed BLIP3 records "
+                "and debug artifacts are L3-only"
+            ),
         ),
     )
     if hasattr(response, "model_dump"):
-        return response.model_dump(mode="json")
-    return response.dict()
+        return response.model_dump(mode="json", exclude_none=True)
+    return response.dict(exclude_none=True)

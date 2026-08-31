@@ -168,7 +168,7 @@ _DEBUG_FLAG_PATHS = (
 _BLIP3_DEBUG_WARNING = "BLIP3 debug flags ignored at verbosity below 3"
 
 _CANDIDATE_VIEW_STAGES = frozenset({"clip", "blip3"})
-_CANDIDATE_VIEW_COMMON_FIELDS = frozenset(
+_CANDIDATE_VIEW_CLIP_FIELDS = frozenset(
     {
         "mode",
         "context_fraction",
@@ -176,6 +176,21 @@ _CANDIDATE_VIEW_COMMON_FIELDS = frozenset(
         "max_context_pixels",
         "outside_fill",
         "context_intensity",
+    }
+)
+_CANDIDATE_VIEW_BLIP3_FIELDS = frozenset(
+    {
+        "mode",
+        "context_fraction",
+        "min_context_pixels",
+        "max_context_pixels",
+        "crop_extent_multiplier",
+        "blur_sigma_fraction",
+        "contour_enabled",
+        "contour_fraction",
+        "contour_min_pixels",
+        "contour_max_pixels",
+        "contour_rgb",
     }
 )
 
@@ -621,9 +636,7 @@ def _validate_candidate_view_stage(value: Any, stage: str) -> Dict[str, Any]:
     path = f"candidate_views.{stage}"
     if value is None or not isinstance(value, Mapping):
         raise ServiceError(f"{path} must be a mapping", code="invalid_config")
-    allowed = set(_CANDIDATE_VIEW_COMMON_FIELDS)
-    if stage == "blip3":
-        allowed.add("contour_width")
+    allowed = set(_CANDIDATE_VIEW_BLIP3_FIELDS if stage == "blip3" else _CANDIDATE_VIEW_CLIP_FIELDS)
     unknown = sorted(set(value).difference(allowed), key=str)
     if unknown:
         raise ServiceError(
@@ -632,11 +645,17 @@ def _validate_candidate_view_stage(value: Any, stage: str) -> Dict[str, Any]:
         )
     defaults = CANDIDATE_VIEW_DEFAULTS[stage]
     mode = value.get("mode", defaults["mode"])
-    if type(mode) is not str or mode != "mask_dilated":
-        raise ServiceError(f"{path}.mode supports only 'mask_dilated'", code="unsupported_field")
-    outside_fill = value.get("outside_fill", defaults["outside_fill"])
-    if type(outside_fill) is not str or outside_fill != "zero":
-        raise ServiceError(f"{path}.outside_fill supports only 'zero'", code="unsupported_field")
+    expected_mode = "single_dilated_blur" if stage == "blip3" else "mask_dilated"
+    if type(mode) is not str or mode != expected_mode:
+        raise ServiceError(f"{path}.mode supports only {expected_mode!r}", code="unsupported_field")
+    outside_fill = None
+    intensity = None
+    if stage == "clip":
+        outside_fill = value.get("outside_fill", defaults["outside_fill"])
+        if type(outside_fill) is not str or outside_fill != "zero":
+            raise ServiceError(
+                f"{path}.outside_fill supports only 'zero'", code="unsupported_field"
+            )
 
     fraction = value.get("context_fraction", defaults["context_fraction"])
     if type(fraction) not in (int, float) or not math.isfinite(float(fraction)):
@@ -657,28 +676,72 @@ def _validate_candidate_view_stage(value: Any, stage: str) -> Dict[str, Any]:
     if minimum > maximum:
         raise _candidate_view_invalid(f"{path}.min_context_pixels", "not exceed max_context_pixels")
 
-    intensity = value.get("context_intensity", defaults["context_intensity"])
-    if type(intensity) not in (int, float) or not math.isfinite(float(intensity)):
-        raise _candidate_view_invalid(f"{path}.context_intensity", "a finite number")
-    if not 0.0 <= float(intensity) <= 1.0:
-        raise _candidate_view_invalid(f"{path}.context_intensity", "a number from 0 to 1")
-    contour = value.get("contour_width", defaults.get("contour_width", 0))
-    if type(contour) is not int:
-        raise _candidate_view_invalid(f"{path}.contour_width", "an integer")
-    if not 0 <= contour <= 16:
-        raise _candidate_view_invalid(f"{path}.contour_width", "an integer from 0 to 16")
+    if stage == "clip":
+        intensity = value.get("context_intensity", defaults["context_intensity"])
+        if type(intensity) not in (int, float) or not math.isfinite(float(intensity)):
+            raise _candidate_view_invalid(f"{path}.context_intensity", "a finite number")
+        if not 0.0 <= float(intensity) <= 1.0:
+            raise _candidate_view_invalid(f"{path}.context_intensity", "a number from 0 to 1")
+        return {
+            "mode": mode,
+            "context_fraction": float(fraction),
+            "min_context_pixels": minimum,
+            "max_context_pixels": maximum,
+            "outside_fill": outside_fill,
+            "context_intensity": float(intensity),
+        }
 
-    result = {
+    for field_name, lower, upper in (
+        ("crop_extent_multiplier", 1.0, 2.0),
+        ("blur_sigma_fraction", 0.0, 0.5),
+        ("contour_fraction", 0.0, 0.25),
+    ):
+        candidate = value.get(field_name, defaults[field_name])
+        if type(candidate) not in (int, float) or not math.isfinite(float(candidate)):
+            raise _candidate_view_invalid(f"{path}.{field_name}", "a finite number")
+        if not lower <= float(candidate) <= upper:
+            raise _candidate_view_invalid(
+                f"{path}.{field_name}", f"a number from {lower} to {upper}"
+            )
+    contour_enabled = value.get("contour_enabled", defaults["contour_enabled"])
+    if type(contour_enabled) is not bool:
+        raise _candidate_view_invalid(f"{path}.contour_enabled", "a boolean")
+    contour_min = value.get("contour_min_pixels", defaults["contour_min_pixels"])
+    contour_max = value.get("contour_max_pixels", defaults["contour_max_pixels"])
+    for field_name, candidate in (
+        ("contour_min_pixels", contour_min),
+        ("contour_max_pixels", contour_max),
+    ):
+        if type(candidate) is not int or not 1 <= candidate <= 3:
+            raise _candidate_view_invalid(f"{path}.{field_name}", "an integer from 1 to 3")
+    if contour_min > contour_max:
+        raise _candidate_view_invalid(f"{path}.contour_min_pixels", "not exceed contour_max_pixels")
+    contour_rgb = value.get("contour_rgb", defaults["contour_rgb"])
+    if (
+        type(contour_rgb) is not list
+        or len(contour_rgb) != 3
+        or any(type(channel) is not int or not 0 <= channel <= 255 for channel in contour_rgb)
+    ):
+        raise _candidate_view_invalid(
+            f"{path}.contour_rgb", "a list of exactly three integers from 0 to 255"
+        )
+    return {
         "mode": mode,
         "context_fraction": float(fraction),
         "min_context_pixels": minimum,
         "max_context_pixels": maximum,
-        "outside_fill": outside_fill,
-        "context_intensity": float(intensity),
+        "crop_extent_multiplier": float(
+            value.get("crop_extent_multiplier", defaults["crop_extent_multiplier"])
+        ),
+        "blur_sigma_fraction": float(
+            value.get("blur_sigma_fraction", defaults["blur_sigma_fraction"])
+        ),
+        "contour_enabled": contour_enabled,
+        "contour_fraction": float(value.get("contour_fraction", defaults["contour_fraction"])),
+        "contour_min_pixels": contour_min,
+        "contour_max_pixels": contour_max,
+        "contour_rgb": list(contour_rgb),
     }
-    if stage == "blip3":
-        result["contour_width"] = contour
-    return result
 
 
 def _validate_candidate_views(value: Any) -> Dict[str, Dict[str, Any]]:

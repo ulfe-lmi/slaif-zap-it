@@ -174,10 +174,10 @@ def test_json_and_zip_debug_artifacts_share_exact_png_bytes_and_descriptor():
         provenance=Provenance(config_digest="digest"),
     )
     outcome = SingleImageOutcome(result, None, None, None)
-    paired = np.zeros((32, 68, 3), dtype=np.uint8)
-    paired[:, :, 1] = 7
+    image_asset = np.zeros((32, 68, 3), dtype=np.uint8)
+    image_asset[:, :, 1] = 7
     sink = BoundedMemoryArtifactSink()
-    sink.store_image("blip3-verification-CANDIDATE-0001-QUESTION-0001.png", paired, fmt="png")
+    sink.store_image("blip3-verification-CANDIDATE-0001-QUESTION-0001.png", image_asset, fmt="png")
     context = ResponseContext(
         request_id="req-debug",
         model_id="zap-it-1",

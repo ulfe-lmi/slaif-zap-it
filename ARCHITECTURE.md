@@ -71,16 +71,17 @@ The core does not require a filesystem. Debug-capable modules receive an
 artifact sink. The service uses a bounded memory sink; the trusted CLI can use a
 filesystem sink through its compatibility adapter.
 
-The shared pure candidate-view builder constructs one tight mask-derived crop
-per candidate. It computes a circular Euclidean dilation from the exact mask,
-neutralizes prohibited source pixels, then crops; the bbox is storage-only. CLIP
-receives the lossless dilated-context RGB view. BLIP3 composes one bounded pair
-from the same result: target-only RGB on the left and zero-filled, dimmed
-dilated context on the right, with an optional exterior-only contour. RGB is
-resized bilinearly and masks are resized nearest-neighbor before support masks
-are reapplied. The fixed region-specific instruction follows the delimited
-client question. This pixel-boundary evidence does not guarantee semantic
-accuracy.
+The shared pure candidate-view builder constructs the legacy CLIP view from a
+mask-derived crop. BLIP3 uses a separate pure single-image compositor: an
+inclusive raw-mask bbox determines a nominal centered crop, exact Euclidean
+dilation determines support, and a second exact dilation determines an exterior
+contour. Source RGB pixels under support D are restored from source bytes; the
+exterior contour is painted with the configured RGB color, and every other crop
+pixel is Pillow Gaussian-blurred scene context. The crop is rejected
+locally if support plus contour cannot fit after endpoint clamping. Only the
+fully composed image is bilinearly resized for QA, with short side 256 and long
+side capped at 768. The fixed instruction follows the delimited client
+question. This is pixel-boundary evidence, not semantic-accuracy evidence.
 
 ### Models and residency
 
@@ -99,7 +100,7 @@ BLIP3 request:   SAM2 -> CLIP on GPU
                     |
                     v
                  SAM2 + CLIP to CPU
-                 BLIP3 to GPU -> verify paired mask-aware images
+                 BLIP3 to GPU -> verify single mask-aware images
                  BLIP3 to CPU
                  SAM2 + CLIP restored to GPU
 ```

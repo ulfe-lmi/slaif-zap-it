@@ -32,7 +32,6 @@ from modules.output.images import build_image_writer
 from modules.output.video import build_video_writer
 from modules.input.video import FFmpegVideoReader, probe_video
 from modules.segmenter import initialize_sam2, run_sam2
-from modules.verifier import initialize_blip3, run_blip3
 from modules.visualizer import generate_visualizations
 from .core import (
     CandidateViewConfig,
@@ -45,6 +44,21 @@ from .core import (
     run_single_image,
 )
 from .postprocessing import filter_by_area_bbox
+
+
+def initialize_blip3(*args, **kwargs):
+    """Lazy BLIP3 adapter import to keep pure-core package imports acyclic."""
+    from modules.verifier import initialize_blip3 as initialize
+
+    return initialize(*args, **kwargs)
+
+
+def run_blip3(*args, **kwargs):
+    """Lazy BLIP3 adapter import preserving the legacy batch seam."""
+    from modules.verifier import run_blip3 as run
+
+    return run(*args, **kwargs)
+
 
 # Stage callables and legacy helpers are re-exported here so that historical
 # monkeypatch targets (``src.batch.run_sam2``, ``src.batch.save_roi_debug``...)

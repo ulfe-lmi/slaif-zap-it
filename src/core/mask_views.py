@@ -27,6 +27,7 @@ __all__ = [
     "build_mask_views",
     "default_candidate_view_configs",
     "effective_candidate_view_configs",
+    "exact_euclidean_dilate",
 ]
 
 
@@ -40,13 +41,17 @@ CANDIDATE_VIEW_DEFAULTS: dict[str, dict[str, Any]] = {
         "context_intensity": 0.35,
     },
     "blip3": {
-        "mode": "mask_dilated",
-        "context_fraction": 0.10,
+        "mode": "single_dilated_blur",
+        "context_fraction": 0.20,
         "min_context_pixels": 0,
         "max_context_pixels": 64,
-        "outside_fill": "zero",
-        "context_intensity": 0.35,
-        "contour_width": 2,
+        "crop_extent_multiplier": 2.0,
+        "blur_sigma_fraction": 0.15,
+        "contour_enabled": True,
+        "contour_fraction": 0.02,
+        "contour_min_pixels": 1,
+        "contour_max_pixels": 3,
+        "contour_rgb": [255, 224, 0],
     },
 }
 
@@ -55,7 +60,6 @@ CANDIDATE_VIEW_LIMITS: dict[str, tuple[float, float]] = {
     "min_context_pixels": (0, 256),
     "max_context_pixels": (0, 512),
     "context_intensity": (0.0, 1.0),
-    "contour_width": (0, 16),
 }
 
 
@@ -71,9 +75,16 @@ class CandidateViewConfig:
     context_fraction: float = 0.10
     min_context_pixels: int = 0
     max_context_pixels: int = 64
-    outside_fill: str = "zero"
-    context_intensity: float = 0.35
-    contour_width: int = 0
+    outside_fill: str | None = "zero"
+    context_intensity: float | None = 0.35
+    crop_extent_multiplier: float | None = None
+    blur_sigma_fraction: float | None = None
+    contour_enabled: bool | None = None
+    contour_fraction: float | None = None
+    contour_min_pixels: int | None = None
+    contour_max_pixels: int | None = None
+    contour_rgb: tuple[int, int, int] | None = None
+    stage: str = "clip"
 
     @classmethod
     def from_mapping(
@@ -84,16 +95,29 @@ class CandidateViewConfig:
             value = {}
         if not isinstance(value, Mapping):
             raise _invalid(f"candidate_views.{stage} must be a mapping")
-        allowed = {
-            "mode",
-            "context_fraction",
-            "min_context_pixels",
-            "max_context_pixels",
-            "outside_fill",
-            "context_intensity",
-        }
         if stage == "blip3":
-            allowed.add("contour_width")
+            allowed = {
+                "mode",
+                "context_fraction",
+                "min_context_pixels",
+                "max_context_pixels",
+                "crop_extent_multiplier",
+                "blur_sigma_fraction",
+                "contour_enabled",
+                "contour_fraction",
+                "contour_min_pixels",
+                "contour_max_pixels",
+                "contour_rgb",
+            }
+        else:
+            allowed = {
+                "mode",
+                "context_fraction",
+                "min_context_pixels",
+                "max_context_pixels",
+                "outside_fill",
+                "context_intensity",
+            }
         unknown = sorted(set(value).difference(allowed), key=str)
         if unknown:
             raise _invalid(
@@ -102,11 +126,16 @@ class CandidateViewConfig:
             )
         defaults = CANDIDATE_VIEW_DEFAULTS.get(stage, CANDIDATE_VIEW_DEFAULTS["clip"])
         mode = value.get("mode", defaults["mode"])
-        if type(mode) is not str or mode != "mask_dilated":
-            raise _invalid(f"candidate_views.{stage}.mode must be 'mask_dilated'")
-        outside_fill = value.get("outside_fill", defaults["outside_fill"])
-        if type(outside_fill) is not str or outside_fill != "zero":
-            raise _invalid(f"candidate_views.{stage}.outside_fill must be 'zero'")
+        expected_mode = "single_dilated_blur" if stage == "blip3" else "mask_dilated"
+        if type(mode) is not str or mode != expected_mode:
+            raise _invalid(f"candidate_views.{stage}.mode must be {expected_mode!r}")
+
+        outside_fill = None
+        intensity = None
+        if stage == "clip":
+            outside_fill = value.get("outside_fill", defaults["outside_fill"])
+            if type(outside_fill) is not str or outside_fill != "zero":
+                raise _invalid(f"candidate_views.{stage}.outside_fill must be 'zero'")
 
         fraction = value.get("context_fraction", defaults["context_fraction"])
         if type(fraction) not in (int, float) or not math.isfinite(float(fraction)):
@@ -137,17 +166,64 @@ class CandidateViewConfig:
                 f"candidate_views.{stage}.min_context_pixels must not exceed max_context_pixels"
             )
 
-        intensity = value.get("context_intensity", defaults["context_intensity"])
-        if type(intensity) not in (int, float) or not math.isfinite(float(intensity)):
-            raise _invalid(f"candidate_views.{stage}.context_intensity must be a finite number")
-        if not 0.0 <= float(intensity) <= 1.0:
-            raise _invalid(f"candidate_views.{stage}.context_intensity must be between 0 and 1")
+        if stage == "clip":
+            intensity = value.get("context_intensity", defaults["context_intensity"])
+            if type(intensity) not in (int, float) or not math.isfinite(float(intensity)):
+                raise _invalid(f"candidate_views.{stage}.context_intensity must be a finite number")
+            if not 0.0 <= float(intensity) <= 1.0:
+                raise _invalid(f"candidate_views.{stage}.context_intensity must be between 0 and 1")
 
-        contour = value.get("contour_width", defaults.get("contour_width", 0))
-        if type(contour) is not int:
-            raise _invalid(f"candidate_views.{stage}.contour_width must be an integer")
-        if not 0 <= contour <= 16:
-            raise _invalid(f"candidate_views.{stage}.contour_width must be between 0 and 16")
+        crop_extent_multiplier = blur_sigma_fraction = None
+        contour_enabled = contour_fraction = None
+        contour_min_pixels = contour_max_pixels = None
+        contour_rgb = None
+        if stage == "blip3":
+            crop_extent_multiplier = value.get(
+                "crop_extent_multiplier", defaults["crop_extent_multiplier"]
+            )
+            blur_sigma_fraction = value.get("blur_sigma_fraction", defaults["blur_sigma_fraction"])
+            contour_enabled = value.get("contour_enabled", defaults["contour_enabled"])
+            contour_fraction = value.get("contour_fraction", defaults["contour_fraction"])
+            for field_name, candidate, lower, upper in (
+                ("crop_extent_multiplier", crop_extent_multiplier, 1.0, 2.0),
+                ("blur_sigma_fraction", blur_sigma_fraction, 0.0, 0.5),
+                ("contour_fraction", contour_fraction, 0.0, 0.25),
+            ):
+                if type(candidate) not in (int, float) or not math.isfinite(float(candidate)):
+                    raise _invalid(f"candidate_views.{stage}.{field_name} must be a finite number")
+                if not lower <= float(candidate) <= upper:
+                    raise _invalid(
+                        f"candidate_views.{stage}.{field_name} must be between {lower} and {upper}"
+                    )
+            if type(contour_enabled) is not bool:
+                raise _invalid(f"candidate_views.{stage}.contour_enabled must be a boolean")
+            contour_min_pixels = value.get("contour_min_pixels", defaults["contour_min_pixels"])
+            contour_max_pixels = value.get("contour_max_pixels", defaults["contour_max_pixels"])
+            for field_name, candidate in (
+                ("contour_min_pixels", contour_min_pixels),
+                ("contour_max_pixels", contour_max_pixels),
+            ):
+                if type(candidate) is not int or not 1 <= candidate <= 3:
+                    raise _invalid(
+                        f"candidate_views.{stage}.{field_name} must be an integer between 1 and 3"
+                    )
+            if contour_min_pixels > contour_max_pixels:
+                raise _invalid(
+                    f"candidate_views.{stage}.contour_min_pixels must not exceed contour_max_pixels"
+                )
+            contour_rgb_value = value.get("contour_rgb", defaults["contour_rgb"])
+            if (
+                type(contour_rgb_value) is not list
+                or len(contour_rgb_value) != 3
+                or any(
+                    type(channel) is not int or not 0 <= channel <= 255
+                    for channel in contour_rgb_value
+                )
+            ):
+                raise _invalid(
+                    f"candidate_views.{stage}.contour_rgb must be a list of three integers from 0 to 255"
+                )
+            contour_rgb = tuple(contour_rgb_value)
 
         return cls(
             mode=mode,
@@ -155,22 +231,46 @@ class CandidateViewConfig:
             min_context_pixels=minimum,
             max_context_pixels=maximum,
             outside_fill=outside_fill,
-            context_intensity=float(intensity),
-            contour_width=contour,
+            context_intensity=None if intensity is None else float(intensity),
+            crop_extent_multiplier=(
+                None if crop_extent_multiplier is None else float(crop_extent_multiplier)
+            ),
+            blur_sigma_fraction=(
+                None if blur_sigma_fraction is None else float(blur_sigma_fraction)
+            ),
+            contour_enabled=contour_enabled,
+            contour_fraction=(None if contour_fraction is None else float(contour_fraction)),
+            contour_min_pixels=contour_min_pixels,
+            contour_max_pixels=contour_max_pixels,
+            contour_rgb=contour_rgb,
+            stage=stage,
         )
 
     def as_dict(self, *, stage: str = "clip", applied: bool | None = None) -> dict[str, Any]:
         """Return the public effective values for this stage."""
-        result: dict[str, Any] = {
-            "mode": self.mode,
-            "context_fraction": self.context_fraction,
-            "min_context_pixels": self.min_context_pixels,
-            "max_context_pixels": self.max_context_pixels,
-            "outside_fill": self.outside_fill,
-            "context_intensity": self.context_intensity,
-        }
         if stage == "blip3":
-            result["contour_width"] = self.contour_width
+            result: dict[str, Any] = {
+                "mode": self.mode,
+                "context_fraction": self.context_fraction,
+                "min_context_pixels": self.min_context_pixels,
+                "max_context_pixels": self.max_context_pixels,
+                "crop_extent_multiplier": self.crop_extent_multiplier,
+                "blur_sigma_fraction": self.blur_sigma_fraction,
+                "contour_enabled": self.contour_enabled,
+                "contour_fraction": self.contour_fraction,
+                "contour_min_pixels": self.contour_min_pixels,
+                "contour_max_pixels": self.contour_max_pixels,
+                "contour_rgb": list(self.contour_rgb or ()),
+            }
+        else:
+            result = {
+                "mode": self.mode,
+                "context_fraction": self.context_fraction,
+                "min_context_pixels": self.min_context_pixels,
+                "max_context_pixels": self.max_context_pixels,
+                "outside_fill": self.outside_fill,
+                "context_intensity": self.context_intensity,
+            }
         if applied is not None:
             result["applied"] = bool(applied)
         return result
@@ -326,6 +426,19 @@ def _circular_dilate(mask: np.ndarray, radius: int) -> np.ndarray:
     return result
 
 
+def exact_euclidean_dilate(mask: np.ndarray, radius: int) -> np.ndarray:
+    """Return the exact squared-Euclidean integer disk dilation of ``mask``.
+
+    The implementation is intentionally shared by the CLIP view and the
+    BLIP3 compositor.  It uses the reviewed two-pass distance transform and
+    clips only at the source-array boundary; it never expands a rectangular
+    bounding box or substitutes a Chebyshev/square neighborhood.
+    """
+    if not isinstance(mask, np.ndarray) or mask.ndim != 2 or mask.dtype != np.dtype(bool):
+        raise _invalid("Euclidean dilation requires a two-dimensional boolean mask")
+    return _circular_dilate(mask, radius)
+
+
 def _tight_bbox(mask: np.ndarray) -> tuple[int, int, int, int]:
     rows, cols = np.nonzero(mask)
     if rows.size == 0:
@@ -381,8 +494,10 @@ def build_mask_views(
     *,
     stage: str = "clip",
 ) -> MaskViewResult:
-    """Build a deterministic, mask-isolated target and dilated-context crop."""
+    """Build the historical deterministic CLIP target/context view."""
     _validate_inputs(image_rgb, segmentation_mask, source_candidate_id)
+    if stage == "blip3":
+        raise _invalid("BLIP3 uses compose_single_blip3_view, not the CLIP view builder")
     if isinstance(config, CandidateViewConfig):
         view_config = config
     else:
@@ -411,13 +526,6 @@ def build_mask_views(
             source_crop[context_ring].astype(np.float32) * view_config.context_intensity
         ).astype(np.uint8)
 
-    contour = np.zeros_like(target_crop)
-    if stage == "blip3" and view_config.contour_width:
-        contour = _circular_dilate(target_crop, view_config.contour_width)
-        contour &= ~target_crop
-        contour &= support_crop
-        context_rgb[contour] = np.array((255, 224, 0), dtype=np.uint8)
-
     metadata = MappingProxyType(
         {
             "stage": stage,
@@ -431,7 +539,7 @@ def build_mask_views(
             "effective_radius": effective_radius,
             "config": MappingProxyType(view_config.as_dict(stage=stage)),
             "context_rounding": "floor(channel * context_intensity)",
-            "contour_pixels": int(np.count_nonzero(contour)),
+            "contour_pixels": 0,
         }
     )
     return MaskViewResult(
