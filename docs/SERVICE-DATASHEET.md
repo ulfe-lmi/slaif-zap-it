@@ -155,9 +155,11 @@ supported artifacts are offered in deterministic pipeline/name order after
 stage work. Stage, candidate and page selection exclusions do not set
 `truncated`; operator count/raw/response omissions do. L0-L2 do not render or
 deliver optional diagnostics. JSON checks base64 expansion before encoding and
-ZIP writes prepared raw bytes directly. RLE and every serialization loop check
-the absolute 120-second request deadline. An essential response can still
-return `response_too_large` after optional tail omission.
+ZIP writes prepared raw bytes directly. Response-byte omission rebuilds the
+delivered tuple and preserves the essential identity mask; CLIP/BLIP3 records
+retain candidate evidence with `omitted_response_limit` status. RLE and every
+serialization loop check the absolute 120-second request deadline. An essential
+response can still return `response_too_large` after optional tail omission.
 
 ## SAM2 capability policy
 

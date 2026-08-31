@@ -31,6 +31,7 @@ from .yaml_input import service_config_leaf_paths
 
 __all__ = [
     "CapabilityField",
+    "CapabilityCatalogEntry",
     "CapabilitySection",
     "ConfigurationCapabilities",
     "DiagnosticArtifactCapability",
@@ -67,6 +68,22 @@ class CapabilityField(BaseModel):
     operator_limit: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
+_CAPABILITY_PATHS = service_config_leaf_paths()
+CapabilityPath = Literal[_CAPABILITY_PATHS]
+
+
+class CapabilityCatalogEntry(BaseModel):
+    """One ordered, OpenAPI-enumerated configuration leaf descriptor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: CapabilityPath
+    descriptor: CapabilityField
+    required: bool = Field(description="Whether the leaf is required when its parent is used")
+    nullable: bool = Field(description="Whether the leaf explicitly accepts null")
+    default: Any = Field(description="Effective default; null means no non-null default")
+
+
 class CapabilitySection(BaseModel):
     """Typed inventory for one fixed configuration surface."""
 
@@ -80,6 +97,7 @@ class ConfigurationCapabilities(BaseModel):
     fields: Dict[str, CapabilityField]
     sections: Dict[str, CapabilitySection]
     dynamic_fields: Dict[str, CapabilityField]
+    field_catalog: List[CapabilityCatalogEntry]
 
 
 class DiagnosticArtifactCapability(BaseModel):
@@ -640,12 +658,40 @@ def _configuration_capabilities() -> ConfigurationCapabilities:
             flat[prefix + path] = field
     if set(flat) != set(service_config_leaf_paths()):
         raise RuntimeError("service capability inventory drifted from the YAML validator")
+    if any(not field.stage or not field.description for field in flat.values()):
+        raise RuntimeError("service capability catalog contains an undocumented field")
+    required_paths = {
+        "clip.labels.<identifier>",
+        "clip_routing.route_to_blip3.labels",
+        "blip3.<routing_label>.question",
+        "visualization.sam2.<index>.id",
+        "visualization.sam2.<index>.renderer",
+        "visualization.clip.<index>.id",
+        "visualization.clip.<index>.renderer",
+        "visualization.blip3.<index>.id",
+        "visualization.blip3.<index>.renderer",
+    }
+    field_catalog = [
+        CapabilityCatalogEntry(
+            path=path,
+            descriptor=field,
+            required=path in required_paths,
+            nullable=field.nullable,
+            default=field.default,
+        )
+        for path, field in sorted(flat.items())
+    ]
     dynamic = {
         path: field
         for path, field in flat.items()
         if "<" in path or "identifier" in path or "routing_label" in path
     }
-    return ConfigurationCapabilities(fields=flat, sections=sections, dynamic_fields=dynamic)
+    return ConfigurationCapabilities(
+        fields=flat,
+        sections=sections,
+        dynamic_fields=dynamic,
+        field_catalog=field_catalog,
+    )
 
 
 def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
@@ -880,5 +926,13 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
         ),
     )
     if hasattr(response, "model_dump"):
-        return response.model_dump(mode="json", exclude_none=True)
-    return response.dict(exclude_none=True)
+        body = response.model_dump(mode="json", exclude_none=True)
+    else:
+        body = response.dict(exclude_none=True)
+    # The compatibility dictionaries keep their compact historical shape, but
+    # catalog records must state a null default explicitly as part of the
+    # request contract.
+    body["configuration"]["field_catalog"] = [
+        record.model_dump(mode="json", exclude_none=False) for record in configuration.field_catalog
+    ]
+    return body

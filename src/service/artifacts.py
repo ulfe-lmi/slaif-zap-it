@@ -140,18 +140,53 @@ class ArtifactDeliveryLedger:
         self._response_count = 1 if verbosity >= 1 else 0
         self._selected_sequence = 0
         self._essential_names = ("identity-mask.png",) if verbosity >= 1 else ()
-        self._unreported_overflow = 0
+        self._public_omission_names: set[str] = set()
+        self._unreported_selection_excluded = 0
+        self._unreported_budget_omitted = 0
+        self._unreported_budget_eligible = 0
+        self._unreported_eligible = 0
+        self._unreported_budget_estimated_raw_bytes = 0
+        self._unreported_budget_estimated_base64_bytes = 0
+        self._unreported_budget_estimated_zip_bytes = 0
 
     @property
     def entries(self) -> tuple[_LedgerEntry, ...]:
         return tuple(self._entries)
 
+    @property
+    def _unreported_overflow(self) -> int:
+        return self._unreported_selection_excluded + self._unreported_budget_omitted
+
+    def _record_unreported(self, entry: _LedgerEntry, *, already_recorded: bool) -> None:
+        if not already_recorded:
+            self._unreported_eligible += 1
+        if entry.selection_excluded:
+            self._unreported_selection_excluded += 1
+        elif entry.budget_omitted:
+            self._unreported_budget_omitted += 1
+            if not already_recorded:
+                self._unreported_budget_eligible += 1
+                self._unreported_budget_estimated_raw_bytes += entry.estimated_raw_bytes
+                self._unreported_budget_estimated_base64_bytes += 4 * (
+                    (entry.estimated_raw_bytes + 2) // 3
+                )
+                self._unreported_budget_estimated_zip_bytes += 128 + len(entry.name)
+
+    def _record_omission(self, entry: _LedgerEntry) -> None:
+        if entry.name in self._public_omission_names:
+            return
+        if len(self._public_omission_names) >= _MAX_OMISSIONS:
+            self._record_unreported(entry, already_recorded=entry.name in self._by_name)
+            return
+        self._public_omission_names.add(entry.name)
+        # An entry that was already stored is already present in _entries.  A
+        # newly omitted entry is appended only when its public record fits.
+        if entry.name not in self._by_name:
+            self._entries.append(entry)
+
     def _record(self, entry: _LedgerEntry) -> None:
         if entry.status.startswith("not_selected_") or entry.status.startswith("omitted_"):
-            if sum(1 for item in self._entries if item.status != "stored") < _MAX_OMISSIONS:
-                self._entries.append(entry)
-            else:
-                self._unreported_overflow += 1
+            self._record_omission(entry)
         else:
             self._entries.append(entry)
         self._by_name[entry.name] = entry
@@ -179,23 +214,37 @@ class ArtifactDeliveryLedger:
         Repeated offers are idempotent so JSON and ZIP builders can inspect the
         same request outcome without changing admission state.
         """
-        if name in self._by_name:
-            return self._by_name[name].status
         if not isinstance(name, str) or not name:
             raise ArtifactSinkError("artifact name must be a non-empty string")
         normalized_stage = stage or _stage_for_name(name)
-        if normalized_stage not in _STAGES:
+        if not isinstance(normalized_stage, str) or normalized_stage not in _STAGES:
             raise ArtifactSinkError("artifact stage is not supported")
+        if not isinstance(media_type, str) or not media_type:
+            raise ArtifactSinkError("artifact media type must be a non-empty string")
+        try:
+            normalized_size = max(int(estimated_raw_bytes), 0)
+        except (TypeError, ValueError) as exc:
+            raise ArtifactSinkError("artifact size must be an integer") from exc
         source_candidate_id, question_id = self._identity(name)
+        existing = self._by_name.get(name)
+        if existing is not None:
+            if (
+                existing.stage != normalized_stage
+                or existing.source_candidate_id != source_candidate_id
+                or existing.question_id != question_id
+                or existing.estimated_raw_bytes != normalized_size
+                or existing.media_type != media_type
+            ):
+                raise ArtifactSinkError("contradictory duplicate artifact offer")
+            return existing.status
         entry = _LedgerEntry(
             name=name,
             stage=normalized_stage,
             source_candidate_id=source_candidate_id,
             question_id=question_id,
-            estimated_raw_bytes=max(int(estimated_raw_bytes), 0),
+            estimated_raw_bytes=normalized_size,
             media_type=media_type,
         )
-        self._record(entry)
         if not self.selection.applied:
             entry.status = "not_selected_stage"
         elif normalized_stage not in self.selection.effective_stages:
@@ -224,8 +273,9 @@ class ArtifactDeliveryLedger:
                 self._response_count += 1
                 if sink:
                     self._debug_count += 1
-        # ``_record`` happens before the decision so the same object remains
-        # visible through ``_by_name`` after its status changes.
+        # Decide before recording so the public omission bound applies to the
+        # final status, not the default stored status.
+        self._record(entry)
         return entry.status
 
     def status_for(self, name: str) -> Optional[str]:
@@ -235,7 +285,10 @@ class ArtifactDeliveryLedger:
     def mark_payload_size(self, name: str, size: int) -> None:
         entry = self._by_name.get(name)
         if entry is not None and entry.delivered:
-            entry.payload_size = int(size)
+            normalized_size = int(size)
+            if entry.payload_size is not None and entry.payload_size != normalized_size:
+                raise ArtifactSinkError("contradictory duplicate artifact payload size")
+            entry.payload_size = normalized_size
 
     def import_delivered(
         self,
@@ -246,13 +299,12 @@ class ArtifactDeliveryLedger:
         payload_size: int,
         media_type: str,
     ) -> str:
-        if name in self._by_name:
-            return
         status = self.offer(
             name,
             stage=stage,
             estimated_raw_bytes=estimated_raw_bytes,
             media_type=media_type,
+            sink=True,
         )
         if status == "stored":
             self.mark_payload_size(name, payload_size)
@@ -279,6 +331,7 @@ class ArtifactDeliveryLedger:
             if not entry.delivered:
                 continue
             entry.status = "omitted_response_limit"
+            self._record_omission(entry)
             self._raw_total = max(0, self._raw_total - entry.estimated_raw_bytes)
             self._response_count = max(0, self._response_count - 1)
             if entry.stage in _STAGES and entry.name not in self._essential_names:
@@ -299,10 +352,17 @@ class ArtifactDeliveryLedger:
         delivered = [entry for entry in entries if entry.delivered]
         omitted = [entry for entry in entries if entry.budget_omitted]
         selection_excluded = [entry for entry in entries if entry.selection_excluded]
-        eligible_count = len(entries) + self._unreported_overflow
-        budget_omitted_count = len(omitted) + self._unreported_overflow
-        estimated_raw = sum(entry.estimated_raw_bytes for entry in selected)
-        estimated_base64 = sum(4 * ((entry.estimated_raw_bytes + 2) // 3) for entry in selected)
+        eligible_count = len(entries) + self._unreported_eligible
+        selection_excluded_count = len(selection_excluded) + self._unreported_selection_excluded
+        budget_omitted_count = len(omitted) + self._unreported_budget_eligible
+        estimated_raw = (
+            sum(entry.estimated_raw_bytes for entry in selected)
+            + self._unreported_budget_estimated_raw_bytes
+        )
+        estimated_base64 = (
+            sum(4 * ((entry.estimated_raw_bytes + 2) // 3) for entry in selected)
+            + self._unreported_budget_estimated_base64_bytes
+        )
         actual_sizes = {
             entry.name: entry.payload_size for entry in delivered if entry.payload_size is not None
         }
@@ -322,7 +382,8 @@ class ArtifactDeliveryLedger:
                 "reason": entry.status,
             }
             for entry in entries
-            if entry.budget_omitted or entry.selection_excluded
+            if (entry.budget_omitted or entry.selection_excluded)
+            and entry.name in self._public_omission_names
         ]
         warnings = (
             ["optional artifact omission ledger exceeded its public entry limit"]
@@ -341,19 +402,25 @@ class ArtifactDeliveryLedger:
                 "max_response_bytes": self.max_response_bytes,
             },
             "eligible_count": eligible_count,
-            "selected_count": len(selected),
+            "selected_count": len(selected) + self._unreported_budget_eligible,
             "delivered_count": len(delivered),
-            "selection_excluded_count": len(selection_excluded),
+            "selection_excluded_count": selection_excluded_count,
             "budget_omitted_count": budget_omitted_count,
             "unreported_overflow_count": self._unreported_overflow,
+            "unreported_selection_excluded_count": self._unreported_selection_excluded,
+            "unreported_budget_omitted_count": self._unreported_budget_omitted,
             "estimated_raw_bytes": estimated_raw,
             "estimated_base64_bytes": estimated_base64,
-            "estimated_zip_bytes": estimated_raw + sum(128 + len(entry.name) for entry in selected),
+            "estimated_zip_bytes": (
+                estimated_raw
+                + sum(128 + len(entry.name) for entry in selected)
+                + self._unreported_budget_estimated_zip_bytes
+            ),
             "actual_delivered_raw_bytes": actual_raw,
             "actual_delivered_base64_bytes": actual_base64,
             "actual_delivered_zip_bytes": None,
-            "truncated": bool(omitted or self._unreported_overflow),
+            "truncated": bool(budget_omitted_count),
             "delivered_names": [*self._essential_names, *(entry.name for entry in delivered)],
-            "omitted": omission_items[:_MAX_OMISSIONS],
+            "omitted": omission_items,
             "warnings": warnings,
         }

@@ -399,4 +399,10 @@ implicit `negative` mapping, and masked CLIP views are trusted-CLI
 compatibility only. Canonical optional geometry fields replace the old aliases;
 aliases remain accepted with a warning. `geometry` and `blip2` are batch-only.
 Objective 021 implements non-fatal optional artifact delivery with structured
-selection, pagination and truncation.
+selection, pagination and truncation. When response-byte pressure omits an
+optional tail, the delivered artifact list and ZIP members are rebuilt from the
+remaining stored tuple while `identity-mask.png` remains essential. The L3
+ledger separates selection exclusions from budget omissions and exposes both
+reported and unreported overflow counts. The authenticated capabilities
+response also exposes `configuration.field_catalog`, whose ordered path enum is
+the same inventory used by the validator.

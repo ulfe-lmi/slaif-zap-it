@@ -268,33 +268,17 @@ def _collect_raw_artifacts(
             for stored in sink.artifacts():
                 _check_deadline(context)
                 raw_artifact = _stored_sink_artifact(stored)
-                if context.artifact_ledger is None:
-                    ledger.import_delivered(
-                        raw_artifact.name,
-                        stage=None,
-                        estimated_raw_bytes=(
-                            int(stored.array.nbytes)
-                            if stored.array is not None
-                            else len(stored.data or b"")
-                        ),
-                        payload_size=len(raw_artifact.payload),
-                        media_type=raw_artifact.media_type,
-                    )
-                else:
-                    if ledger.status_for(raw_artifact.name) is None:
-                        ledger.import_delivered(
-                            raw_artifact.name,
-                            stage=None,
-                            estimated_raw_bytes=(
-                                int(stored.array.nbytes)
-                                if stored.array is not None
-                                else len(stored.data or b"")
-                            ),
-                            payload_size=len(raw_artifact.payload),
-                            media_type=raw_artifact.media_type,
-                        )
-                    else:
-                        ledger.mark_payload_size(raw_artifact.name, len(raw_artifact.payload))
+                ledger.import_delivered(
+                    raw_artifact.name,
+                    stage=None,
+                    estimated_raw_bytes=(
+                        int(stored.array.nbytes)
+                        if stored.array is not None
+                        else len(stored.data or b"")
+                    ),
+                    payload_size=len(raw_artifact.payload),
+                    media_type=raw_artifact.media_type,
+                )
                 if ledger.status_for(raw_artifact.name) == "stored":
                     artifacts.append(raw_artifact)
                 _check_deadline(context)
@@ -488,6 +472,24 @@ def _json_size_upper_bound(
     return total
 
 
+def _refresh_artifact_statuses(value: Any, ledger: ArtifactDeliveryLedger) -> None:
+    """Refresh every nested candidate/debug status after delivery changes."""
+    if isinstance(value, dict):
+        for name_key, status_key in (
+            ("artifact_name", "artifact_status"),
+            ("input_artifact_name", "input_artifact_status"),
+        ):
+            name = value.get(name_key)
+            status = ledger.status_for(name) if isinstance(name, str) else None
+            if status is not None and status_key in value:
+                value[status_key] = status
+        for child in value.values():
+            _refresh_artifact_statuses(child, ledger)
+    elif isinstance(value, list):
+        for child in value:
+            _refresh_artifact_statuses(child, ledger)
+
+
 def _refresh_prepared(
     prepared: _PreparedResponse,
     context: ResponseContext,
@@ -496,6 +498,12 @@ def _refresh_prepared(
     json_skeleton: bool = False,
 ) -> _PreparedResponse:
     """Refresh descriptors and the L3 ledger after optional tail omission."""
+    artifacts = tuple(
+        artifact
+        for artifact in prepared.artifacts
+        if (context.verbosity >= 1 and artifact.name == "identity-mask.png")
+        or prepared.ledger.status_for(artifact.name) == "stored"
+    )
     document = json.loads(json.dumps(prepared.document))
     if context.verbosity >= 1:
         document["service"]["artifacts"] = [
@@ -505,32 +513,14 @@ def _refresh_prepared(
                 json_skeleton=json_skeleton,
                 deadline_monotonic=context.deadline_monotonic,
             )
-            for artifact in prepared.artifacts
+            for artifact in artifacts
         ]
     if context.verbosity >= 3:
         document["service"]["artifact_delivery"] = prepared.ledger.document(
-            artifacts={artifact.name: artifact.payload for artifact in prepared.artifacts}
+            artifacts={artifact.name: artifact.payload for artifact in artifacts}
         )
-        for record in document["service"].get("candidate_view_inputs", []):
-            artifact_name = record.get("artifact_name")
-            status = prepared.ledger.status_for(artifact_name) if artifact_name else None
-            if status is not None:
-                record["artifact_status"] = status
-        for record in document["service"].get("objects", []):
-            for key in ("blip3_verification",):
-                verification = record.get(key)
-                if isinstance(verification, dict):
-                    name = verification.get("input_artifact_name")
-                    status = prepared.ledger.status_for(name) if name else None
-                    if status is not None:
-                        verification["input_artifact_status"] = status
-            for verification in record.get("blip3_verifications", []) or []:
-                if isinstance(verification, dict):
-                    name = verification.get("input_artifact_name")
-                    status = prepared.ledger.status_for(name) if name else None
-                    if status is not None:
-                        verification["input_artifact_status"] = status
-    return dataclass_replace(prepared, document=document)
+        _refresh_artifact_statuses(document["service"], prepared.ledger)
+    return dataclass_replace(prepared, document=document, artifacts=artifacts)
 
 
 def build_completion_json(

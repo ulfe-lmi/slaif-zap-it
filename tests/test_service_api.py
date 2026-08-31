@@ -38,6 +38,27 @@ def png_bytes(width=32, height=24, color=(200, 10, 10)):
 
 VALID_CONFIG = b"alpha: 0.5\npreprocessing:\n  roi: false\nclip:\n  labels:\n    goat: 'a goat'\n"
 
+_PRESSURE_ARTIFACT_NAME = "clip-candidate-view-CANDIDATE-0001.png"
+_PRESSURE_ARTIFACT_BYTES = bytes((index * 73 + (index >> 3)) % 256 for index in range(65_536))
+
+
+class _PressureArtifactEngine(FakeEngine):
+    def __init__(self, *, emit_artifact: bool):
+        super().__init__()
+        self.emit_artifact = emit_artifact
+
+    def __call__(self, *args, **kwargs):
+        artifact_sink = kwargs.get("artifact_sink")
+        outcome = super().__call__(*args, **kwargs)
+        if self.emit_artifact and artifact_sink is not None:
+            artifact_sink.store_bytes(
+                _PRESSURE_ARTIFACT_NAME,
+                _PRESSURE_ARTIFACT_BYTES,
+                content_type="image/png",
+            )
+        return outcome
+
+
 FILES = {
     "image": ("frame.png", png_bytes(), "image/png"),
     "config": ("config.yaml", VALID_CONFIG, "application/yaml"),
@@ -472,6 +493,68 @@ def test_json_and_zip_share_detection_semantics():
     manifest = json.loads(archive.read("manifest.json"))
     assert document["choices"][0]["text"] == manifest["choices"][0]["text"]
     assert document["service"]["objects"] == manifest["service"]["objects"]
+
+
+@pytest.mark.parametrize("response_format", ("json", "zip"))
+def test_api_response_byte_pressure_omits_optional_tail_and_keeps_essential(response_format):
+    request_data = {"verbosity": "3", "response_format": response_format}
+
+    full_client, _ = make_client(engine=_PressureArtifactEngine(emit_artifact=True))
+    full_response = full_client.post("/v1/completions", files=FILES, data=request_data)
+    assert full_response.status_code == 200, full_response.text
+    full_size = len(full_response.content)
+
+    essential_client, _ = make_client(engine=_PressureArtifactEngine(emit_artifact=False))
+    essential_response = essential_client.post("/v1/completions", files=FILES, data=request_data)
+    assert essential_response.status_code == 200, essential_response.text
+    essential_size = len(essential_response.content)
+    cap = (full_size + essential_size) // 2
+
+    pressured_client, _ = make_client(
+        engine=_PressureArtifactEngine(emit_artifact=True),
+        settings=ServiceSettings(max_response_bytes=cap),
+    )
+    response = pressured_client.post("/v1/completions", files=FILES, data=request_data)
+    assert response.status_code == 200, response.text
+    assert len(response.content) <= cap
+
+    if response_format == "json":
+        document = response.json()
+        descriptors = document["service"]["artifacts"]
+        delivery = document["service"]["artifact_delivery"]
+    else:
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            names = archive.namelist()
+            manifest = json.loads(archive.read("manifest.json"))
+        descriptors = manifest["service"]["artifacts"]
+        delivery = manifest["service"]["artifact_delivery"]
+        assert _PRESSURE_ARTIFACT_NAME not in names
+        assert "identity-mask.png" in names
+
+    assert [item["name"] for item in descriptors] == ["identity-mask.png"]
+    assert delivery["truncated"] is True
+    assert delivery["budget_omitted_count"] == 1
+    assert delivery["delivered_count"] == 0
+    assert delivery["omitted"][0]["reason"] == "omitted_response_limit"
+
+
+@pytest.mark.parametrize("response_format", ("json", "zip"))
+def test_api_response_byte_pressure_returns_413_when_essential_exceeds_cap(response_format):
+    request_data = {"verbosity": "3", "response_format": response_format}
+    client, _ = make_client(engine=_PressureArtifactEngine(emit_artifact=False))
+    essential = client.post("/v1/completions", files=FILES, data=request_data)
+    assert essential.status_code == 200
+    # ZIP metadata includes the wall-clock ``created`` second; leave enough
+    # headroom below the measured essential response for the repeat request.
+    cap = max(1, len(essential.content) - 256)
+
+    limited_client, _ = make_client(
+        engine=_PressureArtifactEngine(emit_artifact=False),
+        settings=ServiceSettings(max_response_bytes=cap),
+    )
+    response = limited_client.post("/v1/completions", files=FILES, data=request_data)
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "response_too_large"
 
 
 def test_l3_post_filter_diagnostics_have_closed_numeric_contract_and_zip_parity():

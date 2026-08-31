@@ -224,8 +224,12 @@ hashes, and bounded omission reasons (`not_selected_*` or `omitted_*`). Optional
 count, per-artifact, aggregate-raw and response-byte overflow sets
 `truncated: true` and preserves the successful inference. Before the final hard
 response check, admitted optional artifacts are removed from the tail in
-reverse order as needed. Only an essential response that still cannot fit
-returns `response_too_large`; trusted CLI debug keeps its historical
+reverse order as needed; each omission rebuilds the immutable artifact tuple,
+descriptors, hashes, byte totals and ZIP members. The required
+`identity-mask.png` is never selected for optional omission. CLIP/BLIP3 debug
+records retain their structured candidate evidence while their artifact status
+becomes `omitted_response_limit`. Only an essential response that still cannot
+fit returns `response_too_large`; trusted CLI debug keeps its historical
 rectangular JPEG patch behavior.
 
 ### Capabilities
@@ -242,6 +246,16 @@ controls are described as policy; sensitive operator paths, credentials,
 topology and process state are not disclosed. `/docs` and `/openapi.json`
 remain disabled on the private-LAN listener, while this authenticated route
 remains available.
+
+`configuration.field_catalog` is the ordered, typed inventory of every accepted
+service YAML leaf. Each record contains an OpenAPI-enumerated `path`, a
+`CapabilityField` descriptor, and explicit required/nullable/default semantics;
+the compatibility `configuration.fields` dictionary is generated from the same
+inventory. L3 response metadata uses named `StageStatus`, `CandidateCounts`,
+`TimingMetadata`, `ProvenanceMetadata` and `ClipRoutingConfiguration` models.
+Timing values are finite, non-negative milliseconds keyed by dynamic
+`stage.<name>` timers; per-label CLIP scores and sanitized runtime model maps
+remain bounded typed maps.
 
 ## Configuration policy (hostile uploads)
 

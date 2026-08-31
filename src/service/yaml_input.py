@@ -494,27 +494,47 @@ def _validate_diagnostic_artifacts(value: Any) -> Dict[str, Any]:
         )
 
     stages = value.get("stages", list(_DIAGNOSTIC_ARTIFACT_STAGES))
-    if (
-        type(stages) is not list
-        or not 1 <= len(stages) <= len(_DIAGNOSTIC_ARTIFACT_STAGES)
-        or len(set(stages)) != len(stages)
-        or any(
-            type(stage) is not str or stage not in _DIAGNOSTIC_ARTIFACT_STAGES for stage in stages
+    if type(stages) is not list or not 1 <= len(stages) <= len(_DIAGNOSTIC_ARTIFACT_STAGES):
+        raise ServiceError(
+            "diagnostic_artifacts.stages must be a unique list of supported stage names",
+            code="invalid_config",
         )
-    ):
+    # Check scalar/member types before hashing so hostile nested collections
+    # produce the normal sanitized configuration error instead of TypeError.
+    if any(type(stage) is not str or stage not in _DIAGNOSTIC_ARTIFACT_STAGES for stage in stages):
+        raise ServiceError(
+            "diagnostic_artifacts.stages must be a unique list of supported stage names",
+            code="invalid_config",
+        )
+    if len(set(stages)) != len(stages):
         raise ServiceError(
             "diagnostic_artifacts.stages must be a unique list of supported stage names",
             code="invalid_config",
         )
     candidate_ids = value.get("candidate_ids")
-    if candidate_ids is not None and (
-        type(candidate_ids) is not list
-        or not 1 <= len(candidate_ids) <= 256
-        or any(type(candidate_id) is not int or candidate_id <= 0 for candidate_id in candidate_ids)
-        or len(set(candidate_ids)) != len(candidate_ids)
+    if candidate_ids is not None and type(candidate_ids) is not list:
+        raise ServiceError(
+            "diagnostic_artifacts.candidate_ids must be null or unique integers from 1 to 256",
+            code="invalid_config",
+        )
+    if candidate_ids is not None and not 1 <= len(candidate_ids) <= 256:
+        raise ServiceError(
+            "diagnostic_artifacts.candidate_ids must be null or unique integers from 1 to 256",
+            code="invalid_config",
+        )
+    # Validate scalar types and bounds before uniqueness for the same reason as
+    # stages: list/mapping members must never reach set().
+    if candidate_ids is not None and any(
+        type(candidate_id) is not int or not 1 <= candidate_id <= 256
+        for candidate_id in candidate_ids
     ):
         raise ServiceError(
-            "diagnostic_artifacts.candidate_ids must be null or unique positive integers",
+            "diagnostic_artifacts.candidate_ids must be null or unique integers from 1 to 256",
+            code="invalid_config",
+        )
+    if candidate_ids is not None and len(set(candidate_ids)) != len(candidate_ids):
+        raise ServiceError(
+            "diagnostic_artifacts.candidate_ids must be null or unique integers from 1 to 256",
             code="invalid_config",
         )
     page = value.get("page", 1)
