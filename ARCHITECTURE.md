@@ -74,8 +74,10 @@ filesystem sink through its compatibility adapter.
 The shared pure candidate-view module constructs a complete source-byte-exact
 rectangular CLIP `raw_bbox_crop` from a mask-derived inclusive bbox. Its
 half-up context radius affects only the crop boundary; no mask or fill reaches
-CLIP. An explicitly selected trusted-CLI `mask_dilated` compatibility builder
-remains separate. BLIP3 uses a separate pure single-image compositor: an
+CLIP. The service maps one natural-language prompt to each safe identifier and
+retains the complete ordered cosine vector; an explicitly selected trusted-CLI
+`mask_dilated` compatibility builder and multi-prompt labels remain separate.
+BLIP3 uses a separate pure single-image compositor: an
 inclusive raw-mask bbox determines a nominal centered crop, exact Euclidean
 dilation determines support, and a second exact dilation determines an exterior
 contour. Source RGB pixels under support D are restored from source bytes; the

@@ -265,9 +265,11 @@ HESI through the SLAIF project (grant agreement 101254461).
 
 The current pipeline uses SAM2 for high-recall proposals, then sends every
 post-geometry candidate through an untouched rectangular `raw_bbox_crop` to
-CLIP. CLIP returns a complete ordered cosine-score vector and a permissive
-request-local `clip_routing` decision; the selected target rule supplies one
-contextual single-image BLIP3 question and exact answer-to-label mapping.
+CLIP. Each service identifier supplies one natural-language prompt. CLIP
+returns a complete ordered cosine-score vector and a permissive request-local
+`clip_routing` decision; the selected target rule supplies one contextual
+single-image BLIP3 question and exact answer-to-label mapping. Trusted CLI
+compatibility may still use multi-prompt flattened labels.
 Object IDs, stage counts, timings, and losses are preserved in L3 evidence.
 
 This is a deterministic routing contract, not semantic-accuracy evidence.

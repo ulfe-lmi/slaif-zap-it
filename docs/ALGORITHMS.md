@@ -61,10 +61,13 @@ keep-label filtering occurs after optional relabeling.
 
 ## CLIP classification
 
-CLIP performs zero-shot classification over each surviving mask crop. A YAML
-label maps to one or more natural-language prompts. ZAP-IT encodes the prompt
-set, embeds each crop, and assigns the class associated with the highest
-similarity.
+CLIP scores every surviving geometry candidate. In the service, each safe
+machine identifier maps to exactly one natural-language prompt; the trusted CLI
+alone retains multi-prompt and flattened-key compatibility. The service sends
+the untouched rectangular `raw_bbox_crop` to CLIP, preserves the complete
+cosine vector in configuration order, and records its deterministic winner.
+The permissive `clip_routing` conditions, rather than the winner alone, decide
+BLIP3 admission.
 
 The service keeps the pinned CLIP model resident and refreshes only
 request-specific prompt embeddings. CLIP similarity is useful ranking evidence,
@@ -99,12 +102,13 @@ the baseline. At or above 24,576 MiB, all three pinned FP16 holders remain on
 the assigned GPU and no request-time movement occurs. Objective 009's real
 matrix covers all four supported profiles. The resulting single images are
 bounded before the pinned processor maps
-arbitrary aspect ratios to a finite 378-pixel tile grid. The verifier's fixed
-instruction follows the delimited client question and asks whether the region
-inside the yellow outline itself is the requested object. Both modes expose only
-logical `cuda:0` after an explicit operator index and UUID pin; the evidence is
-bounded local research, not an SLA, accuracy claim, license clearance, or
-external deployment.
+arbitrary aspect ratios to a finite 378-pixel tile grid. The verifier's exact
+generic instruction follows the delimited client question: `The unblurred
+region inside the yellow boundary is the selected candidate. The blurred
+surroundings are context only. Answer exactly Yes or No.` Both modes expose
+only logical `cuda:0` after an explicit operator index and UUID pin; the
+evidence is bounded local research, not an SLA, accuracy claim, license
+clearance, or external deployment.
 
 ## Deterministic object results
 

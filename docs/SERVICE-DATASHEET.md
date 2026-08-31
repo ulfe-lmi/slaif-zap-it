@@ -246,8 +246,10 @@ Protected GPUs must remain unchanged. Gateway integration and final release
 remain separately governed.
 
 The service accepts domain-neutral routing configuration: CLIP labels are
-bounded identifiers plus natural-language values, `raw_bbox_crop` is the only
-API CLIP view, and `clip_routing` selects request-authored BLIP3 rules through
-deterministic OR conditions. Canonical geometry records losses with source IDs
-and inclusive bboxes. Optional artifact overflow remains inference-fatal until
-Objective 021; CPU/fake evidence does not prove semantic accuracy.
+bounded identifiers plus exactly one natural-language value each, `raw_bbox_crop`
+is the only API CLIP view, and every surviving candidate receives a complete
+ordered cosine vector before `clip_routing` selects request-authored BLIP3
+rules through deterministic OR conditions. Canonical geometry records losses
+with source IDs and inclusive bboxes. Optional artifact overflow remains
+inference-fatal until Objective 021; CPU/fake evidence does not prove semantic
+accuracy.

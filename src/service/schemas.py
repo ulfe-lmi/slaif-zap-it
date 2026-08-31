@@ -12,7 +12,7 @@ import re
 import math
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.core.raw_visualizations import validate_raw_sam2_manifest
 
@@ -124,6 +124,10 @@ class CandidateViewInputRecord(BaseModel):
     effective_contour_width: Optional[int] = Field(default=None, ge=0, le=3)
     effective_blur_sigma: Optional[float] = Field(default=None, ge=0.0, le=20.0)
     source_composite_dimensions: Optional[Dict[str, int]] = None
+    config: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Effective request-local view settings used to build the input",
+    )
 
     @model_validator(mode="after")
     def validate_artifact_identity(self) -> "CandidateViewInputRecord":
@@ -280,18 +284,62 @@ class PostFilterRejection(BaseModel):
 
 
 class PostFilterDiagnostics(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     limits: PostFilterLimits
     evaluated: int = Field(default=0, ge=0)
     removed_by_maxsize: int = Field(default=0, ge=0)
     removed_empty_mask: int = Field(default=0, ge=0)
     removed_by_max_w: int = Field(default=0, ge=0)
     removed_by_max_h: int = Field(default=0, ge=0)
+    removed_by_empty_mask: int = Field(default=0, ge=0)
+    removed_by_min_area: int = Field(default=0, ge=0)
+    removed_by_max_area: int = Field(default=0, ge=0)
+    removed_by_min_width: int = Field(default=0, ge=0)
+    removed_by_max_width: int = Field(default=0, ge=0)
+    removed_by_min_height: int = Field(default=0, ge=0)
+    removed_by_max_height: int = Field(default=0, ge=0)
+    removed_by_min_aspect_ratio: int = Field(default=0, ge=0)
+    removed_by_max_aspect_ratio: int = Field(default=0, ge=0)
+    removed_by_border_touching: int = Field(default=0, ge=0)
     retained: int = Field(default=0, ge=0)
     non_empty: int = Field(default=0, ge=0)
     rejected: int = Field(default=0, ge=0)
     reason_precedence: List[PostFilterReason] = Field(min_length=4, max_length=10)
     rejections: List[PostFilterRejection] = Field(max_length=256)
     rejections_truncated: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_aggregate_accounting(self) -> "PostFilterDiagnostics":
+        """Reject contradictory generated diagnostics instead of dropping fields."""
+        legacy_fields = (
+            "removed_by_maxsize",
+            "removed_empty_mask",
+            "removed_by_max_w",
+            "removed_by_max_h",
+        )
+        canonical_fields = (
+            "removed_by_empty_mask",
+            "removed_by_min_area",
+            "removed_by_max_area",
+            "removed_by_min_width",
+            "removed_by_max_width",
+            "removed_by_min_height",
+            "removed_by_max_height",
+            "removed_by_min_aspect_ratio",
+            "removed_by_max_aspect_ratio",
+            "removed_by_border_touching",
+        )
+        supplied = self.model_fields_set
+        if supplied.intersection(canonical_fields):
+            removed = sum(getattr(self, field) for field in canonical_fields)
+            if self.rejected != removed or self.evaluated != self.retained + removed:
+                raise ValueError("canonical post-filter aggregates do not reconcile")
+        elif supplied.intersection(legacy_fields):
+            removed = sum(getattr(self, field) for field in legacy_fields)
+            if self.evaluated != self.retained + removed:
+                raise ValueError("legacy post-filter aggregates do not reconcile")
+        return self
 
 
 ClipRoutingReason = Literal[
@@ -429,6 +477,7 @@ class ServiceMetadata(BaseModel):
     image: Dict[str, int]
     class_mapping: Dict[str, int]
     config_digest: str
+    package_version: str
     sam2: Sam2Metadata
     candidate_views: CandidateViewsMetadata
     clip_routing: Optional[Dict[str, Any]] = None

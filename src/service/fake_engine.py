@@ -229,6 +229,7 @@ class FakeEngine:
             routed, routing_diagnostics, route_counts = apply_clip_routing(
                 filtered, config.clip_routing_cfg
             )
+        clip_scored_count = len(filtered)
         objects: List[ObjectResult] = []
         for instance_id, mask_record in enumerate(
             sorted(
@@ -309,7 +310,11 @@ class FakeEngine:
             StageStatus(
                 name="clip",
                 status="executed" if config.clip_cfg else "not_configured",
-                detail="fake",
+                detail=(
+                    f"{len(filtered)} -> {clip_scored_count}"
+                    if config.clip_cfg
+                    else "no clip configuration"
+                ),
             ),
             StageStatus(
                 name="clip_routing",
@@ -342,7 +347,7 @@ class FakeEngine:
                         "geometry_evaluated": int(post_filter_diagnostics.get("evaluated", 0)),
                         "after_geometry": len(filtered),
                         "geometry_rejected": int(post_filter_diagnostics.get("rejected", 0)),
-                        "clip_scored": len(filtered),
+                        "clip_scored": clip_scored_count,
                         **route_counts,
                         "blip3_verified": len(routed) if config.clip_routing_cfg else 0,
                         "after_final_label_filter": len(objects),

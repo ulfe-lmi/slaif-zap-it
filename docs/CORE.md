@@ -51,7 +51,7 @@ The chain matches the historical behavior:
 
 ```text
 ROI crop -> optional resize -> SAM2 masks -> area/bbox filter
-        -> optional CLIP labeling -> optional BLIP3 verification
+        -> optional CLIP complete scoring -> permissive routing/BLIP3 verification
         -> keep-label filter -> deterministic final-object ordering + id assignment
         -> optional visualization arrays
 ```
@@ -237,5 +237,6 @@ The 020 execution order is preprocessing, SAM2 proposals, optional geometry,
 raw CLIP crop construction and complete scoring, permissive routing, separate
 BLIP3 composition/verification, final filtering, ordering, visualization, and
 serialization. Source candidate IDs are one-based and stable; post-filter
-indices are zero-based. Deterministic tests do not establish semantic accuracy
-or recall.
+indices are zero-based. CLIP's `after_clip`/`clip_scored` count is captured
+before routing or BLIP3 mutation. Deterministic tests do not establish semantic
+accuracy or recall.

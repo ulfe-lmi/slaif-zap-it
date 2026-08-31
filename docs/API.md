@@ -481,5 +481,6 @@ uncertain winners, with deterministic reasons and a source-ID-ranked cap.
 Complete vectors and routing diagnostics are L3-only; effective policy is
 available in service metadata. The selected target rule asks BLIP3 once using
 the existing delimited question and exact normalized true/false token mapping,
-with unmatched answers conservatively mapped to `falsecategory` and recorded.
+with an exact true match selecting `newcategory`, an exact false or unmatched
+answer selecting configured `falsecategory`, and the mapping recorded.
 L2 objects carry their own semantic evidence; JSON and ZIP metadata agree.

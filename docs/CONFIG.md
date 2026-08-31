@@ -209,9 +209,12 @@ CLIP stage is skipped entirely.
 - `labels` (mapping): safe identifiers to one complete natural-language prompt
   string. Commas and line breaks are prompt content, not list syntax.
 
-The loader also supports flattened keys such as `"label goat": "prompt1, prompt2"`
-for convenience. Every mask receives the label with the highest CLIP score; the
-score is stored in `clip_score` for later stages.
+The trusted loader also supports flattened keys such as `"label goat":
+"prompt1, prompt2"` for legacy CLI compatibility. The service uses exactly one
+natural-language value per safe identifier, preserves every label's cosine
+score in configuration order, and stores the deterministic winner in
+`clip_label`/`clip_score`. When canonical `clip_routing` is present, its OR
+rules—not the winner alone—decide BLIP3 admission.
 
 ## `blip3` (optional)
 
@@ -275,8 +278,10 @@ most 32 new tokens per question. It rejects `model_name`, `revision`, `dtype`,
 tokenizer/processor controls, paths, URLs, cache/download settings, devices,
 commands and remote-code controls anywhere in an upload.
 
-Masks that match the false string are relabelled to `negative`; matches on the
-true string keep their label or take `newcategory` if provided.
+For canonical service rules, an answer normalized exactly to `trueresult`
+selects `newcategory`; an exact `falseresult` selects `falsecategory`; and an
+unmatched answer conservatively selects `falsecategory`. Trusted legacy rules
+retain substring matching and their default `negative` fallback.
 
 ## `geometry` (legacy-only, not a service stage)
 

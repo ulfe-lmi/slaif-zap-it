@@ -485,6 +485,61 @@ def test_stage_statuses_are_recorded():
     assert outcome.result.provenance.core_version == "001-a"
 
 
+def test_clip_count_is_frozen_before_clear_negative_routing_and_blip3():
+    masks = [
+        {"segmentation": seg([(0, 0)], (8, 8)), "area": 1},
+        {"segmentation": seg([(7, 7)], (8, 8)), "area": 1},
+    ]
+
+    def clip_fn(state, params, _image, **_kwargs):
+        scored = (
+            {"target": 0.80, "negative": 0.20},
+            {"target": 0.10, "negative": 0.90},
+        )
+        for mask, scores in zip(params["masks"], scored):
+            mask["clip_scores"] = scores
+            mask["clip_label"] = max(scores, key=scores.get)
+            mask["clip_score"] = scores[mask["clip_label"]]
+        return state or {}, params["masks"], {"num_masks": len(params["masks"])}
+
+    def blip3_fn(state, params, _image, **_kwargs):
+        assert len(params["masks"]) == 1
+        return state or {}, params["masks"], {"verified_count": len(params["masks"])}
+
+    config = base_config(
+        clip_cfg={"labels": {"target": "target", "negative": "negative"}},
+        clip_routing_cfg={
+            "route_to_blip3": {
+                "labels": ["target"],
+                "top_k": 1,
+                "score_margin_from_best": None,
+                "minimum_target_score": 0.5,
+                "uncertain_labels": [],
+                "max_candidates": None,
+            }
+        },
+        blip3_cfg={"target": {"question": "is this target?"}},
+    )
+    outcome = run(
+        masks,
+        config,
+        class_labels=("target", "negative"),
+        verbosity=3,
+        stages=make_stages(masks, clip_fn=clip_fn, blip3_fn=blip3_fn),
+    )
+
+    assert outcome.result.candidate_counts["after_clip"] == 2
+    assert outcome.result.candidate_counts["clip_scored"] == 2
+    assert outcome.result.candidate_counts["initially_routed"] == 1
+    assert outcome.result.candidate_counts["routed_after_cap"] == 1
+    assert outcome.result.candidate_counts["blip3_verified"] == 1
+    assert outcome.result.candidate_counts["final"] == 1
+    assert outcome.result.stage_status("clip").detail == "2 -> 2"
+    assert outcome.result.stage_status("label_filter").detail == "1 -> 1"
+    assert outcome.result.clip_routing_diagnostics[1]["primary_reason"] == "clear_negative"
+    assert outcome.result.clip_routing_diagnostics[1]["route_to_blip3"] is False
+
+
 def test_core_post_filter_diagnostics_use_remapped_source_index_and_do_not_leak():
     empty = {"segmentation": np.zeros((2, 2), dtype=bool)}
     wide = {"segmentation": np.ones((1, 2), dtype=bool), "prompt": "private"}

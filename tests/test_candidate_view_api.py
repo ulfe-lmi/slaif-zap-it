@@ -500,3 +500,118 @@ def test_source_identity_survives_filter_semantics_order_visualization_json_and_
         payload = members[descriptor["name"]]
         assert hashlib.sha256(payload).hexdigest() == descriptor["sha256"]
         assert len(payload) == descriptor["size"]
+
+
+class _RoutingProofEngine:
+    """Exercise complete vectors, cap reasons and a non-routed candidate."""
+
+    def __init__(self):
+        self.blip_source_ids = []
+
+    def __call__(self, image_rgb, config: CoreConfig, **kwargs):
+        def run_sam2(state, _params, image, **_kwargs):
+            masks = []
+            for source_index, (top, left) in enumerate(((2, 2), (16, 20))):
+                mask = np.zeros(image.shape[:2], dtype=bool)
+                mask[top : top + 4, left : left + 4] = True
+                masks.append({"segmentation": mask, "area": 16, "_source_index": source_index})
+            return state or {}, masks, {"num_masks": len(masks)}
+
+        def run_clip(state, params, _image, **_kwargs):
+            scores_by_index = (
+                {"target_id": 0.80, "negative_id": 0.20},
+                {"target_id": 0.10, "negative_id": 0.90},
+            )
+            for mask, scores in zip(params["masks"], scores_by_index):
+                mask["clip_scores"] = scores
+                mask["clip_label"] = max(scores, key=scores.get)
+                mask["clip_score"] = scores[mask["clip_label"]]
+                mask["clip_prompt"] = config.clip_cfg["labels"][mask["clip_label"]]
+            return state or {}, params["masks"], {"num_masks": len(params["masks"])}
+
+        def run_blip3(state, params, _image, **_kwargs):
+            self.blip_source_ids.extend(int(mask["_source_index"]) + 1 for mask in params["masks"])
+            return state or {}, params["masks"], {"verified_count": len(params["masks"])}
+
+        stages = StageFunctions(
+            apply_roi=apply_roi,
+            resize_image=resize_image,
+            run_sam2=run_sam2,
+            filter_by_area_bbox=filter_by_area_bbox,
+            run_clip=run_clip,
+            run_blip3=run_blip3,
+            generate_visualizations=lambda *_args, **_kwargs: {},
+        )
+        return run_single_image(
+            image_rgb,
+            config,
+            frame_id=kwargs.get("frame_id", "image"),
+            verbosity=kwargs.get("verbosity", 3),
+            artifact_sink=kwargs["artifact_sink"],
+            stages=stages,
+            class_labels=kwargs.get("class_labels", ()),
+            render_visualizations=False,
+            service_safe_artifact_names=True,
+        )
+
+
+ROUTING_PROOF_CONFIG = b"""alpha: 0.5
+clip:
+  labels:
+    target_id: 'natural target, with punctuation'
+    negative_id: 'clear negative'
+blip3:
+  target_id:
+    question: 'Is this the target?'
+    trueresult: 'Yes'
+    falseresult: 'No'
+    newcategory: target_id
+    falsecategory: negative_id
+clip_routing:
+  route_to_blip3:
+    labels: [target_id]
+    top_k: 1
+    score_margin_from_best: null
+    minimum_target_score: 0.5
+    uncertain_labels: []
+    max_candidates: 1
+"""
+
+
+def test_complete_routing_diagnostics_keep_clear_negative_in_json_and_zip():
+    engine = _RoutingProofEngine()
+    client = TestClient(
+        create_app(engine=engine, readiness_provider=lambda: ReadyState(True, "fake ready"))
+    )
+    files = {
+        "image": ("generated.png", _png_bytes(width=32, height=24), "image/png"),
+        "config": ("config.yaml", ROUTING_PROOF_CONFIG, "application/yaml"),
+    }
+    json_response = client.post("/v1/completions", files=files, data={"verbosity": "3"})
+    assert json_response.status_code == 200, json_response.text
+    document = json_response.json()
+    validated = CompletionResponse.model_validate(document)
+    assert validated.service.package_version == "0.1.0"
+    assert document["service"]["candidate_counts"]["clip_scored"] == 2
+    assert document["service"]["candidate_counts"]["initially_routed"] == 1
+    assert document["service"]["candidate_counts"]["blip3_verified"] == 1
+    diagnostics = document["service"]["clip_routing_diagnostics"]
+    assert diagnostics[0]["clip_scores"] == {"target_id": 0.8, "negative_id": 0.2}
+    assert diagnostics[0]["cap_outcome"] == "retained"
+    assert diagnostics[0]["primary_reason"] == "target_top_1"
+    assert diagnostics[1]["clip_scores"] == {"target_id": 0.1, "negative_id": 0.9}
+    assert diagnostics[1]["matched_conditions"] == []
+    assert diagnostics[1]["primary_reason"] == "clear_negative"
+    assert diagnostics[1]["cap_outcome"] == "not_routed"
+    assert diagnostics[1]["route_to_blip3"] is False
+    assert engine.blip_source_ids == [1]
+
+    zip_response = client.post(
+        "/v1/completions",
+        files=files,
+        data={"verbosity": "3", "response_format": "zip"},
+    )
+    assert zip_response.status_code == 200, zip_response.text
+    manifest, _members = _zip_manifest(zip_response)
+    assert manifest["service"]["clip_routing_diagnostics"] == diagnostics
+    assert manifest["service"]["candidate_counts"] == document["service"]["candidate_counts"]

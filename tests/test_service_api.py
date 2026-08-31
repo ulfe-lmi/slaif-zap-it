@@ -25,6 +25,7 @@ from src.service import (
 )
 from src.service.fake_engine import FakeEngine
 from src.runtime.strategy import RuntimePolicy
+from src.service.schemas import PostFilterDiagnostics
 
 IO = __import__("io") if False else io
 
@@ -796,12 +797,80 @@ def test_openapi_documents_contract():
         "border_touching",
     ]
     assert component_models["PostFilterDiagnostics"]["properties"]["rejections"]["maxItems"] == 256
+    assert {
+        "removed_by_empty_mask",
+        "removed_by_min_area",
+        "removed_by_max_area",
+        "removed_by_min_width",
+        "removed_by_max_width",
+        "removed_by_min_height",
+        "removed_by_max_height",
+        "removed_by_min_aspect_ratio",
+        "removed_by_max_aspect_ratio",
+        "removed_by_border_touching",
+    } <= set(component_models["PostFilterDiagnostics"]["properties"])
+    assert {
+        "clip_scores",
+        "primary_reason",
+        "matched_conditions",
+        "cap_outcome",
+    } <= set(component_models["ClipRoutingDiagnostic"]["properties"])
+    assert {
+        "configured_question",
+        "effective_question",
+        "normalized_answer",
+        "mapping_outcome",
+        "final_label",
+    } <= set(component_models["Blip3VerificationRecord"]["properties"])
+    service_properties = component_models["ServiceMetadata"]["properties"]
+    assert {"package_version", "candidate_counts", "timings_ms"} <= set(service_properties)
 
 
 def test_openapi_schema_is_deterministic_across_instances():
     first = make_client()[0].get("/openapi.json").content
     second = make_client()[0].get("/openapi.json").content
     assert first == second
+
+
+def test_post_filter_schema_preserves_canonical_aggregates_and_rejects_contradictions():
+    canonical = {
+        "limits": {},
+        "evaluated": 2,
+        "removed_by_empty_mask": 0,
+        "removed_by_min_area": 1,
+        "removed_by_max_area": 0,
+        "removed_by_min_width": 0,
+        "removed_by_max_width": 0,
+        "removed_by_min_height": 0,
+        "removed_by_max_height": 0,
+        "removed_by_min_aspect_ratio": 0,
+        "removed_by_max_aspect_ratio": 0,
+        "removed_by_border_touching": 0,
+        "retained": 1,
+        "non_empty": 2,
+        "rejected": 1,
+        "reason_precedence": [
+            "empty_mask",
+            "min_area",
+            "max_area",
+            "min_width",
+            "max_width",
+            "min_height",
+            "max_height",
+            "min_aspect_ratio",
+            "max_aspect_ratio",
+            "border_touching",
+        ],
+        "rejections": [],
+        "rejections_truncated": 0,
+    }
+    model = PostFilterDiagnostics.model_validate(canonical)
+    assert model.removed_by_min_area == 1
+    assert model.model_dump()["removed_by_border_touching"] == 0
+    with pytest.raises(ValueError):
+        PostFilterDiagnostics.model_validate({**canonical, "unexpected": 1})
+    with pytest.raises(ValueError):
+        PostFilterDiagnostics.model_validate({**canonical, "rejected": 0})
 
 
 def test_error_responses_use_frozen_envelope_everywhere():

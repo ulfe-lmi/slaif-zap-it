@@ -12,9 +12,31 @@ from PIL import Image
 class _DryRunClipFilter:
     """Simulates CLIP behaviour by emitting deterministic labels."""
 
-    def __init__(self, *, verbosity=1, log_print_func=None):
+    def __init__(
+        self,
+        clip_config: Dict[str, Any] | None = None,
+        *,
+        canonical_labels: bool = False,
+        verbosity=1,
+        log_print_func=None,
+    ):
         self.verbosity = verbosity
         self.log_print = log_print_func if log_print_func else (lambda *a, **k: None)
+        self._canonical_labels = bool(canonical_labels)
+        self.class_map: Dict[str, List[str]] = {}
+        self._set_labels(clip_config or {})
+
+    def _set_labels(self, clip_config: Dict[str, Any]) -> bool:
+        canonical = bool(clip_config.get("_canonical_labels", self._canonical_labels))
+        class_map = _class_map_from(clip_config, canonical_labels=canonical)
+        changed = canonical != self._canonical_labels or class_map != self.class_map
+        self._canonical_labels = canonical
+        self.class_map = class_map
+        return changed
+
+    def update_labels(self, clip_config: Dict[str, Any]) -> bool:
+        """Refresh request-local canonical labels without loading a model."""
+        return self._set_labels(clip_config or {})
 
     def filter_masks(
         self,
@@ -26,6 +48,28 @@ class _DryRunClipFilter:
         safe_artifact_names=False,
     ):
         del safe_artifact_names
+        if self._canonical_labels and self.class_map:
+            labels = tuple(self.class_map)
+            for idx, mask in enumerate(masks):
+                scores = {
+                    label: round(0.80 - 0.03 * label_index - 0.01 * idx, 4)
+                    for label_index, label in enumerate(labels)
+                }
+                winner = max(
+                    scores,
+                    key=lambda label: (scores[label], -labels.index(label)),
+                )
+                mask["clip_scores"] = scores
+                mask["clip_label"] = winner
+                mask["clip_score"] = scores[winner]
+                mask["clip_prompt"] = self.class_map[winner][0]
+            self.log_print(
+                f"[_DryRunClipFilter] scored {len(masks)} masks over {len(labels)} labels",
+                2,
+                self.verbosity,
+            )
+            return masks
+
         for idx, mask in enumerate(masks, start=1):
             label = f"dryrun region {idx}"
             mask["clip_label"] = label
@@ -347,7 +391,14 @@ def initialize(
 
     if dryrun:
         log("[classifier.clip] Initializing dry-run CLIP filter", 1, verbosity)
-        return {"clip_filter": _DryRunClipFilter(verbosity=verbosity, log_print_func=log)}
+        return {
+            "clip_filter": _DryRunClipFilter(
+                config,
+                canonical_labels=bool(config.get("_canonical_labels", False)),
+                verbosity=verbosity,
+                log_print_func=log,
+            )
+        }
 
     log("[classifier.clip] Initializing CLIP filter", 1, verbosity)
     clip_filter = _ClipFilter(

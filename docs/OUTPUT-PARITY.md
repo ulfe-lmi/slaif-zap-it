@@ -15,7 +15,7 @@ module or helper is not evidence that the live service produces its output.
 | SAM2 candidate masks and quality fields | Candidate masks are filtered and ordered | Public L2 fields when produced; bounded L3 counts/status |
 | Request-local SAM2 generator policy | Resident model is reused; a fresh generator is built from strict effective scalars per request | `service.sam2` at every level and in ZIP manifest; raw candidate count is separate from post-remap L3 count |
 | Post-SAM2 area/bbox filter | Removes candidates before optional classification; one deterministic short-circuit reason and bounded numeric records are retained | Public L3 candidate counts/status and `post_filter_diagnostics` |
-| CLIP labels, scores and class map | Request labels refresh resident CLIP prompts | Public L0 class mapping, L2 label/score, L3 provenance |
+| CLIP labels, complete scores and class map | One service prompt per safe identifier refreshes resident CLIP text embeddings; every surviving candidate receives the full ordered cosine vector before routing | Public L0 class mapping, L2 winner/score, L3 complete vectors and routing provenance |
 | Candidate views for CLIP/BLIP3 | CLIP uses an untouched rectangular raw source crop; trusted CLI may explicitly retain its exact-mask compatibility view; BLIP3 uses one source-space image with exact Euclidean support, exterior contour and Gaussian-blurred scene context | Effective policy at every response level; L3 composition records and exact lossless processor/QA PNGs; this is pixel-boundary evidence, not an accuracy guarantee |
 | BLIP3 verification | Pinned FP16 holder; each candidate is composed once and every applicable QA call reuses the same one-image input; residency remains capacity-selected | Public L2/L3 fields when executed; candidate-local containment rejection is bounded and non-mutating; L3 debug returns the exact sole QA PNG under the tokenized CANDIDATE/QUESTION name |
 | Geometry Canny/Hough helpers | Helpers and tests exist, but canonical core does not call them; helpers may write TSV/debug files | Not supported by the service; legacy compatibility only where explicitly wired |
@@ -105,5 +105,6 @@ warnings.
 Objective 020 keeps CLIP and BLIP3 image builders independent: CLIP receives an
 untouched rectangular `raw_bbox_crop` and BLIP3 receives its separately
 composed one-image contextual view. Complete CLIP vectors, routing reasons,
-and answer mappings are preserved in L3, while L2 objects contain relevant
-semantic evidence. Semantic accuracy is not inferred from parity tests.
+and answer mappings are preserved in L3; `clip_scored` is the count captured
+before routing, while L2 objects contain relevant semantic evidence. Semantic
+accuracy is not inferred from parity tests.

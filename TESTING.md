@@ -117,8 +117,10 @@ and the asymmetric one-pixel containment regression. Returned composition arrays
 are crop-bounded; no redundant source-shaped masks are retained.
 
 The semantic seams are literal CPU/fake captures: the real CLIP
-`classify_single` path is exercised while a bounded processor records its
-`images=` argument, and the BLIP3 QA holder receives one shared image;
+`classify_single_scores` path is exercised by
+`test_real_clip_classify_single_receives_literal_raw_bbox_processor_view`
+while a bounded processor records its `images=` argument, and the BLIP3 QA
+holder receives one shared image;
 lossless debug PNG decoding is compared with the exact model input. A focused core
 flow carries one-based source candidate IDs and zero-based post-SAM2 filtered
 indices across removal, CLIP, BLIP3, final area ordering, labelled

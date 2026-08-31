@@ -555,11 +555,15 @@ def run_single_image(
                         0.0, float(_clip_meta[key])
                     )
         log("[clip] => classification done, now final label filter...", 1, verbosity)
+        # Capture this before routing or BLIP3 can replace the working list.
+        # It is the number of candidates returned from the actual CLIP stage.
+        clip_scored_count = len(masked_after_clip)
     else:
         masked_after_clip = filtered_for_clip
-    candidate_counts["after_clip"] = len(masked_after_clip)
+        clip_scored_count = len(masked_after_clip)
+    candidate_counts["after_clip"] = clip_scored_count
     if canonical_geometry or config.clip_routing_cfg:
-        candidate_counts["clip_scored"] = len(masked_after_clip)
+        candidate_counts["clip_scored"] = clip_scored_count
 
     clip_only_masks = [dict(m) for m in masked_after_clip]
     clip_routing_diagnostics: list[Mapping[str, Any]] = []
@@ -772,7 +776,7 @@ def run_single_image(
             name="clip",
             status="executed" if config.clip_cfg else "not_configured",
             detail=(
-                f"{len(filtered_for_clip)} -> {len(masked_after_clip)}"
+                f"{len(filtered_for_clip)} -> {clip_scored_count}"
                 if config.clip_cfg
                 else "no clip configuration"
             ),
