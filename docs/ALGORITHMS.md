@@ -85,8 +85,9 @@ service limits each request to 32 planned questions and 32 generated tokens per
 question. Each applicable candidate is composed once into one RGB image. Its
 inclusive raw-mask bbox determines a bounded centered crop; exact Euclidean
 dilation produces support, and a second exact dilation produces an exterior
-contour. Support pixels are restored from the source byte-for-byte while all
-other crop pixels are Pillow-Gaussian-blurred scene context. A crop that cannot
+contour. Support D pixels are restored from source bytes while the exterior
+contour is painted with the configured RGB color and all other crop pixels are
+Pillow-Gaussian-blurred scene context. A crop that cannot
 contain support plus contour after independent endpoint clamping is rejected
 for that candidate before image/model work. The fully composed image alone is
 bilinearly resized for QA, with short side 256 and long side capped at 768.

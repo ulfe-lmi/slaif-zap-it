@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import math
+import subprocess
+import sys
 
 import numpy as np
 import pytest
 from PIL import Image, ImageFilter
 
+from modules.classifier import clip as clip_module
 from modules.verifier import blip3 as blip3_module
 from src.core import BoundedMemoryArtifactSink, CandidateViewConfig, build_mask_views
 from src.core.errors import CoreError
+from src.service.capabilities import build_capabilities
 from src.service.errors import ServiceError
+from src.service.schemas import CandidateViewInputRecord
+from src.service.settings import ServiceSettings
 from src.service.yaml_input import parse_hostile_config
 
 
@@ -452,3 +459,637 @@ def test_contour_controls_use_effective_clamped_width_and_strict_exterior():
     assert disabled.raw_contour_width == 13
     assert disabled.effective_contour_width == 0
     assert not np.any(disabled.contour)
+
+
+def test_bbox_is_storage_only_and_context_is_exactly_dilated():
+    image = np.zeros((32, 36, 3), dtype=np.uint8)
+    mask = np.zeros((32, 36), dtype=bool)
+    mask[8:24, 10:26] = True
+    mask[12:20, 14:22] = False
+    image[12:20, 14:22] = (250, 250, 250)
+    image[7, 10] = (240, 10, 10)
+    view = build_mask_views(image, mask, 7, _clip_config())
+
+    assert view.target_bbox_xyxy == (10, 8, 26, 24)
+    assert view.context_bbox_xyxy == view.target_bbox_xyxy
+    assert np.all(view.target_rgb[~view.target_mask] == 0)
+    assert np.all(view.context_rgb[~view.support_mask] == 0)
+    assert np.array_equal(view.target_rgb[view.target_mask], image[8:24, 10:26][view.target_mask])
+    assert np.array_equal(view.context_rgb[view.target_mask], image[8:24, 10:26][view.target_mask])
+    assert not np.any(view.context_rgb[4:12, 4:12])
+
+
+def test_exact_512_striped_rectangular_leakage_fixture_is_repeatable():
+    image = np.zeros((512, 512, 3), dtype=np.uint8)
+    rows, cols = np.indices((512, 512))
+    image[:, :, 0] = ((rows * 5 + cols * 3) % 251 + 1).astype(np.uint8)
+    image[:, :, 1] = ((rows * 7 + cols * 11) % 251 + 1).astype(np.uint8)
+    image[:, :, 2] = ((rows * 13 + cols * 17) % 251 + 1).astype(np.uint8)
+    mask = np.zeros((512, 512), dtype=bool)
+    mask[64:448, 48:464] = True
+    mask[192:320, 192:320] = False
+    distractor = np.zeros((512, 512), dtype=bool)
+    distractor[224:288, 224:288] = True
+    image[distractor] = np.where(
+        ((rows[distractor] // 4) % 2 == 0)[:, None],
+        np.array((255, 8, 8), dtype=np.uint8),
+        np.array((8, 255, 255), dtype=np.uint8),
+    )
+
+    config = _clip_config(context_fraction=0, min_context_pixels=0, max_context_pixels=0)
+    first = build_mask_views(image, mask, 11, config)
+    second = build_mask_views(image, mask, 11, config)
+    x0, y0, x1, y1 = first.target_bbox_xyxy
+    source_crop = image[y0:y1, x0:x1]
+    distractor_crop = distractor[y0:y1, x0:x1]
+
+    assert np.unique(image[distractor].reshape(-1, 3), axis=0).shape[0] == 2
+    assert first.target_bbox_xyxy == (48, 64, 464, 448)
+    assert first.context_bbox_xyxy == first.target_bbox_xyxy
+    assert np.all(first.target_rgb[distractor_crop] == 0)
+    assert np.all(first.context_rgb[distractor_crop] == 0)
+    assert np.array_equal(first.target_rgb[first.target_mask], source_crop[first.target_mask])
+    assert np.array_equal(first.context_rgb[first.target_mask], source_crop[first.target_mask])
+    assert first.target_rgb.tobytes() == second.target_rgb.tobytes()
+    assert first.context_rgb.tobytes() == second.context_rgb.tobytes()
+    first_png = io.BytesIO()
+    Image.fromarray(first.context_rgb, mode="RGB").save(first_png, format="PNG")
+    second_png = io.BytesIO()
+    Image.fromarray(second.context_rgb, mode="RGB").save(second_png, format="PNG")
+    assert first_png.getvalue() == second_png.getvalue()
+    assert (
+        hashlib.sha256(first_png.getvalue()).hexdigest()
+        == hashlib.sha256(second_png.getvalue()).hexdigest()
+    )
+
+
+def test_generated_visibility_markers_holes_components_and_radius_overrides():
+    image = np.zeros((41, 47, 3), dtype=np.uint8)
+    mask = np.zeros((41, 47), dtype=bool)
+    mask[20, 22] = True
+    image[20, 23] = (10, 20, 30)
+    image[22, 25] = (40, 50, 60)
+    view = build_mask_views(image, mask, 1, _clip_config(context_fraction=0.5))
+    assert view.metadata["raw_radius"] == 1
+    assert view.effective_radius == 1
+    assert view.context_rgb[1, 2].tolist() == [3, 7, 10]
+    assert not np.any(np.all(view.context_rgb == image[22, 25], axis=2))
+
+    zero = build_mask_views(image, mask, 1, _clip_config(context_fraction=0.0))
+    minimum = build_mask_views(
+        image,
+        mask,
+        1,
+        _clip_config(context_fraction=0.0, min_context_pixels=3, max_context_pixels=5),
+    )
+    maximum = build_mask_views(
+        image,
+        mask,
+        1,
+        _clip_config(context_fraction=0.5, min_context_pixels=0, max_context_pixels=0),
+    )
+    assert zero.effective_radius == 0
+    assert minimum.effective_radius == 3
+    assert maximum.metadata["raw_radius"] == 1 and maximum.effective_radius == 0
+
+    ring_image = np.zeros((13, 13, 3), dtype=np.uint8)
+    ring = np.zeros((13, 13), dtype=bool)
+    ring[3:10, 3:10] = True
+    ring[5:8, 5:8] = False
+    ring_image[6, 6] = (121, 122, 123)
+    before = build_mask_views(
+        ring_image, ring, 2, _clip_config(min_context_pixels=1, max_context_pixels=1)
+    )
+    reached = build_mask_views(
+        ring_image, ring, 2, _clip_config(min_context_pixels=2, max_context_pixels=2)
+    )
+    bx, by, _, _ = before.context_bbox_xyxy
+    rx, ry, _, _ = reached.context_bbox_xyxy
+    assert np.all(before.context_rgb[6 - by, 6 - bx] == 0)
+    assert reached.context_rgb[6 - ry, 6 - rx].tolist() == [42, 42, 43]
+
+    components = np.zeros((24, 36), dtype=bool)
+    components[10:13, 4:7] = True
+    components[10:13, 25:28] = True
+    components_image = np.zeros((24, 36, 3), dtype=np.uint8)
+    components_image[11, 5] = (201, 17, 91)
+    components_image[11, 26] = (19, 211, 73)
+    components_image[11, 16] = (251, 251, 251)
+    component_view = build_mask_views(components_image, components, 3, _clip_config())
+    assert component_view.context_bbox_xyxy == (4, 10, 28, 13)
+    assert component_view.context_rgb[1, 1].tolist() == [201, 17, 91]
+    assert component_view.context_rgb[1, 22].tolist() == [19, 211, 73]
+    assert np.all(component_view.context_rgb[1, 12] == 0)
+
+
+def test_border_corner_and_disconnected_source_pixels_have_no_wraparound():
+    height, width = 17, 19
+    rows, cols = np.indices((height, width))
+    image = np.stack(
+        (
+            (rows * 17 + cols * 3 + 1) % 251,
+            (rows * 5 + cols * 19 + 2) % 251,
+            (rows * 23 + cols * 7 + 3) % 251,
+        ),
+        axis=2,
+    ).astype(np.uint8)
+    mask = np.zeros((height, width), dtype=bool)
+    for point in (
+        (0, 0),
+        (0, width - 1),
+        (height - 1, 0),
+        (height - 1, width - 1),
+        (0, width // 2),
+        (height - 1, width // 2),
+        (height // 2, 0),
+        (height // 2, width - 1),
+    ):
+        mask[point] = True
+    view = build_mask_views(
+        image, mask, 4, _clip_config(min_context_pixels=1, max_context_pixels=1)
+    )
+    x0, y0, x1, y1 = view.context_bbox_xyxy
+    assert (x0, y0, x1, y1) == (0, 0, width, height)
+    assert view.target_rgb.shape[:2] == view.target_mask.shape == view.support_mask.shape
+    assert np.all(view.context_rgb[~view.support_mask] == 0)
+    for row, col in zip(*np.nonzero(mask)):
+        assert np.array_equal(view.target_rgb[row - y0, col - x0], image[row, col])
+        assert np.array_equal(view.context_rgb[row - y0, col - x0], image[row, col])
+
+
+@pytest.mark.parametrize("contour_enabled", [False, True])
+def test_tiny_mask_builds_source_space_crop_before_resize_and_contour(contour_enabled):
+    image = _scene((15, 15))
+    mask = np.zeros((15, 15), dtype=bool)
+    mask[5:8, 5:8] = True
+    config = _blip_config(
+        context_fraction=0,
+        min_context_pixels=0,
+        max_context_pixels=0,
+        crop_extent_multiplier=2.0,
+        contour_enabled=contour_enabled,
+        contour_fraction=0.0,
+        contour_min_pixels=1,
+        contour_max_pixels=1,
+    )
+    composition = blip3_module.compose_single_blip3_view(image, mask, 5, config)
+    assert composition.crop_bbox_xyxy_exclusive == (3, 3, 9, 9)
+    assert composition.crop_shape_hw == (6, 6)
+    assert composition.model_input_shape_hw == (256, 256)
+    expected_source = image[3:9, 3:9]
+    expected_mask = mask[3:9, 3:9]
+    assert np.array_equal(composition.raw_mask, expected_mask)
+    assert np.array_equal(composition.support_mask, expected_mask)
+    assert np.array_equal(
+        composition.source_composite[expected_mask], expected_source[expected_mask]
+    )
+    expected = np.asarray(
+        Image.fromarray(composition.source_composite, mode="RGB").resize(
+            (256, 256), Image.Resampling.BILINEAR
+        )
+    )
+    assert np.array_equal(composition.rgb, expected)
+    if contour_enabled:
+        assert np.any(composition.contour)
+        assert np.all(composition.source_composite[composition.contour] == [255, 224, 0])
+    else:
+        assert not np.any(composition.contour)
+
+
+def test_euclidean_radius_formula_and_markers():
+    image = np.zeros((25, 25, 3), dtype=np.uint8)
+    mask = np.zeros((25, 25), dtype=bool)
+    mask[12, 12] = True
+    image[12, 13] = (10, 20, 30)
+    image[14, 14] = (40, 50, 60)
+    view = build_mask_views(image, mask, 1, _clip_config(context_fraction=0.5))
+    assert view.metadata["raw_radius"] == 1
+    assert view.effective_radius == 1
+    assert view.context_bbox_xyxy == (11, 11, 14, 14)
+    assert view.context_rgb[1, 2, 0] == 3
+    assert not np.any(view.context_rgb == image[14, 14])
+    clamped = build_mask_views(
+        image,
+        mask,
+        1,
+        _clip_config(context_fraction=0.0, min_context_pixels=2, max_context_pixels=3),
+    )
+    assert clamped.effective_radius == 2
+
+
+def test_radius_512_dilation_uses_bounded_local_resources():
+    child = (
+        "import resource\n"
+        "import time\n"
+        "import numpy as np\n"
+        "from src.core.mask_views import _circular_dilate\n"
+        "mask = np.zeros((941, 1672), dtype=bool)\n"
+        "mask[470:472, 835:837] = True\n"
+        "started = time.perf_counter()\n"
+        "support = _circular_dilate(mask, 512)\n"
+        "elapsed = time.perf_counter() - started\n"
+        "assert support.dtype == bool and support.shape == mask.shape\n"
+        "assert support[470, 835] and not support[0, 0]\n"
+        "print(f'{elapsed:.6f} {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss}')\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", child], check=True, capture_output=True, text=True, timeout=30
+    )
+    elapsed, rss_kib = (float(value) for value in completed.stdout.split())
+    assert elapsed < 30.0
+    assert rss_kib < 512 * 1024
+
+
+@pytest.mark.parametrize(
+    "mask_point",
+    [(0, 0), (0, 24), (24, 0), (24, 24), (0, 12), (12, 0), (24, 12), (12, 24)],
+)
+def test_border_masks_are_clipped_without_wraparound(mask_point):
+    image = np.zeros((25, 25, 3), dtype=np.uint8)
+    mask = np.zeros((25, 25), dtype=bool)
+    mask[mask_point] = True
+    view = build_mask_views(
+        image, mask, 2, _clip_config(min_context_pixels=4, max_context_pixels=4)
+    )
+    x0, y0, x1, y1 = view.context_bbox_xyxy
+    assert 0 <= x0 < x1 <= 25 and 0 <= y0 < y1 <= 25
+    assert view.support_mask.shape == view.context_rgb.shape[:2]
+    assert np.count_nonzero(view.target_mask) == 1
+
+
+def test_results_are_immutable_and_inputs_are_not_mutated():
+    image = np.arange(20 * 21 * 3, dtype=np.uint8).reshape(20, 21, 3)
+    mask = np.zeros((20, 21), dtype=bool)
+    mask[5:8, 6:9] = True
+    image_before, mask_before = image.copy(), mask.copy()
+    first = build_mask_views(image, mask, 4, _clip_config(context_fraction=0.2))
+    second = build_mask_views(image, mask, 4, _clip_config(context_fraction=0.2))
+    assert np.array_equal(first.context_rgb, second.context_rgb)
+    assert not first.context_rgb.flags.writeable
+    assert not first.support_mask.flags.writeable
+    with pytest.raises(ValueError):
+        first.context_rgb[0, 0, 0] = 1
+    assert np.array_equal(image, image_before)
+    assert np.array_equal(mask, mask_before)
+
+
+def test_contour_is_only_ring_and_single_image_has_no_rectangular_bridge():
+    image = np.full((24, 32, 3), 200, dtype=np.uint8)
+    mask = np.zeros((24, 32), dtype=bool)
+    mask[8:10, 4:6] = True
+    mask[7:17, 25:27] = True
+    mask[7:17, 4:6] = True
+    composition = blip3_module.compose_single_blip3_view(
+        image,
+        mask,
+        3,
+        _blip_config(
+            context_fraction=0.0,
+            min_context_pixels=2,
+            max_context_pixels=2,
+            contour_fraction=0.25,
+            contour_min_pixels=2,
+            contour_max_pixels=2,
+        ),
+    )
+    x0, y0, _, _ = composition.crop_bbox_xyxy_exclusive
+    row = 12 - y0
+    midpoint = (4 + 26) // 2 - x0
+    assert not composition.support_mask[row, midpoint]
+    assert not composition.contour[row, midpoint]
+    assert not np.any(composition.contour & composition.support_mask)
+    assert np.all(composition.source_composite[composition.contour] == [255, 224, 0])
+
+
+def test_resize_restores_high_contrast_target_pixels_after_interpolation():
+    image = np.full((20, 20, 3), (249, 3, 241), dtype=np.uint8)
+    mask = np.zeros((20, 20), dtype=bool)
+    mask[7:12, 7:12] = True
+    image[mask] = [1, 2, 3]
+    config = _blip_config(
+        context_fraction=0.0,
+        min_context_pixels=2,
+        max_context_pixels=2,
+        contour_enabled=False,
+    )
+    composition = blip3_module.compose_single_blip3_view(image, mask, 1, config)
+    expected = np.asarray(
+        Image.fromarray(composition.source_composite, mode="RGB").resize(
+            (composition.scaled_width, composition.scaled_height), Image.Resampling.BILINEAR
+        )
+    )
+    assert np.array_equal(composition.rgb, expected)
+    assert np.array_equal(composition.source_composite[composition.raw_mask], image[mask])
+
+
+def test_single_image_composition_retains_only_crop_bounded_arrays():
+    image = _scene((128, 160))
+    mask = np.zeros((128, 160), dtype=bool)
+    mask[60:68, 75:83] = True
+    composition = blip3_module.compose_single_blip3_view(
+        image, mask, 9, _blip_config(context_fraction=0.0, contour_enabled=True)
+    )
+    retained = [value for value in vars(composition).values() if isinstance(value, np.ndarray)]
+    assert retained
+    assert all(array.shape[:2] != image.shape[:2] for array in retained)
+    assert all(
+        array.nbytes <= composition.source_composite.nbytes for array in retained if array.ndim == 2
+    )
+    assert composition.source_composite.shape[:2] == composition.crop_shape_hw
+    assert composition.source_composite.shape[:2] != image.shape[:2]
+
+
+def test_capability_discloses_contour_rgb_limits_and_record_names():
+    capabilities = build_capabilities(ServiceSettings())
+    assert capabilities["candidate_views"]["blip3"]["fields"]["contour_rgb"] == {
+        "type": "array",
+        "min_items": 3,
+        "max_items": 3,
+        "item_type": "integer",
+        "item_minimum": 0,
+        "item_maximum": 255,
+    }
+    assert "min_items" not in capabilities["candidate_views"]["clip"]["fields"]["context_fraction"]
+    base = {
+        "stage": "clip",
+        "source_candidate_id": 8,
+        "filtered_index": 3,
+        "artifact_name": "clip-candidate-view-CANDIDATE-0008.png",
+        "target_bbox_xyxy": [1, 2, 3, 4],
+        "context_bbox_xyxy": [0, 1, 4, 5],
+        "effective_radius": 2,
+        "source_dimensions": {"height": 8, "width": 8},
+        "crop_dimensions": {"height": 4, "width": 4},
+        "model_input_dimensions": {"height": 4, "width": 4},
+    }
+    assert CandidateViewInputRecord.model_validate(base).artifact_name == base["artifact_name"]
+    with pytest.raises(ValueError):
+        CandidateViewInputRecord.model_validate(
+            {**base, "artifact_name": "clip-candidate-view-CANDIDATE-0007.png"}
+        )
+    blip = {
+        **base,
+        "stage": "blip3",
+        "artifact_name": "blip3-verification-CANDIDATE-0008-QUESTION-0003.png",
+        "question_id": 3,
+        "raw_mask_bbox_xyxy_inclusive": [1, 2, 3, 4],
+        "support_bbox_xyxy_inclusive": [0, 1, 4, 5],
+        "crop_bbox_xyxy_exclusive": [0, 1, 4, 5],
+        "raw_context_radius": 2,
+        "effective_context_radius": 2,
+        "raw_contour_width": 1,
+        "effective_contour_width": 1,
+        "effective_blur_sigma": 2.0,
+        "source_composite_dimensions": {"height": 4, "width": 4},
+    }
+    assert CandidateViewInputRecord.model_validate(blip).question_id == 3
+    with pytest.raises(ValueError):
+        CandidateViewInputRecord.model_validate(
+            {**blip, "artifact_name": "blip3-verification-CANDIDATE-0008-QUESTION-0004.png"}
+        )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"candidate_views:\n  blip3:\n    contour_rgb: [0, 1, 256]\n",
+        b"candidate_views:\n  blip3:\n    contour_rgb: [0, 1.0, 2]\n",
+        b"candidate_views:\n  blip3:\n    contour_width: 1\n",
+        b"candidate_views:\n  blip3:\n    crop_extent_multiplier: 0.9\n",
+    ],
+)
+def test_blip3_strict_validation_rejects_machine_limit_violations(raw):
+    with pytest.raises(ServiceError) as excinfo:
+        parse_hostile_config(b"alpha: 0.5\n" + raw, verbosity=3)
+    assert excinfo.value.code in {"invalid_config", "unsupported_field"}
+
+
+def test_real_clip_classify_single_receives_literal_processor_context_view():
+    class Scalar:
+        def __init__(self, value):
+            self.value = value
+
+        def cpu(self):
+            return self
+
+        def item(self):
+            return self.value
+
+        def __float__(self):
+            return float(self.value)
+
+    class Tensor:
+        def __init__(self, data):
+            self.data = np.asarray(data, dtype=np.float64)
+
+        @property
+        def T(self):
+            return Tensor(self.data.T)
+
+        def numel(self):
+            return int(self.data.size)
+
+        def norm(self, dim=-1, keepdim=False):
+            return Tensor(np.linalg.norm(self.data, axis=dim, keepdims=keepdim))
+
+        def __truediv__(self, other):
+            return Tensor(self.data / other.data)
+
+        def __getitem__(self, index):
+            value = self.data[index]
+            return Scalar(value) if np.ndim(value) == 0 else Tensor(value)
+
+        def argmax(self):
+            return Scalar(int(np.argmax(self.data)))
+
+    class Torch:
+        class _NoGrad:
+            def __enter__(self):
+                return None
+
+            def __exit__(self, *_args):
+                return False
+
+        def no_grad(self):
+            return self._NoGrad()
+
+        def is_tensor(self, value):
+            return isinstance(value, Tensor)
+
+        def tensor(self, data):
+            return Tensor(data)
+
+        def matmul(self, left, right):
+            return Tensor(np.matmul(left.data, right.data))
+
+    torch = Torch()
+
+    class Processor:
+        def __init__(self):
+            self.images = []
+
+        def __call__(self, *, images, return_tensors):
+            assert return_tensors == "pt"
+            self.images.append(np.asarray(images).copy())
+            return {}
+
+    class Model:
+        def get_image_features(self, **_inputs):
+            return torch.tensor([[3.0, 1.0]])
+
+    processor = Processor()
+    clip_filter = object.__new__(clip_module._ClipFilter)
+    clip_filter._torch = torch
+    clip_filter.device = "cpu"
+    clip_filter.model_dtype = None
+    clip_filter.processor = processor
+    clip_filter.model = Model()
+    clip_filter.text_embeds = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+    clip_filter.class_idx = ["target", "distractor"]
+    clip_filter.all_prompts = ["target prompt", "distractor prompt"]
+    clip_filter.debug = True
+    clip_filter.verbosity = 0
+    clip_filter.log_print = lambda *_args, **_kwargs: None
+
+    image = np.zeros((32, 36, 3), dtype=np.uint8)
+    mask = np.zeros((32, 36), dtype=bool)
+    mask[8:24, 10:26] = True
+    image[12:20, 14:22] = (250, 250, 250)
+    sink = BoundedMemoryArtifactSink()
+    records = []
+    clip_filter.filter_masks(
+        [{"segmentation": mask, "_source_index": 7, "_filtered_index": 2}],
+        image,
+        None,
+        "frame",
+        artifact_sink=sink,
+        safe_artifact_names=True,
+        candidate_view_config=_clip_config(context_fraction=0.0),
+        candidate_view_inputs=records,
+    )
+    expected = build_mask_views(image, mask, 8, _clip_config(context_fraction=0.0)).context_rgb
+    assert len(processor.images) == 1
+    assert np.array_equal(processor.images[0], expected)
+    assert np.array_equal(sink.artifacts()[0].array, processor.images[0])
+    assert sink.names() == ("clip-candidate-view-CANDIDATE-0008.png",)
+    png = io.BytesIO()
+    Image.fromarray(sink.artifacts()[0].array, mode="RGB").save(png, format="PNG")
+    decoded = np.asarray(Image.open(io.BytesIO(png.getvalue())))
+    assert np.array_equal(decoded, processor.images[0])
+    assert records[0]["source_candidate_id"] == 8
+    assert records[0]["filtered_index"] == 2
+
+
+def test_resident_clip_debug_configuration_is_a_b_a_request_local():
+    class TextEmbeds:
+        def numel(self):
+            return 1
+
+    holder = object.__new__(clip_module._ClipFilter)
+    holder.text_embeds = TextEmbeds()
+    holder.debug = True
+    holder.verbosity = 0
+    holder.log_print = lambda *_args, **_kwargs: None
+    updates = []
+    classifications = []
+    holder.update_labels = lambda config: updates.append(dict(config))
+
+    def classify(patch, _index):
+        classifications.append(patch.copy())
+        return "target", 0.5, "target prompt"
+
+    holder.classify_single = classify
+    state = {"clip_filter": holder}
+    image = np.full((18, 20, 3), 255, dtype=np.uint8)
+    mask = np.zeros((18, 20), dtype=bool)
+    mask[7:11, 8:12] = True
+
+    def run_once(context_fraction):
+        sink = BoundedMemoryArtifactSink()
+        records = []
+        clip_module.run(
+            state,
+            {
+                "config": {"debug": True, "labels": {"target": "target"}},
+                "masks": [{"segmentation": mask, "_source_index": 7}],
+                "out_dir": None,
+                "fname_stem": "request",
+                "artifact_sink": sink,
+                "safe_artifact_names": True,
+                "candidate_view_config": _clip_config(context_fraction=context_fraction),
+                "candidate_view_inputs": records,
+            },
+            image,
+            verbosity=3,
+        )
+        return sink, records
+
+    first_sink, first_records = run_once(0.1)
+    second_sink, second_records = run_once(0.3)
+    third_sink, third_records = run_once(0.1)
+    assert first_sink.names() == third_sink.names() == ("clip-candidate-view-CANDIDATE-0008.png",)
+    assert second_sink.names() == first_sink.names()
+    assert first_records[0]["artifact_name"] == third_records[0]["artifact_name"]
+    assert len(updates) == len(classifications) == 3
+    assert not np.array_equal(classifications[0], classifications[1])
+    assert np.array_equal(classifications[0], classifications[2])
+    assert state["clip_filter"] is holder
+
+
+def test_centered_crop_uses_inclusive_centers_and_independent_clamps():
+    cases = [
+        ((40, 50), (20, 15, 23, 17), 1.0),
+        ((40, 50), (20, 15, 22, 18), 1.5),
+        ((40, 50), (0, 0, 3, 2), 2.0),
+        ((40, 50), (46, 35, 49, 38), 2.0),
+    ]
+    for (height, width), (raw_x0, raw_y0, raw_x1, raw_y1), multiplier in cases:
+        image = np.zeros((height, width, 3), dtype=np.uint8)
+        mask = np.zeros((height, width), dtype=bool)
+        mask[raw_y0 : raw_y1 + 1, raw_x0 : raw_x1 + 1] = True
+        config = _blip_config(
+            crop_extent_multiplier=multiplier,
+            context_fraction=0.0,
+            min_context_pixels=0,
+            max_context_pixels=0,
+            contour_enabled=False,
+        )
+        composition = blip3_module.compose_single_blip3_view(image, mask, 1, config)
+        raw_width = raw_x1 - raw_x0 + 1
+        raw_height = raw_y1 - raw_y0 + 1
+        nominal_width = math.ceil(multiplier * raw_width)
+        nominal_height = math.ceil(multiplier * raw_height)
+
+        # Independent expected arithmetic: inclusive pixel-center, odd/even
+        # nominal sizes, and endpoint clamps without shifting the other end.
+        expected_x0 = math.floor((raw_x0 + raw_x1) / 2 - (nominal_width - 1) / 2)
+        expected_y0 = math.floor((raw_y0 + raw_y1) / 2 - (nominal_height - 1) / 2)
+        expected_box = (
+            max(0, min(width, expected_x0)),
+            max(0, min(height, expected_y0)),
+            max(0, min(width, expected_x0 + nominal_width)),
+            max(0, min(height, expected_y0 + nominal_height)),
+        )
+        assert composition.crop_bbox_xyxy_exclusive == expected_box
+        assert composition.crop_shape_hw == (
+            expected_box[3] - expected_box[1],
+            expected_box[2] - expected_box[0],
+        )
+
+    image = np.zeros((30, 30, 3), dtype=np.uint8)
+    asymmetric = np.zeros((30, 30), dtype=bool)
+    asymmetric[10:13, 10:14] = True
+    config = _blip_config(
+        crop_extent_multiplier=1.5,
+        context_fraction=0.0,
+        min_context_pixels=0,
+        max_context_pixels=0,
+        contour_fraction=0.0,
+        contour_min_pixels=1,
+        contour_max_pixels=1,
+    )
+    composition = blip3_module.compose_single_blip3_view(image, asymmetric, 1, config)
+    assert composition.crop_bbox_xyxy_exclusive == (9, 9, 15, 14)
+    assert composition.contour[11 - 9, 14 - 9]
+    old_shifted_box = (8, 9, 14, 14)
+    assert old_shifted_box[2] == 14 < composition.crop_bbox_xyxy_exclusive[2]

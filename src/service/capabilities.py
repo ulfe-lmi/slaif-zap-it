@@ -46,6 +46,13 @@ class CapabilityField(BaseModel):
     minimum: int | float | None = None
     maximum: int | float | None = None
     allowed: List[Any] | None = None
+    min_items: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    max_items: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    item_type: Literal["integer", "number", "boolean", "string"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    item_minimum: int | float | None = Field(default=None, exclude_if=lambda value: value is None)
+    item_maximum: int | float | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class FixedControls(BaseModel):
@@ -182,6 +189,11 @@ def _candidate_view_fields(*, include_contour: bool) -> Dict[str, CapabilityFiel
             "contour_max_pixels": CapabilityField(type="integer", minimum=1, maximum=3),
             "contour_rgb": CapabilityField(
                 type="array",
+                min_items=3,
+                max_items=3,
+                item_type="integer",
+                item_minimum=0,
+                item_maximum=255,
             ),
         }
     return {
@@ -286,8 +298,13 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
                 debug_trigger=("verbosity == 3 and an effective BLIP3 rule has debug == true"),
                 fixed_artifact_name="blip3-verification-CANDIDATE-0008-QUESTION-0003.png",
                 notes={
-                    "source_composite": "RGB source crop; D and contour are restored byte-for-byte",
-                    "debug_identity": "lossless PNG bytes equal the sole final model-input image",
+                    "source_composite": (
+                        "RGB source crop; support D pixels are restored from source bytes and "
+                        "exterior contour pixels are painted with configured RGB"
+                    ),
+                    "debug_identity": (
+                        "decoded lossless PNG RGB pixels equal the sole final model-input array"
+                    ),
                     "contour_rgb": "array of exactly three strict integers, each from 0 to 255",
                 },
             ),
@@ -305,8 +322,9 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
                 "raw-mask and support bboxes are inclusive xyxy; crop bbox is half-open xyxy"
             ),
             crop_policy=(
-                "ceil(multiplier * raw bbox dimensions), center placed with floor on half-pixel ties, "
-                "endpoints independently clamped without shifting"
+                "nominal size = ceil(multiplier * raw inclusive bbox dimensions); start = "
+                "floor(inclusive pixel-center - (nominal size - 1) / 2); endpoints independently "
+                "clamped without shifting"
             ),
             blur_policy=(
                 "Pillow ImageFilter.GaussianBlur; sigma=min(max(blur_sigma_fraction * L, 2), 20)"

@@ -133,7 +133,8 @@ When a BLIP3 rule executes, the verifier composes one deterministic RGB image
 per applicable candidate and passes that same image to every QA call for the
 candidate. The inclusive raw-mask bbox determines only a centered nominal crop;
 exact Euclidean dilation supplies support and a second exact dilation supplies
-an exterior contour. Source pixels under support are restored byte-for-byte;
+an exterior contour. Source pixels under support D are restored from source
+bytes; exterior contour pixels are painted with the configured RGB color, and
 all remaining source-scene pixels are Gaussian-blurred with Pillow. A clamped
 crop that cannot contain support plus contour is rejected locally before image,
 QA, or debug work. The complete composition is bilinearly resized under the

@@ -191,8 +191,8 @@ labels, rule names or answers. No answer-text artifact is generated.
 
 BLIP3 composes one source-space image once per applicable candidate and reuses
 the same final image for all questions: exact Euclidean support pixels are
-restored byte-for-byte, the exterior contour is painted outside support, and
-all other local scene pixels are Pillow-Gaussian-blurred. The centered nominal
+restored from source bytes, the exterior contour is painted outside support,
+and all other local scene pixels are Pillow-Gaussian-blurred. The centered nominal
 crop uses inclusive raw/support bboxes and a half-open array-slice bbox. A crop
 that cannot contain support plus contour is rejected for that candidate before
 QA/debug work. The service validator strips nested

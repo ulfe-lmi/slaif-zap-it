@@ -106,11 +106,15 @@ separately from the small persistent CUDA context.
 
 The current generated-array evidence includes one exact 512x512 RGB uint8
 high-contrast striped distractor inside a nonrectangular mask bbox. It asserts
-source-space `M`/Euclidean `D` support, byte identity under `D`, Gaussian-blurred
+source-space `M`/Euclidean `D` support, source-byte identity under `D`, Gaussian-blurred
 scene context, clipped borders/corners, holes, disconnected components, exact
 radius/contour formulas and deterministic PNG hashes. Independent generated
 arrays derive source geometry and Pillow blur; no external photographs, model
 downloads or CUDA are used. Accepted and containment-rejected crops are tested.
+Crop arithmetic is independently checked for odd/even raw dimensions and nominal
+sizes, non-integer multiplier ceiling, interior and boundary-clamped placement,
+and the asymmetric one-pixel containment regression. Returned composition arrays
+are crop-bounded; no redundant source-shaped masks are retained.
 
 The semantic seams are literal CPU/fake captures: the real CLIP
 `classify_single` path is exercised while a bounded processor records its

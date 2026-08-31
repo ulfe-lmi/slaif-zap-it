@@ -75,8 +75,9 @@ The shared pure candidate-view builder constructs the legacy CLIP view from a
 mask-derived crop. BLIP3 uses a separate pure single-image compositor: an
 inclusive raw-mask bbox determines a nominal centered crop, exact Euclidean
 dilation determines support, and a second exact dilation determines an exterior
-contour. Source RGB pixels under support are restored byte-for-byte; every
-other crop pixel is Pillow Gaussian-blurred scene context. The crop is rejected
+contour. Source RGB pixels under support D are restored from source bytes; the
+exterior contour is painted with the configured RGB color, and every other crop
+pixel is Pillow Gaussian-blurred scene context. The crop is rejected
 locally if support plus contour cannot fit after endpoint clamping. Only the
 fully composed image is bilinearly resized for QA, with short side 256 and long
 side capped at 768. The fixed instruction follows the delimited client

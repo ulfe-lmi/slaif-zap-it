@@ -46,9 +46,6 @@ class Blip3VerificationComposition:
     raw_mask: np.ndarray
     support_mask: np.ndarray
     contour: np.ndarray
-    source_mask: np.ndarray
-    source_support_mask: np.ndarray
-    source_contour: np.ndarray
     raw_mask_bbox_xyxy_inclusive: Tuple[int, int, int, int]
     support_bbox_xyxy_inclusive: Tuple[int, int, int, int]
     crop_bbox_xyxy_exclusive: Tuple[int, int, int, int]
@@ -192,8 +189,8 @@ def _single_view_geometry(image_shape, segmentation_mask, source_candidate_id, c
     nominal_height = math.ceil(config.crop_extent_multiplier * bbox_height)
     center_x = (raw_x0 + raw_x1) / 2.0
     center_y = (raw_y0 + raw_y1) / 2.0
-    crop_x0_unclamped = math.floor(center_x - nominal_width / 2.0)
-    crop_y0_unclamped = math.floor(center_y - nominal_height / 2.0)
+    crop_x0_unclamped = math.floor(center_x - (nominal_width - 1) / 2.0)
+    crop_y0_unclamped = math.floor(center_y - (nominal_height - 1) / 2.0)
     crop_x1_unclamped = crop_x0_unclamped + nominal_width
     crop_y1_unclamped = crop_y0_unclamped + nominal_height
     crop_x0 = max(0, min(width, crop_x0_unclamped))
@@ -308,9 +305,6 @@ def compose_single_blip3_view(
         raw_mask=_readonly(raw_mask_crop),
         support_mask=_readonly(support_crop),
         contour=_readonly(contour_crop),
-        source_mask=_readonly(segmentation_mask.copy()),
-        source_support_mask=_readonly(geometry["support"]),
-        source_contour=_readonly(geometry["contour"]),
         raw_mask_bbox_xyxy_inclusive=geometry["raw_bbox"],
         support_bbox_xyxy_inclusive=geometry["support_bbox"],
         crop_bbox_xyxy_exclusive=geometry["crop_box"],

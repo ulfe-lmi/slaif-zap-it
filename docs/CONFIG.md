@@ -185,8 +185,9 @@ independently clamped without shifting. Raw/support bboxes use inclusive
 pixel of `D` plus contour or that candidate is rejected with
 `crop_cannot_contain_support_and_contour`. The source crop is blurred with
 Pillow `ImageFilter.GaussianBlur`, sigma
-`min(max(blur_sigma_fraction * L, 2), 20)`, then support is restored byte-for-
-byte and only the exterior contour is painted. The complete one-image result
+`min(max(blur_sigma_fraction * L, 2), 20)`, then support D is restored from
+source bytes and only the exterior contour is painted with the configured RGB
+color. The complete one-image result
 is resized bilinearly with a 256-pixel target short side and 768-pixel maximum
 long side. Disconnected components and holes are mask-derived, not rectangular
 fills.

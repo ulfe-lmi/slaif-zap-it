@@ -69,13 +69,15 @@ Candidate-view debug artifacts are L3-only lossless PNGs of the exact arrays
 passed to the semantic processors. CLIP uses
 `clip-candidate-view-CANDIDATE-####.png`; BLIP3 uses
 `blip3-verification-CANDIDATE-####-QUESTION-####.png`. BLIP3 passes one image
-per candidate: exact source pixels in Euclidean support are restored, the
-exterior contour is painted, and every other crop pixel is Gaussian-blurred
+per candidate: exact source pixels in Euclidean support D are restored from
+source bytes, the exterior contour is painted with configured RGB, and every
+other crop pixel is Gaussian-blurred
 scene context. The source crop uses inclusive raw/support bboxes and a
 half-open array-slice bbox; its endpoints are independently clamped and must
 contain support plus contour. The full composition is bilinearly resized to a
-256-pixel short-side target with a 768-pixel long-side cap. The decoded PNG is
-byte-identical to the sole image passed to QA; this artifact documents pixel
+256-pixel short-side target with a 768-pixel long-side cap. RGB pixels decoded
+from the lossless PNG equal the sole image passed to QA; encoded PNG bytes are
+not raw RGB bytes. This artifact documents pixel
 identity and does not guarantee semantic accuracy.
 
 The exact radius-512 disk dilation uses a local-window squared distance

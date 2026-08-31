@@ -28,9 +28,10 @@ labels and manifest instance numbers come from the final structured objects;
 structured labels remain available whether or not a visualization is requested.
 
 BLIP3 verification is mask-isolated: each candidate receives one deterministic
-RGB image. Exact source pixels under the mask's Euclidean support are retained,
-the exterior is marked with a thin contour, and all remaining bounded scene
-context is Gaussian-blurred. CLIP retains its separate mask-derived view. The
+RGB image. Exact source pixels under the mask's Euclidean support D are restored
+from source bytes, the exterior is painted with a thin configured-RGB contour,
+and all remaining bounded scene context is Gaussian-blurred. CLIP retains its
+separate mask-derived view. The
 service's L3 `debug: true` rules expose the exact model inputs as fixed-name
 lossless PNGs; these are pixel-boundary audit artifacts, not guarantees of
 semantic accuracy.
@@ -172,7 +173,8 @@ bilinear RGB resize bounded to short side 256 and long side 768. A failed
 containment check is candidate-local, produces no QA/debug artifact, and is
 reported at L3 as `crop_cannot_contain_support_and_contour`. BLIP3 debug names
 remain `blip3-verification-CANDIDATE-####-QUESTION-####.png` and use one-based
-public IDs; the decoded PNG is byte-identical to the sole QA image.
+public IDs; RGB pixels decoded from the lossless PNG equal the sole QA image's
+model-input array.
 
 L3 post-filter diagnostics report one short-circuit outcome per evaluated SAM2
 candidate: `maxsize`, `empty_mask`, `max_w`, `max_h`, or retained, in that
