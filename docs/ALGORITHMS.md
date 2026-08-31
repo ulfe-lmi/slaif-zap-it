@@ -89,8 +89,12 @@ terminal class. Trusted CLI retains explicit low-score/substring compatibility.
 
 Service requests provide only rule mappings. The model, revision, FP16 dtype,
 tokenizer, processor, device, cache, and residency strategy remain pinned. The
-service limits each request to 32 planned questions and 32 generated tokens per
-question. Each applicable candidate is composed once into one RGB image. Its
+service limits each request to an immutable operator-owned 1..256 planned
+questions, defaulting to 256, and 32 generated tokens per question. The
+`SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` setting is not request YAML; canonical routing
+plans at most one question per routed candidate, while legacy multi-rule
+scheduling shares the same total cap. A planned excess is a structured
+`resource_limit` 413 before composition or generation. Each applicable candidate is composed once into one RGB image. Its
 inclusive raw-mask bbox determines a bounded centered crop; exact Euclidean
 dilation produces support, and a second exact dilation produces an exterior
 contour. Support D pixels are restored from source bytes while the exterior

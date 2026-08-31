@@ -459,7 +459,7 @@ Stable sanitized envelope on every failure:
 | `unauthorized` | 401 | missing/wrong bearer key |
 | `payload_too_large` | 413 | upload/body byte limits |
 | `image_too_large` | 413 | decoded pixels over cap |
-| `resource_limit` | 413 | SAM2 field or estimated-work cap exceeded; details include sanitized alternatives |
+| `resource_limit` | 413 | SAM2 field/estimated-work or planned BLIP3 question cap exceeded; details include sanitized alternatives |
 | `response_too_large` | 413 | essential JSON/ZIP document still exceeds response cap after optional tail omission |
 | `cancelled` | 499* | cancelled before completion |
 | `inference_failure` | 500 | engine failure (sanitized) |
@@ -481,6 +481,15 @@ reason, measured character/token/per-class/total count, actual safe type name,
 the first equal prompt index for duplicates, and the allowed limit. Prompt text
 and tokenizer IDs are never returned. The exact tokenizer's 78-token failure is
 therefore HTTP 400 `invalid_config` before SAM2 or model inference.
+
+BLIP3 capacity is operator-owned and immutable for the process. The
+`SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` startup setting accepts 1..256 and defaults
+to 256 questions/request. Canonical routing plans at most one question per
+routed candidate; legacy multi-rule scheduling shares the total cap. A planned
+excess returns HTTP 413 `resource_limit` with `planned_questions`,
+`allowed_limit`, `controlling_field`, and bounded `admissible_alternatives`
+before BLIP3 composition/generation. This is distinct from
+`response_too_large`, which means response assembly itself exceeded its budget.
 
 ## Data lifecycle
 
@@ -523,9 +532,10 @@ measured evidence and deployment prerequisites.
 - Live readiness requires the operator launcher, a freshly pinned exclusive
   GPU, and the complete local model cache.
 - No streaming; no asynchronous jobs; no video API.
-- BLIP3 request rules are bounded to 32 questions and 32 generated tokens per
-  question. Model identity, revision, dtype, device and residency are fixed
-  operator policy; they cannot be selected by YAML or multipart fields.
+- BLIP3 request rules are bounded by the operator-only 1..256 planned-question
+  capacity (default 256) and 32 generated tokens per question. Model identity,
+  revision, dtype, device and residency are fixed operator policy; they cannot
+  be selected by YAML or multipart fields.
 - Canny/Hough geometry and panoptic visualization remain explicitly unsupported
   service capabilities; `annotated-labelled` is the supported final-object
   labelled visualization. Optional `postsam2processing` impossibility geometry

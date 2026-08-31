@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -11,7 +12,9 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from modules.classifier import clip as clip_module
+from modules.verifier.blip3 import Blip3ResourceLimitError, _Blip3Filter
 from src.core.clip_prompts import ClipPromptValidationError, validate_clip_prompt_tokens
+from src.runtime.live_service import ResidentRegistry, live_engine_callable
 from src.service import FakeEngine, ReadyState, create_app
 from src.service.capabilities import build_capabilities
 from src.service.errors import ServiceError
@@ -20,13 +23,17 @@ from src.service.settings import ServiceSettings
 from src.service.yaml_input import parse_hostile_config
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+EXACT_TOMATO_CONFIG = REPO_ROOT / "tests" / "fixtures" / "configs" / "ripe-tomato-multiprompt.yaml"
+
+
 def _config(labels: dict[str, object]) -> bytes:
     return yaml.safe_dump({"alpha": 0.5, "clip": {"labels": labels}}).encode()
 
 
-def _png_bytes() -> bytes:
+def _png_bytes(height: int = 12, width: int = 12) -> bytes:
     buffer = io.BytesIO()
-    Image.fromarray(np.zeros((12, 12, 3), dtype=np.uint8)).save(buffer, format="PNG")
+    Image.fromarray(np.zeros((height, width, 3), dtype=np.uint8)).save(buffer, format="PNG")
     return buffer.getvalue()
 
 
@@ -169,6 +176,164 @@ def test_exact_tokenizer_preflight_accepts_77_and_rejects_78_before_engine():
     assert body["error"]["details"]["measured_token_count"] == 78
     assert engine.calls == []
     assert len(calls) == 1
+
+
+def test_live_adapter_maps_defense_prompt_errors_to_400_and_unrelated_errors_to_500():
+    registry = ResidentRegistry(loader=lambda: {"segmenter": {}, "clip": {}})
+    registry.load()
+
+    def typed_failure(*_args, **_kwargs):
+        raise ClipPromptValidationError(
+            "canonical CLIP prompt exceeds the tokenizer context limit",
+            {
+                "reason": "token_limit",
+                "allowed_limit": 77,
+                "class_identifier": "thing",
+                "prompt_index": 0,
+                "measured_token_count": 78,
+            },
+        )
+
+    app = create_app(
+        engine=live_engine_callable(registry, runner=typed_failure),
+        settings=ServiceSettings(),
+        readiness_provider=lambda: ReadyState(True, "fake"),
+    )
+    response = TestClient(app).post(
+        "/v1/completions",
+        files={
+            "image": ("image.png", _png_bytes(), "image/png"),
+            "config": ("config.yaml", _config({"thing": "ok"}), "application/yaml"),
+        },
+        data={"verbosity": "0"},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"] == {
+        "code": "invalid_config",
+        "message": "canonical CLIP prompt exceeds the tokenizer context limit",
+        "request_id": response.json()["error"]["request_id"],
+        "details": {
+            "reason": "token_limit",
+            "allowed_limit": 77,
+            "class_identifier": "thing",
+            "prompt_index": 0,
+            "measured_token_count": 78,
+        },
+    }
+
+    def unrelated_failure(*_args, **_kwargs):
+        raise RuntimeError("model runtime failure")
+
+    unrelated_app = create_app(
+        engine=live_engine_callable(registry, runner=unrelated_failure),
+        settings=ServiceSettings(),
+        readiness_provider=lambda: ReadyState(True, "fake"),
+    )
+    unrelated = TestClient(unrelated_app).post(
+        "/v1/completions",
+        files={
+            "image": ("image.png", _png_bytes(), "image/png"),
+            "config": ("config.yaml", _config({"thing": "ok"}), "application/yaml"),
+        },
+        data={"verbosity": "0"},
+    )
+    assert unrelated.status_code == 500
+    assert unrelated.json()["error"]["code"] == "inference_failure"
+
+
+@pytest.mark.parametrize("value", ["", "0", "-1", "257", "not-an-integer"])
+def test_blip3_question_capacity_operator_values_fail_closed(value):
+    with pytest.raises(ValueError, match="1 to 256"):
+        ServiceSettings.from_environment({"SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS": value})
+
+
+def test_blip3_question_capacity_accepts_32_and_256_without_model_loading():
+    assert ServiceSettings().blip3_max_questions == 256
+    assert (
+        ServiceSettings.from_environment(
+            {"SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS": "32"}
+        ).blip3_max_questions
+        == 32
+    )
+    assert (
+        ServiceSettings.from_environment(
+            {"SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS": "256"}
+        ).blip3_max_questions
+        == 256
+    )
+    capabilities = build_capabilities(ServiceSettings(blip3_max_questions=32))
+    assert capabilities["blip3_question_capacity"] == {
+        "max_questions": 32,
+        "default": 256,
+        "maximum": 256,
+        "units": "questions/request",
+        "stage": "BLIP3 planning before generation",
+        "controlling_field": "SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS",
+        "request_configurable": False,
+        "notes": (
+            "Canonical routing plans at most one question per routed candidate; "
+            "legacy multi-rule scheduling shares this total cap."
+        ),
+    }
+
+
+def test_blip3_planning_accepts_256_and_rejects_257_before_model_calls():
+    filter_ = _Blip3Filter.__new__(_Blip3Filter)
+    filter_.max_questions = 256
+    label_rules = {"target": {"question": "q"}}
+    any_rules = []
+    planned = [
+        {"clip_routing": {"chosen_target": "target"}, "_route_to_blip3": True} for _ in range(256)
+    ]
+    assert filter_._planned_question_count(planned, any_rules, label_rules) == 256
+    with pytest.raises(Blip3ResourceLimitError) as error:
+        filter_._enforce_question_limit(257)
+    assert error.value.details == {
+        "planned_questions": 257,
+        "allowed_limit": 256,
+        "controlling_field": "SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS",
+        "admissible_alternatives": [
+            "set clip_routing.max_candidates to a lower deterministic cap",
+            "tighten the clip_routing predicates to route fewer candidates",
+        ],
+    }
+
+
+def test_live_adapter_maps_blip3_over_limit_to_structured_resource_413():
+    registry = ResidentRegistry(loader=lambda: {"segmenter": {}, "clip": {}})
+    registry.load()
+
+    def over_limit(*_args, **_kwargs):
+        raise Blip3ResourceLimitError(
+            "BLIP3 candidate count exceeds the fixed 256-question limit",
+            planned_questions=257,
+            allowed_limit=256,
+        )
+
+    app = create_app(
+        engine=live_engine_callable(registry, runner=over_limit),
+        settings=ServiceSettings(),
+        readiness_provider=lambda: ReadyState(True, "fake"),
+    )
+    response = TestClient(app).post(
+        "/v1/completions",
+        files={
+            "image": ("image.png", _png_bytes(), "image/png"),
+            "config": ("config.yaml", _config({"thing": "ok"}), "application/yaml"),
+        },
+        data={"verbosity": "0"},
+    )
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "resource_limit"
+    assert response.json()["error"]["details"] == {
+        "planned_questions": 257,
+        "allowed_limit": 256,
+        "controlling_field": "SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS",
+        "admissible_alternatives": [
+            "set clip_routing.max_candidates to a lower deterministic cap",
+            "tighten the clip_routing predicates to route fewer candidates",
+        ],
+    }
 
 
 def test_classifier_aggregates_individual_prompt_scores_by_class_with_low_index_ties():
@@ -368,36 +533,9 @@ def test_fake_l3_prompt_summary_and_capability_contract_are_bounded():
 
 
 def test_exact_97_prompt_shape_reaches_fake_engine_with_five_semantic_classes():
-    labels = {
-        "ripe_tomato": [f"ripe tomato prompt {index}" for index in range(32)],
-        "foliage": [f"foliage prompt {index}" for index in range(15)],
-        "stem_or_vine": [f"stem or vine prompt {index}" for index in range(15)],
-        "greenhouse_structure": [f"greenhouse structure prompt {index}" for index in range(20)],
-        "background": [f"background prompt {index}" for index in range(15)],
-    }
-    raw = yaml.safe_dump(
-        {
-            "alpha": 0.5,
-            "clip": {"labels": labels},
-            "clip_routing": {
-                "route_to_blip3": {
-                    "labels": ["ripe_tomato"],
-                    "top_k": 2,
-                    "score_margin_from_best": 0.04,
-                }
-            },
-            "blip3": {
-                "ripe_tomato": {
-                    "question": "Is this one ripe tomato?",
-                    "trueresult": "yes",
-                    "falseresult": "no",
-                    "newcategory": "ripe_tomato",
-                    "falsecategory": "negative",
-                }
-            },
-        }
-    ).encode()
+    raw = EXACT_TOMATO_CONFIG.read_bytes()
     parsed = parse_hostile_config(raw, verbosity=3)
+    labels = parsed.effective_mapping["clip"]["labels"]
     assert parsed.clip_prompt_metadata["class_prompt_counts"] == {
         "ripe_tomato": 32,
         "foliage": 15,
@@ -406,6 +544,15 @@ def test_exact_97_prompt_shape_reaches_fake_engine_with_five_semantic_classes():
         "background": 15,
     }
     assert parsed.clip_prompt_metadata["total_prompt_count"] == 97
+    assert list(labels) == [
+        "ripe_tomato",
+        "foliage",
+        "stem_or_vine",
+        "greenhouse_structure",
+        "background",
+    ]
+    assert parsed.effective_mapping["clip_routing"]["route_to_blip3"]["labels"] == ["ripe_tomato"]
+    assert parsed.effective_mapping["blip3"]["ripe_tomato"]["falsecategory"] == "negative"
 
     from src.core.config import CoreConfig
 
@@ -421,4 +568,37 @@ def test_exact_97_prompt_shape_reaches_fake_engine_with_five_semantic_classes():
         diagnostic["chosen_target"] == "ripe_tomato"
         and set(diagnostic["clip_scores"]) == set(labels)
         for diagnostic in outcome.result.clip_routing_diagnostics
+    )
+
+    app = create_app(
+        engine=FakeEngine(),
+        settings=ServiceSettings(),
+        readiness_provider=lambda: ReadyState(True, "fake"),
+    )
+    response = TestClient(app).post(
+        "/v1/completions",
+        files={
+            "image": ("image.png", _png_bytes(80, 120), "image/png"),
+            "config": ("ripe-tomato-multiprompt.yaml", raw, "application/yaml"),
+        },
+        data={"verbosity": "3"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["service"]["clip_prompts"] == {
+        "class_prompt_counts": {
+            "ripe_tomato": 32,
+            "foliage": 15,
+            "stem_or_vine": 15,
+            "greenhouse_structure": 20,
+            "background": 15,
+        },
+        "total_prompt_count": 97,
+        "tokenizer_limit": 77,
+        "duplicate_policy": "reject",
+    }
+    assert all(
+        list(obj["clip_scores"]) == list(labels)
+        and obj["clip_routing"]["chosen_target"] == "ripe_tomato"
+        for obj in body["service"]["objects"]
     )

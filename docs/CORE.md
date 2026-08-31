@@ -51,6 +51,12 @@ trimmed duplicates with sanitized `invalid_config` details. Core results carry
 the bounded L3 prompt-count summary; routing continues to consume one score per
 semantic class.
 
+BLIP3 planning uses the immutable startup setting
+`SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` (default/max 256, questions/request), not
+request YAML. A planned excess fails with structured `resource_limit` 413
+before composition or generation; response assembly overflow is separately
+`response_too_large`.
+
 `config_digest(config)` returns a stable SHA-256 over the normalized values
 (provenance hook; excludes wall-clock time).
 

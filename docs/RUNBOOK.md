@@ -192,8 +192,13 @@ the L3-only `annotated-labelled` stream uses final structured labels and exact
 instance IDs with deterministic bounded placement. ZIP contains `manifest.json`,
 `detections.yolo.txt`, and the same level-gated artifact names. A request
 containing bounded nested BLIP3 verification rules is supported. The service
-fixes BLIP3 to FP16, 32 questions/request and 32 generated tokens per question;
-model IDs, revisions, dtype, paths and runtime controls remain rejected.
+fixes BLIP3 to FP16, an operator-owned 1..256 questions/request capacity
+(default 256), and 32 generated tokens per question; model IDs, revisions,
+dtype, paths and runtime controls remain rejected. Set
+`SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` only in the operator environment; it is never
+accepted from uploaded YAML. Planned excess returns typed `resource_limit` 413
+before BLIP3 generation, while response assembly overflow remains
+`response_too_large`.
 Geometry and panoptic visualization remain unsupported.
 
 The `mask_generator` section may select only the documented safe scalars. The

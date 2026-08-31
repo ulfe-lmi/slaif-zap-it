@@ -101,6 +101,9 @@ an explicit operational order creates and secures it.
   characters/tokens, sanitized `invalid_config` details, pre-SAM2 tokenizer
   rejection, L3 prompt accounting/winning indices, JSON/ZIP parity, and
   canonical routed BLIP3 `falsecategory` requirement;
+- operator-owned BLIP3 question capacity accepts 32 and 256, rejects invalid
+  startup values, carries no request-YAML control, and maps planned over-limit
+  work to structured `resource_limit` 413 before BLIP3 generation;
 
 The explicit lifecycle test tier remains CPU/fake-only unless an order grants a
 live qualification. A live qualification must use the exact order-assigned

@@ -222,6 +222,7 @@ def test_settings_defaults_match_frozen_limits():
     assert s.request_deadline_seconds == 120.0
     assert s.queue_depth == 0
     assert s.model_id == "zap-it-1"
+    assert s.blip3_max_questions == 256
 
 
 def test_settings_from_environment_overrides():
@@ -231,6 +232,7 @@ def test_settings_from_environment_overrides():
         "SLAIF_ZAP_IT_QUEUE_DEPTH": "2",
         "SLAIF_ZAP_IT_REQUEST_DEADLINE_SECONDS": "3.5",
         "SLAIF_ZAP_IT_TEST_SERIALIZATION_DELAY_SECONDS": "0.25",
+        "SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS": "32",
     }
     s = ServiceSettings.from_environment(env)
     assert s.api_key == "secret-key"
@@ -238,6 +240,7 @@ def test_settings_from_environment_overrides():
     assert s.queue_depth == 2
     assert s.request_deadline_seconds == 3.5
     assert s.test_serialization_delay_seconds == 0.25
+    assert s.blip3_max_questions == 32
 
 
 def test_settings_reject_invalid_values():
@@ -247,6 +250,8 @@ def test_settings_reject_invalid_values():
         ServiceSettings(queue_depth=-1)
     with pytest.raises(ValueError):
         ServiceSettings.from_environment({"SLAIF_ZAP_IT_MAX_DECODED_PIXELS": "nope"})
+    with pytest.raises(ValueError):
+        ServiceSettings.from_environment({"SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS": "257"})
 
 
 # ---------------------------------------------------------------------------

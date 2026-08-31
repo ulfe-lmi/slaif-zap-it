@@ -1,0 +1,191 @@
+preprocessing:
+  roi: false
+  resize: 1.0
+  debug: false
+
+mask_generator:
+  points_per_side: 32
+  points_per_batch: 8
+  pred_iou_thresh: 0.70
+  stability_score_thresh: 0.70
+  min_mask_region_area: 100
+  crop_n_layers: 2
+  crop_n_points_downscale_factor: 2
+  crop_overlap_ratio: 0.40
+  box_nms_thresh: 0.30
+  multimask_output: true
+  debug: false
+
+postsam2processing:
+  min_width: 11
+  max_width: 199
+  min_height: 11
+  max_height: 199
+  allow_border_touching: true
+  debug: true
+
+candidate_views:
+  clip:
+    mode: raw_bbox_crop
+    context_fraction: 0.10
+    min_context_pixels: 0
+    max_context_pixels: 64
+  blip3:
+    mode: single_dilated_blur
+    context_fraction: 0.20
+    min_context_pixels: 0
+    max_context_pixels: 64
+    crop_extent_multiplier: 2.0
+    blur_sigma_fraction: 0.15
+    contour_enabled: true
+    contour_fraction: 0.02
+    contour_min_pixels: 1
+    contour_max_pixels: 3
+    contour_rgb: [255, 224, 0]
+
+clip:
+  labels:
+    ripe_tomato:
+      - tomato
+      - ripe tomato
+      - red tomato
+      - ripe red tomato
+      - mature tomato
+      - tomato fruit
+      - ripe tomato fruit
+      - red tomato fruit
+      - tomato on vine
+      - vine tomato
+      - hanging tomato
+      - tomato on stem
+      - tomato on plant
+      - greenhouse tomato
+      - plum tomato
+      - ripe plum tomato
+      - red plum tomato
+      - oval tomato
+      - oblong tomato
+      - elongated tomato
+      - glossy tomato
+      - smooth tomato
+      - bright red tomato
+      - dark red tomato
+      - shaded tomato
+      - hidden tomato
+      - occluded tomato
+      - single tomato
+      - individual tomato
+      - harvest tomato
+      - fully ripe tomato
+      - mature red fruit
+
+    foliage:
+      - plant leaf
+      - green leaf
+      - dark green leaf
+      - tomato leaf
+      - plant foliage
+      - dense foliage
+      - leafy canopy
+      - leaf cluster
+      - overlapping leaves
+      - leaf underside
+      - leaf edge
+      - backlit leaf
+      - shadowed leaf
+      - green vegetation
+      - leafy branch
+
+    stem_or_vine:
+      - plant stem
+      - green stem
+      - brown stem
+      - thick stem
+      - thin stem
+      - cut stem
+      - plant stalk
+      - tomato vine
+      - vine segment
+      - plant branch
+      - stem junction
+      - leaf petiole
+      - bare fruit stem
+      - diagonal vine
+      - woody stem
+
+    greenhouse_structure:
+      - metal pipe
+      - gray pipe
+      - horizontal pipe
+      - support rail
+      - greenhouse frame
+      - metal frame
+      - support post
+      - structural beam
+      - trellis wire
+      - support wire
+      - hanging cable
+      - support string
+      - red rope
+      - irrigation tube
+      - black hose
+      - greenhouse bench
+      - growing channel
+      - metal bracket
+      - support clip
+      - crop container
+
+    background:
+      - plant label
+      - white printed tag
+      - plastic grow bag
+      - greenhouse floor
+      - concrete floor
+      - greenhouse walkway
+      - greenhouse wall
+      - greenhouse glass
+      - glass reflection
+      - bright window
+      - sky through glass
+      - blurred crop row
+      - distant equipment
+      - dark shadow
+      - empty background
+
+  debug: false
+
+clip_routing:
+  route_to_blip3:
+    labels: [ripe_tomato]
+    top_k: 2
+    score_margin_from_best: 0.04
+
+blip3:
+  ripe_tomato:
+    question: |
+      Does the selected region represent one individual ripe tomato fruit with
+      predominantly red, mature-looking skin? Accept a partially occluded fruit
+      if it is clearly one tomato. Reject unripe or partly ripened fruit,
+      foliage, stems, equipment, background, ambiguous fragments, and masks
+      containing more than one tomato.
+    trueresult: |-
+      yes
+    falseresult: |-
+      no
+    newcategory: ripe_tomato
+    falsecategory: negative
+    debug: false
+
+visualization:
+  labels: [ripe_tomato]
+  alpha: 0.55
+  blip3:
+    - id: final-labelled-ripe-tomatoes
+      renderer: annotated-labelled
+      alpha: 0.55
+      show_confidence: true
+
+diagnostic_artifacts:
+  stages: [visualization]
+  page: 1
+  page_size: 48

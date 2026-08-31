@@ -204,8 +204,10 @@ The implemented policy is capacity-based:
 - supported profiles are `sam2`, `sam2_clip`, `sam2_blip3` and
   `sam2_clip_blip3`; there is no standalone service profile that skips SAM2;
 - one process, one worker and one active GPU request remain the service law;
-- request YAML may provide only bounded nested BLIP3 rules (32 questions and 32
-  generated tokens per question are fixed service limits).
+- request YAML may provide only bounded nested BLIP3 rules; planned BLIP3 work is
+  capped by the operator-only `SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` setting (default
+  and maximum 256 questions/request), while generated tokens remain fixed at 32
+  per question.
 
 `src.runtime.RuntimePolicy.for_capacity()` consumes the UUID-matched physical
 total-memory observation. `src.runtime.make_readiness_provider()` joins it to

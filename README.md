@@ -277,6 +277,12 @@ single-image BLIP3 question and exact answer-to-label mapping. Trusted CLI
 compatibility may still use multi-prompt flattened labels.
 Object IDs, stage counts, timings, and losses are preserved in L3 evidence.
 
+BLIP3 question capacity is an immutable operator startup setting:
+`SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` defaults to 256 and accepts 1..256
+questions/request. It is never uploaded YAML. Planning above the effective limit
+returns structured `resource_limit` 413 evidence before BLIP3 generation;
+response assembly overflow remains `response_too_large`.
+
 This is a deterministic routing contract, not semantic-accuracy evidence.
 Optional artifact delivery is now non-fatal: `diagnostic_artifacts` can narrow
 L3 stages, one-based candidate IDs and a bounded page, while

@@ -34,6 +34,7 @@ __all__ = [
     "Sam2ConfigValues",
     "Sam2ResourceAlternative",
     "Sam2ResourceLimitDetails",
+    "Blip3ResourceLimitDetails",
     "ClipPromptValidationDetails",
     "ClipPromptMetadata",
     "CandidateViewClipConfig",
@@ -356,6 +357,17 @@ class Sam2ResourceLimitDetails(BaseModel):
     causing_values: Dict[str, Any]
     admissible_alternatives: List[Sam2ResourceAlternative] = Field(min_length=1, max_length=3)
     warning: str = Field(max_length=256)
+
+
+class Blip3ResourceLimitDetails(BaseModel):
+    """Sanitized evidence for a planned BLIP3 workload over its startup cap."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    planned_questions: int = Field(ge=0, le=1_000_000)
+    allowed_limit: int = Field(ge=1, le=256)
+    controlling_field: Literal["SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS"]
+    admissible_alternatives: List[str] = Field(min_length=1, max_length=3)
 
 
 class ClipPromptValidationDetails(BaseModel):
@@ -874,11 +886,13 @@ class ErrorBody(BaseModel):
     code: str
     message: str = Field(description="Sanitized; never contains raw inputs or internals")
     request_id: str
-    details: Optional[Union[Sam2ResourceLimitDetails, ClipPromptValidationDetails]] = Field(
+    details: Optional[
+        Union[Sam2ResourceLimitDetails, Blip3ResourceLimitDetails, ClipPromptValidationDetails]
+    ] = Field(
         default=None,
         description=(
-            "Sanitized structured details for SAM2 resource limits or canonical CLIP prompt "
-            "validation errors"
+            "Sanitized structured details for SAM2/BLIP3 resource limits or canonical CLIP "
+            "prompt validation errors"
         ),
     )
 

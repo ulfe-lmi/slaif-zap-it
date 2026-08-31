@@ -827,8 +827,11 @@ def default_resident_loader(
     device_name: str = "cuda:0",
     model_cache_root: str | None = None,
     strategy: str = SEQUENTIAL_RESIDENCY_MODE,
+    max_questions: int = 256,
 ) -> Callable[[], dict[str, Any]]:
     """Build all pinned holders, placing BLIP3 on CPU for the low-card mode."""
+    if type(max_questions) is not int or not 1 <= max_questions <= 256:
+        raise ValueError("max_questions must be an integer from 1 to 256")
 
     def load() -> dict[str, Any]:
         # Approved Objective 003 snapshots are operator assets.  A live
@@ -879,7 +882,7 @@ def default_resident_loader(
             verbosity=0,
             local_files_only=True,
         )
-        blip3_state["max_questions"] = 32
+        blip3_state["max_questions"] = max_questions
         blip3_state["max_new_tokens"] = 32
         return {"segmenter": segmenter_state, "clip": clip_state, "blip3": blip3_state}
 
@@ -951,11 +954,20 @@ def live_engine_callable(
                 runner_kwargs=runner_kwargs,
             )
         except Exception as exc:
+            from src.core.clip_prompts import ClipPromptValidationError
             from modules.verifier.blip3 import Blip3ResourceLimitError
 
+            if isinstance(exc, ClipPromptValidationError):
+                raise ServiceError(
+                    exc.message,
+                    code="invalid_config",
+                    details=exc.details,
+                ) from exc
             if isinstance(exc, Blip3ResourceLimitError):
                 raise ServiceError(
-                    "BLIP3 question resource limit exceeded", code="response_too_large"
+                    "BLIP3 question resource limit exceeded",
+                    code="resource_limit",
+                    details=exc.details,
                 ) from exc
             if isinstance(exc, LiveServiceError) and registry.error_type == "restoration_failure":
                 raise ServiceError(
@@ -1142,6 +1154,7 @@ def main() -> int:
         loader=default_resident_loader(
             model_cache_root=config.model_cache_root,
             strategy=policy.strategy,
+            max_questions=settings.blip3_max_questions,
         ),
         strategy=policy.strategy,
         device_name="cuda:0",
@@ -1179,6 +1192,13 @@ def main() -> int:
                 "/v2/repository/models/zap-it-1/unload",
             ],
             "management_subset_only": True,
+        },
+        "blip3": {
+            "max_questions": settings.blip3_max_questions,
+            "max_new_tokens": 32,
+            "question_units": "questions/request",
+            "question_limit_stage": "BLIP3 planning before generation",
+            "question_limit_source": "operator startup setting",
         },
     }
     app = create_app(

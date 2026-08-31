@@ -745,6 +745,9 @@ def test_capabilities_are_authenticated_static_deterministic_and_explicit(monkey
     ]
     assert body["supported_generator_fields"]["debug"]["allowed"] == [False, True]
     assert body["operator_maxima"] == ServiceSettings().sam2_operator_caps
+    assert body["blip3_question_capacity"]["max_questions"] == 256
+    assert body["blip3_question_capacity"]["maximum"] == 256
+    assert body["blip3_question_capacity"]["request_configurable"] is False
     assert body["defaults"] == {field: sam2.SAM2_DEFAULTS[field] for field in SAM2_FIELDS}
     assert body["profiles"] == {
         profile: sam2.SAM2_PROFILES[profile] for profile in ("fast", "balanced", "quality")
@@ -814,6 +817,7 @@ def test_capabilities_are_authenticated_static_deterministic_and_explicit(monkey
         "supported_generator_fields",
         "intrinsic_ranges",
         "operator_maxima",
+        "blip3_question_capacity",
         "defaults",
         "profiles",
         "source_precedence",

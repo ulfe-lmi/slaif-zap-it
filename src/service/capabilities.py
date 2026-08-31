@@ -39,6 +39,7 @@ __all__ = [
     "CandidateViewCapabilityStage",
     "CandidateViewsCapability",
     "FixedControls",
+    "Blip3QuestionCapacity",
     "CapabilitiesResponse",
     "RawSam2DebugPolicy",
     "build_capabilities",
@@ -136,6 +137,19 @@ class FixedControls(BaseModel):
     arbitrary_kwargs: bool = False
 
 
+class Blip3QuestionCapacity(BaseModel):
+    """Authenticated static disclosure of the operator BLIP3 workload cap."""
+
+    max_questions: int = Field(ge=1, le=256)
+    default: int = Field(ge=1, le=256)
+    maximum: Literal[256] = 256
+    units: Literal["questions/request"]
+    stage: str
+    controlling_field: Literal["SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS"]
+    request_configurable: Literal[False] = False
+    notes: str
+
+
 class RawSam2DebugPolicy(BaseModel):
     """Static policy for the bounded L3 raw-candidate diagnostic."""
 
@@ -203,6 +217,7 @@ class CapabilitiesResponse(BaseModel):
     supported_generator_fields: Dict[str, CapabilityField]
     intrinsic_ranges: Dict[str, List[Any]]
     operator_maxima: Dict[str, int]
+    blip3_question_capacity: Blip3QuestionCapacity
     defaults: Dict[str, Any]
     profiles: Dict[str, Dict[str, Any]]
     source_precedence: List[str]
@@ -725,6 +740,19 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
             for name, field in _field_descriptions().items()
         },
         operator_maxima=settings.sam2_operator_caps,
+        blip3_question_capacity=Blip3QuestionCapacity(
+            max_questions=settings.blip3_max_questions,
+            default=256,
+            maximum=256,
+            units="questions/request",
+            stage="BLIP3 planning before generation",
+            controlling_field="SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS",
+            request_configurable=False,
+            notes=(
+                "Canonical routing plans at most one question per routed candidate; "
+                "legacy multi-rule scheduling shares this total cap."
+            ),
+        ),
         defaults=dict(SAM2_DEFAULTS),
         profiles={name: dict(values) for name, values in SAM2_PROFILES.items()},
         source_precedence=["explicit", "profile", "default"],
@@ -958,7 +986,10 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
                 "hashes": "JSON descriptors and ZIP manifests identify exact delivered bytes by SHA-256 and size.",
             },
             error_details={
-                "resource_limit": "SAM2 capacity rejections include sanitized estimates, causes, limits, and alternatives.",
+                "resource_limit": (
+                    "SAM2 and BLIP3 workload rejections include sanitized estimates, "
+                    "causes, limits, and bounded request-safe alternatives."
+                ),
                 "compatibility": "Other error envelopes retain code, message, and request_id only.",
                 "clip_prompt_validation": (
                     "invalid_config 400 details identify only safe class/index, stable reason, "

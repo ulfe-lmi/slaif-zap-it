@@ -283,8 +283,12 @@ bounded L3 `blip3_candidate_views` list has one record per applicable candidate;
 debug records remain one-for-one with QA artifacts. This is pixel-boundary
 evidence, not a semantic-accuracy guarantee.
 
-The service allows at most 32 nested rules/questions and fixes generation to at
-most 32 new tokens per question. It rejects `model_name`, `revision`, `dtype`,
+The service accepts bounded nested rules and plans BLIP3 questions against the
+immutable operator-only `SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` setting (1..256,
+default 256). Canonical routing plans at most one question per routed candidate;
+legacy multi-rule scheduling shares the same total cap. Planned excess returns
+structured `resource_limit` 413 before BLIP3 generation. Generation remains
+fixed to at most 32 new tokens per question. It rejects `model_name`, `revision`, `dtype`,
 tokenizer/processor controls, paths, URLs, cache/download settings, devices,
 commands and remote-code controls anywhere in an upload.
 

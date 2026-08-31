@@ -92,6 +92,13 @@ fully composed image is bilinearly resized for QA, with short side 256 and long
 side capped at 768. The fixed instruction follows the delimited client
 question. This is pixel-boundary evidence, not semantic-accuracy evidence.
 
+BLIP3 planning is bounded by the immutable operator startup setting
+`SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` (default and maximum 256, unit
+questions/request). Canonical routing contributes at most one question per
+routed candidate; legacy multi-rule scheduling shares the same total cap. A
+planned excess is a structured `resource_limit` 413 before composition or QA
+generation, while response serialization overflow remains `response_too_large`.
+
 ### Models and residency
 
 Approved SAM2, CLIP, and BLIP3 identities/revisions are fixed in operator code.

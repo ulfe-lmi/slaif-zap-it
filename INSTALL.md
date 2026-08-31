@@ -93,8 +93,9 @@ install -m 600 deploy/service.env.example \
 ```
 
 The private file supplies the expected GPU UUID, physical index, scoped port,
-model-cache root, shared-memory root, API key, fixed resource limits, and the
-startup-only SAM2 field/estimated-work caps. Set a
+model-cache root, shared-memory root, API key, fixed resource limits, the
+operator-only BLIP3 question capacity, and the startup-only SAM2
+field/estimated-work caps. Set a
 specific port after verifying that it is unused when subsequent commands need
 to reference `$SLAIF_ZAP_IT_PORT`. Source the file before launching:
 
