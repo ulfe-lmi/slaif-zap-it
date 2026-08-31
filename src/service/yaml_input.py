@@ -37,6 +37,14 @@ from src.core.config import (
     ALGORITHMIC_TOP_LEVEL_FIELDS,
     classify_config_fields,
 )
+from src.core.clip_prompts import (
+    CLIP_MAX_CLASSES,
+    CLIP_MAX_PROMPT_CHARACTERS,
+    CLIP_MAX_PROMPTS_PER_CLASS,
+    CLIP_MAX_PROMPTS_TOTAL,
+    ClipPromptValidationError,
+    normalize_canonical_labels,
+)
 from src.core.mask_views import CANDIDATE_VIEW_DEFAULTS
 
 from .errors import ServiceError
@@ -50,6 +58,10 @@ __all__ = [
     "DEFAULT_ALPHA",
     "MAX_BLIP3_QUESTIONS",
     "CLIP_LABEL_IDENTIFIER",
+    "CLIP_MAX_CLASSES",
+    "CLIP_MAX_PROMPT_CHARACTERS",
+    "CLIP_MAX_PROMPTS_PER_CLASS",
+    "CLIP_MAX_PROMPTS_TOTAL",
     "normalize_result_token",
     "SAM2_INTRINSIC_RANGES",
     "SAM2_INTRINSIC_TYPES",
@@ -66,8 +78,8 @@ MAX_SCALAR_CHARS = 16_384
 DEFAULT_ALPHA = 0.6
 MAX_BLIP3_QUESTIONS = 32
 CLIP_LABEL_IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
-MAX_CLIP_LABELS = 32
-MAX_CLIP_PROMPT_CHARS = 512
+MAX_CLIP_LABELS = CLIP_MAX_CLASSES
+MAX_CLIP_PROMPT_CHARS = CLIP_MAX_PROMPT_CHARACTERS
 MAX_ROUTING_LABELS = 32
 MAX_ROUTING_CANDIDATES = 256
 MAX_BLIP3_TEXT_CHARS = 2048
@@ -1048,10 +1060,10 @@ def _validate_blip3_policy(value: Any, *, canonical_targets: tuple[str, ...] = (
             raise ServiceError("orphan BLIP3 rule(s): " + ", ".join(orphan), code="invalid_config")
 
 
-def _validate_clip_policy(value: Any) -> None:
-    """Validate the canonical request-local CLIP labels without coercion."""
+def _validate_clip_policy(value: Any) -> tuple[dict[str, Any], Mapping[str, Any]]:
+    """Validate and normalize canonical request-local CLIP labels."""
     if value in (None, {}):
-        return
+        return (dict(value) if isinstance(value, Mapping) else {}), {}
     if not isinstance(value, Mapping):
         raise ServiceError("clip must be a mapping", code="invalid_config")
     allowed = {"labels", "debug"}
@@ -1066,19 +1078,19 @@ def _validate_clip_policy(value: Any) -> None:
     labels = value.get("labels", {})
     if not isinstance(labels, Mapping):
         raise ServiceError("clip.labels must be a mapping", code="invalid_config")
-    if len(labels) > MAX_CLIP_LABELS:
-        raise ServiceError("clip label limit exceeded", code="response_too_large")
     for label, prompt in labels.items():
         if not isinstance(label, str) or not CLIP_LABEL_IDENTIFIER.fullmatch(label):
             raise ServiceError(
                 "clip label identifiers must match the safe identifier policy",
                 code="invalid_config",
             )
-        if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > MAX_CLIP_PROMPT_CHARS:
-            raise ServiceError(
-                "clip label values must be non-empty strings of at most 512 characters",
-                code="invalid_config",
-            )
+    try:
+        normalized_labels, prompt_summary = normalize_canonical_labels(labels)
+    except ClipPromptValidationError as exc:
+        raise ServiceError(exc.message, code="invalid_config", details=exc.details) from exc
+    normalized = dict(value)
+    normalized["labels"] = normalized_labels
+    return normalized, prompt_summary.as_dict()
 
 
 def _validate_clip_routing(
@@ -1431,6 +1443,7 @@ class ValidatedConfig:
     ignored_fields: Tuple[str, ...]
     warnings: Tuple[str, ...] = field(default_factory=tuple)
     sam2_metadata: Mapping[str, Any] = field(default_factory=dict)
+    clip_prompt_metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 def parse_hostile_config(
@@ -1465,7 +1478,11 @@ def parse_hostile_config(
     _validate_preprocessing_policy(effective.get("preprocessing"))
 
     clip_config = effective.get("clip")
-    _validate_clip_policy(clip_config)
+    clip_prompt_metadata: Mapping[str, Any] = {}
+    if clip_config is not None:
+        normalized_clip, clip_prompt_metadata = _validate_clip_policy(clip_config)
+        effective["clip"] = normalized_clip
+        clip_config = normalized_clip
 
     effective["candidate_views"] = _validate_candidate_views(effective.get("candidate_views", {}))
 
@@ -1542,4 +1559,5 @@ def parse_hostile_config(
         ignored_fields=tuple(sorted(classification.batch_only_fields)),
         warnings=tuple(warnings),
         sam2_metadata=sam2_metadata,
+        clip_prompt_metadata=clip_prompt_metadata,
     )

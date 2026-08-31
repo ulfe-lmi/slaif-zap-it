@@ -74,8 +74,12 @@ filesystem sink through its compatibility adapter.
 The shared pure candidate-view module constructs a complete source-byte-exact
 rectangular CLIP `raw_bbox_crop` from a mask-derived inclusive bbox. Its
 half-up context radius affects only the crop boundary; no mask or fill reaches
-CLIP. The service maps one natural-language prompt to each safe identifier and
-retains the complete ordered cosine vector; an explicitly selected trusted-CLI
+CLIP. The service maps each safe identifier to one indivisible prompt string or
+an ordered array of independent prompts, trims only prompt boundaries, encodes
+each item separately, and aggregates by maximum similarity into one complete
+ordered semantic-class cosine vector. The pinned tokenizer limit is 77 tokens;
+invalid counts, characters, tokens, and trimmed duplicates are structured
+`invalid_config` errors before inference. An explicitly selected trusted-CLI
 `mask_dilated` compatibility builder and multi-prompt labels remain separate.
 BLIP3 uses a separate pure single-image compositor: an
 inclusive raw-mask bbox determines a nominal centered crop, exact Euclidean
@@ -195,7 +199,8 @@ candidate, including empty masks, is accounted for; non-empty rejections carry
 their inclusive bbox, dimensions, area, reason, configured limit, and source ID.
 L3 records remain input-ordered and capped at 256 with an explicit truncation
 count; lower response levels do not serialize this sidecar. CLIP routing keeps
-complete score vectors for every post-geometry candidate and applies OR logic
+complete semantic-class score vectors for every post-geometry candidate and
+applies OR logic
 for top-1, top-k, margin, minimum score, and explicit uncertainty before the
 deterministic candidate cap.
 

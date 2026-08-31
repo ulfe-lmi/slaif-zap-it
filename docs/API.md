@@ -79,6 +79,26 @@ Exactly one request = exactly one `image`, one `config`, one result.
 Unknown multipart fields, duplicate fields and missing required parts are
 rejected with stable codes before any expensive work.
 
+### Canonical CLIP labels
+
+`clip.labels.<identifier>` accepts either one string or an ordered, non-empty
+array of strings. A scalar is one indivisible prompt: commas and internal
+newlines are literal content. Array items are independent processor inputs.
+Leading/trailing Unicode whitespace is trimmed before duplicate detection,
+tokenization, hashing and effective-config serialization; internal content is
+unchanged. Each class accepts 1..64 prompts, the request accepts 1..256 total
+prompts, and each normalized prompt is limited to 512 Unicode codepoints and
+77 tokens including the pinned tokenizer's special tokens. Duplicates within a
+class are rejected; equal text in different classes is allowed.
+
+The resident CLIP processor encodes every item separately. Each candidate's
+score for a semantic class is the maximum of its prompt similarities, with the
+lowest prompt index winning an equal-score tie. Routing receives only the
+complete configured-order semantic-class vector; prompt identifiers are never
+routing labels. L3 adds `service.clip_prompts` counts, tokenizer limit and
+duplicate policy, plus per-class and overall winning prompt indices/text in
+`clip_routing_diagnostics`. Lower levels do not add this diagnostic payload.
+
 ## Verbosity levels (monotonic information)
 
 - **L0**: completion envelope + normalized YOLO lines in `choices[0].text`
@@ -94,6 +114,7 @@ rejected with stable codes before any expensive work.
   answer when present, geometry hook when present, one-based
   `source_candidate_id` and zero-based post-SAM2 `filtered_index`).
 - **L3**: L2 + stage statuses, candidate counts, post-filter diagnostics, timings, provenance,
+  CLIP prompt counts and winning-prompt evidence,
   aggregate warnings, bounded annotated/debug artifacts, one bounded
   `blip3_candidate_views` record per applicable candidate, one-for-one debug
   input records, and one exact per-object uncompressed
@@ -428,7 +449,7 @@ Stable sanitized envelope on every failure:
 | `missing_part` | 400 | image or config missing |
 | `duplicate_part` | 400 | any field provided twice |
 | `invalid_image` | 400 | corrupt/unknown media outside JPEG/PNG/WebP |
-| `invalid_config` | 400 | non-UTF-8, non-mapping, unparseable YAML |
+| `invalid_config` | 400 | non-UTF-8, non-mapping, unparseable YAML, or invalid/overlong canonical CLIP prompt |
 | `unsafe_config` | 400 | forbidden keys/values, aliases, bound violations |
 | `unsupported_field` | 400 | unknown multipart field / unknown top-level key |
 | `unsupported_verbosity` | 400 | not canonical 0..3 |
@@ -453,6 +474,13 @@ Stable sanitized envelope on every failure:
 
 Messages never include stack traces, raw YAML/image bytes, host paths,
 secrets or environment data.
+
+Canonical CLIP prompt failures include a bounded `error.details` object with
+the safe class identifier and zero-based prompt index when applicable, a stable
+reason, measured character/token/per-class/total count, actual safe type name,
+the first equal prompt index for duplicates, and the allowed limit. Prompt text
+and tokenizer IDs are never returned. The exact tokenizer's 78-token failure is
+therefore HTTP 400 `invalid_config` before SAM2 or model inference.
 
 ## Data lifecycle
 
@@ -511,8 +539,8 @@ measured evidence and deployment prerequisites.
 
 ## Objective 020 semantic contract
 
-API CLIP labels are mappings of safe identifiers to one complete natural-language
-prompt. `candidate_views.clip.mode` is always `raw_bbox_crop`; masked, filled,
+API CLIP labels map safe identifiers to one complete natural-language prompt or
+an ordered array of independent prompts. `candidate_views.clip.mode` is always `raw_bbox_crop`; masked, filled,
 dimmed, or padded views are not accepted by the API. `clip_routing.route_to_blip3`
 uses OR conditions for top-1, top-k, score margin, minimum target score, and
 uncertain winners, with deterministic reasons and a source-ID-ranked cap.
@@ -521,4 +549,7 @@ available in service metadata. The selected target rule asks BLIP3 once using
 the existing delimited question and exact normalized true/false token mapping,
 with an exact true match selecting `newcategory`, an exact false or unmatched
 answer selecting configured `falsecategory`, and the mapping recorded.
+Canonical routed BLIP3 rules require non-empty `question`, `trueresult`,
+`falseresult`, `newcategory`, and `falsecategory`; trusted legacy rules remain
+separate.
 L2 objects carry their own semantic evidence; JSON and ZIP metadata agree.

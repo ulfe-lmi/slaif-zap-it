@@ -48,7 +48,7 @@ __all__ = [
 class CapabilityField(BaseModel):
     """A public field type and bounded intrinsic constraint."""
 
-    type: Literal["integer", "number", "boolean", "string", "array"]
+    type: Literal["integer", "number", "boolean", "string", "array", "string_or_array"]
     minimum: int | float | None = None
     maximum: int | float | None = None
     allowed: List[Any] | None = None
@@ -59,6 +59,9 @@ class CapabilityField(BaseModel):
     )
     item_minimum: int | float | None = Field(default=None, exclude_if=lambda value: value is None)
     item_maximum: int | float | None = Field(default=None, exclude_if=lambda value: value is None)
+    value_types: List[Literal["string", "array"]] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     nullable: bool = False
     default: Any = None
     units: str | None = Field(default=None, exclude_if=lambda value: value is None)
@@ -213,7 +216,7 @@ class CapabilitiesResponse(BaseModel):
 
 
 def _cap(
-    kind: Literal["integer", "number", "boolean", "string", "array"],
+    kind: Literal["integer", "number", "boolean", "string", "array", "string_or_array"],
     *,
     description: str,
     default: Any = None,
@@ -442,11 +445,20 @@ def _configuration_capabilities() -> ConfigurationCapabilities:
             description="Enable CLIP input PNG diagnostics at L3.",
         ),
         "labels.<identifier>": _cap(
-            "string",
+            "string_or_array",
             minimum=1,
             maximum=512,
+            min_items=1,
+            max_items=64,
+            item_type="string",
+            value_types=["string", "array"],
             stage="clip",
-            description="Dynamic CLIP label prompt.",
+            description=(
+                "Dynamic CLIP semantic-class prompt: one indivisible string or an ordered "
+                "array[string]; arrays are encoded item-by-item, trimmed at both ends, "
+                "with 1..64 items per class, 1..256 total prompts, at most 512 Unicode "
+                "codepoints and at most 77 tokenizer tokens."
+            ),
             units="characters",
         ),
     }
@@ -664,6 +676,10 @@ def _configuration_capabilities() -> ConfigurationCapabilities:
         "clip.labels.<identifier>",
         "clip_routing.route_to_blip3.labels",
         "blip3.<routing_label>.question",
+        "blip3.<routing_label>.trueresult",
+        "blip3.<routing_label>.falseresult",
+        "blip3.<routing_label>.newcategory",
+        "blip3.<routing_label>.falsecategory",
         "visualization.sam2.<index>.id",
         "visualization.sam2.<index>.renderer",
         "visualization.clip.<index>.id",
@@ -835,7 +851,19 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
                 "identifier": CapabilityField(
                     type="string", allowed=["^[A-Za-z][A-Za-z0-9_-]{0,63}$"]
                 ),
-                "prompt": CapabilityField(type="string", minimum=1, maximum=512),
+                "prompt": CapabilityField(
+                    type="string_or_array",
+                    value_types=["string", "array"],
+                    minimum=1,
+                    maximum=512,
+                    min_items=1,
+                    max_items=64,
+                    item_type="string",
+                    description=(
+                        "One scalar prompt or an ordered array of independent prompts; "
+                        "scalar commas/newlines remain literal content."
+                    ),
+                ),
             },
             clip_routing={
                 "execution_stage": "after complete CLIP vectors and before BLIP3",
@@ -849,6 +877,16 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
                 },
                 "logic": "OR of top-1, top-k, margin, minimum-score and uncertain-label conditions",
                 "score_units": "cosine similarity in [-1, 1]",
+                "prompt_policy": {
+                    "per_class_limit": 64,
+                    "total_limit": 256,
+                    "character_limit": 512,
+                    "tokenizer_limit": 77,
+                    "duplicate_policy": "trimmed duplicates within one class are rejected",
+                    "aggregation": "maximum individual-prompt similarity per semantic class",
+                    "ties": "lowest prompt index, then configured semantic-class order",
+                    "routing_input": "semantic-class score vector only; prompt IDs are never routed",
+                },
                 "reason_precedence": [
                     "target_top_1",
                     "target_in_top_k",
@@ -912,7 +950,7 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
                 "0": "YOLO text and minimum envelope metadata.",
                 "1": "L0 plus the uint16 identity mask.",
                 "2": "L1 plus produced per-object algorithm evidence.",
-                "3": "L2 plus bounded stage, provenance, timing, and optional artifact ledger.",
+                "3": "L2 plus bounded stage, provenance, timing, semantic-class CLIP prompt accounting/winning indices, and optional artifact ledger.",
             },
             artifact_delivery={
                 "truncated": "True only when an eligible selected optional artifact is omitted by an operator budget.",
@@ -922,6 +960,11 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
             error_details={
                 "resource_limit": "SAM2 capacity rejections include sanitized estimates, causes, limits, and alternatives.",
                 "compatibility": "Other error envelopes retain code, message, and request_id only.",
+                "clip_prompt_validation": (
+                    "invalid_config 400 details identify only safe class/index, stable reason, "
+                    "measured count, actual type where relevant, duplicate first index and limit; "
+                    "prompt text and tokenizer IDs are never returned."
+                ),
             },
         ),
     )

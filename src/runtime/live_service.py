@@ -59,6 +59,7 @@ __all__ = [
     "build_device_provider",
     "compose_readiness",
     "default_resident_loader",
+    "build_clip_prompt_validator",
     "live_engine_callable",
     "main",
     "masked_gpu_uuid",
@@ -965,6 +966,26 @@ def live_engine_callable(
     return engine
 
 
+def build_clip_prompt_validator(registry: ResidentRegistry) -> Callable[[Mapping[str, Any]], None]:
+    """Build the serialized pre-inference validator for resident CLIP text."""
+
+    def validate(clip_config: Mapping[str, Any]) -> None:
+        labels = clip_config.get("labels", {})
+        if not isinstance(labels, Mapping) or not labels:
+            return
+        from src.core.clip_prompts import validate_clip_prompt_tokens
+
+        states = registry.states()
+        clip_state = states.get("clip")
+        clip_filter = clip_state.get("clip_filter") if isinstance(clip_state, dict) else None
+        processor = getattr(clip_filter, "processor", None)
+        if clip_filter is None or processor is None:
+            raise RuntimeError("resident CLIP prompt validator is unavailable")
+        validate_clip_prompt_tokens(processor, labels)
+
+    return validate
+
+
 def wrap_test_injection(engine: Callable[..., Any]) -> Callable[..., Any]:
     """Add opt-in operator-only failure/delay injection for live verification.
 
@@ -1169,6 +1190,7 @@ def main() -> int:
         ),
         runtime_policy=policy,
         runtime_metadata=runtime_metadata,
+        clip_prompt_validator=build_clip_prompt_validator(registry),
         shutdown_callback=registry.shutdown,
         model_registry=registry,
         enable_docs=not config.is_private_lan,

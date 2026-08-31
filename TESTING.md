@@ -95,6 +95,12 @@ an explicit operational order creates and secures it.
 - visualization execution policy, final-object labelled pixel/placement/
   sanitization/confidence checks, geometry pre-inference rejection, metrics
   privacy/cardinality and A/B/A state-isolation checks;
+- canonical CLIP scalar/ordered-array normalization, literal scalar punctuation,
+  independent prompt processor inputs, per-class maximum aggregation and
+  lowest-index ties, semantic-class-only routing, bounded prompt counts/
+  characters/tokens, sanitized `invalid_config` details, pre-SAM2 tokenizer
+  rejection, L3 prompt accounting/winning indices, JSON/ZIP parity, and
+  canonical routed BLIP3 `falsecategory` requirement;
 
 The explicit lifecycle test tier remains CPU/fake-only unless an order grants a
 live qualification. A live qualification must use the exact order-assigned

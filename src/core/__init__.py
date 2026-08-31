@@ -21,6 +21,18 @@ from .config import (
     classify_config_fields,
     config_digest,
 )
+from .clip_prompts import (
+    CLIP_MAX_CLASSES,
+    CLIP_MAX_PROMPT_CHARACTERS,
+    CLIP_MAX_PROMPTS_PER_CLASS,
+    CLIP_MAX_PROMPTS_TOTAL,
+    CLIP_TEXT_CONTEXT_LENGTH,
+    ClipPromptSummary,
+    ClipPromptValidationError,
+    normalize_canonical_labels,
+    summarize_canonical_labels,
+    validate_clip_prompt_tokens,
+)
 from .engine import StageFunctions, default_stage_functions, run_single_image
 from .errors import CoreError, IdentityMaskOverflowError, IdentityMaskProjectionError
 from .mask_views import (
@@ -94,6 +106,11 @@ from .sinks import (
 
 __all__ = [
     "ALGORITHMIC_TOP_LEVEL_FIELDS",
+    "CLIP_MAX_CLASSES",
+    "CLIP_MAX_PROMPT_CHARACTERS",
+    "CLIP_MAX_PROMPTS_PER_CLASS",
+    "CLIP_MAX_PROMPTS_TOTAL",
+    "CLIP_TEXT_CONTEXT_LENGTH",
     "BATCH_ONLY_TOP_LEVEL_FIELDS",
     "ArtifactSink",
     "ArtifactSinkError",
@@ -101,6 +118,8 @@ __all__ = [
     "BoundedMemoryArtifactSink",
     "ConfigClassification",
     "CoreConfig",
+    "ClipPromptSummary",
+    "ClipPromptValidationError",
     "CoreError",
     "CANDIDATE_VIEW_DEFAULTS",
     "CANDIDATE_VIEW_LIMITS",
@@ -122,6 +141,9 @@ __all__ = [
     "YOLO_DECIMALS",
     "classify_config_fields",
     "config_digest",
+    "normalize_canonical_labels",
+    "summarize_canonical_labels",
+    "validate_clip_prompt_tokens",
     "build_candidate_views",
     "build_mask_views",
     "build_raw_clip_crop",

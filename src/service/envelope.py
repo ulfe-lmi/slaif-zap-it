@@ -392,6 +392,8 @@ def _prepare(
         service_meta["clip_routing_diagnostics"] = [
             dict(record) for record in result.clip_routing_diagnostics
         ]
+    if context.verbosity >= 3 and getattr(result, "clip_prompt_metadata", None):
+        service_meta["clip_prompts"] = dict(result.clip_prompt_metadata)
     if context.verbosity >= 1:
         service_meta["artifacts"] = [
             _artifact_descriptor(

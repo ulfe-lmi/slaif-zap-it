@@ -145,6 +145,8 @@ separate for reasons other than GPU memory, as documented in
 | `/dev/shm` free floor | 64 MiB | `SLAIF_ZAP_IT_MIN_SHM_FREE_BYTES` |
 | Deadline / queue | 120 s / 0 | `SLAIF_ZAP_IT_REQUEST_DEADLINE_SECONDS`, `SLAIF_ZAP_IT_QUEUE_DEPTH` |
 | BLIP3 questions / generated tokens | 32 / 32 | Fixed service policy; not uploaded controls |
+| CLIP semantic classes / prompts | 1..32 / 1..64 per class, 1..256 total | Canonical YAML policy; arrays are independent prompts, scalar values are indivisible |
+| CLIP prompt size / tokenizer context | 512 Unicode codepoints / 77 tokens including special tokens | Invalid values return sanitized `invalid_config` 400 before inference |
 | SAM2 points per side / batch | 64 / 64 | `SLAIF_ZAP_IT_SAM2_MAX_POINTS_PER_SIDE`, `SLAIF_ZAP_IT_SAM2_MAX_POINTS_PER_BATCH` |
 | SAM2 crop layers | 2 | `SLAIF_ZAP_IT_SAM2_MAX_CROP_N_LAYERS` |
 | SAM2 estimated prompts / predictions | 8,192 / 24,576 | `SLAIF_ZAP_IT_SAM2_MAX_ESTIMATED_PROMPTS`, `SLAIF_ZAP_IT_SAM2_MAX_ESTIMATED_MASK_PREDICTIONS` |

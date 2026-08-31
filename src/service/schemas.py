@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 import math
-from typing import Annotated, Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
@@ -34,6 +34,8 @@ __all__ = [
     "Sam2ConfigValues",
     "Sam2ResourceAlternative",
     "Sam2ResourceLimitDetails",
+    "ClipPromptValidationDetails",
+    "ClipPromptMetadata",
     "CandidateViewClipConfig",
     "CandidateViewBlip3Config",
     "CandidateViewsMetadata",
@@ -356,6 +358,46 @@ class Sam2ResourceLimitDetails(BaseModel):
     warning: str = Field(max_length=256)
 
 
+class ClipPromptValidationDetails(BaseModel):
+    """Sanitized detail for one rejected canonical CLIP prompt input."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: Literal[
+        "too_many_classes",
+        "invalid_container_type",
+        "empty_prompt_array",
+        "invalid_prompt_type",
+        "empty_prompt",
+        "character_limit",
+        "duplicate_prompt",
+        "per_class_count",
+        "total_count",
+        "token_limit",
+    ]
+    class_identifier: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    prompt_index: Optional[int] = Field(default=None, ge=0, le=63)
+    first_prompt_index: Optional[int] = Field(default=None, ge=0, le=63)
+    actual_type: Optional[str] = Field(default=None, min_length=1, max_length=32)
+    measured_class_count: Optional[int] = Field(default=None, ge=0)
+    measured_per_class_count: Optional[int] = Field(default=None, ge=0)
+    measured_total_count: Optional[int] = Field(default=None, ge=0)
+    measured_character_count: Optional[int] = Field(default=None, ge=0)
+    measured_token_count: Optional[int] = Field(default=None, ge=0)
+    allowed_limit: int = Field(ge=0)
+
+
+class ClipPromptMetadata(BaseModel):
+    """Bounded L3 accounting for effective canonical CLIP prompts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    class_prompt_counts: Dict[str, int] = Field(min_length=1, max_length=32)
+    total_prompt_count: int = Field(ge=1, le=256)
+    tokenizer_limit: Literal[77]
+    duplicate_policy: Literal["reject"]
+
+
 class CandidateViewClipConfig(BaseModel):
     """Effective request-local CLIP view policy."""
 
@@ -661,6 +703,9 @@ class ClipRoutingDiagnostic(BaseModel):
     source_candidate_id: int = Field(ge=1)
     filtered_index: int = Field(ge=0)
     clip_scores: Dict[str, float]
+    winning_prompt_indices: Dict[str, int] = Field(default_factory=dict, max_length=32)
+    winning_prompt_index: Optional[int] = Field(default=None, ge=0, le=63)
+    winning_prompt: Optional[str] = Field(default=None, max_length=512)
     winner: Optional[str] = None
     winning_label: Optional[str] = None
     chosen_target: Optional[str] = None
@@ -782,6 +827,7 @@ class ServiceMetadata(BaseModel):
     sam2: Sam2Metadata
     candidate_views: CandidateViewsMetadata
     clip_routing: Optional[ClipRoutingConfiguration] = None
+    clip_prompts: Optional[ClipPromptMetadata] = None
     artifacts: Optional[List[ArtifactDescriptor]] = None
     artifact_delivery: Optional[ArtifactDeliveryMetadata] = None
     objects: Optional[List[ObjectRecord]] = None
@@ -828,9 +874,12 @@ class ErrorBody(BaseModel):
     code: str
     message: str = Field(description="Sanitized; never contains raw inputs or internals")
     request_id: str
-    details: Optional[Sam2ResourceLimitDetails] = Field(
+    details: Optional[Union[Sam2ResourceLimitDetails, ClipPromptValidationDetails]] = Field(
         default=None,
-        description="Sanitized structured details, present only for applicable resource_limit errors",
+        description=(
+            "Sanitized structured details for SAM2 resource limits or canonical CLIP prompt "
+            "validation errors"
+        ),
     )
 
 

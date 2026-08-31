@@ -162,7 +162,9 @@ curl --fail-with-body \
   http://127.0.0.1:"$SLAIF_ZAP_IT_PORT"/v1/capabilities
 ```
 
-The capabilities response documents the exact request-local SAM2 defaults and
+The capabilities response documents the exact request-local SAM2 defaults,
+canonical CLIP prompt union/limits (scalar or independent array items),
+per-class maximum aggregation and deterministic prompt-index ties, and
 case-sensitive `fast`, `balanced`, and `quality` profiles, strict intrinsic
 ranges, startup operator caps and prompt/prediction estimation formulas. It
 also describes fixed model/revision, logical device, dtype, residency,
