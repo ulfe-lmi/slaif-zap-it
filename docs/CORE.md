@@ -51,9 +51,10 @@ trimmed duplicates with sanitized `invalid_config` details. Core results carry
 the bounded L3 prompt-count summary; routing continues to consume one score per
 semantic class.
 
-BLIP3 planning uses the immutable startup setting
-`SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` (default/max 256, questions/request), not
-request YAML. A planned excess fails with structured `resource_limit` 413
+The service accepts at most 32 BLIP3 rule definitions in uploaded YAML. BLIP3
+planning then uses the separate immutable startup setting
+`SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` (default/max 256 planned questions/request),
+not request YAML. A planned excess fails with structured `resource_limit` 413
 before composition or generation; response assembly overflow is separately
 `response_too_large`.
 

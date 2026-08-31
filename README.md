@@ -160,6 +160,11 @@ Binary artifacts are base64 descriptors in JSON or files in a bounded ZIP.
 Request bytes and intermediate results remain in RAM or the validated
 `/dev/shm` workspace and are removed after every request.
 
+Service L3 visualization members keep fixed ordinal names such as
+`visualization/stream-0001.png`; the validated configured ID is returned only
+as logical `visualization_id` metadata in JSON/ZIP descriptors and omission
+records, never as a path or member name.
+
 `candidate_views.clip` and `candidate_views.blip3` are independent request-local
 algorithm settings. The API CLIP policy is the untouched rectangular
 `raw_bbox_crop`; `mask_dilated` is trusted-CLI compatibility only.
@@ -277,11 +282,13 @@ single-image BLIP3 question and exact answer-to-label mapping. Trusted CLI
 compatibility may still use multi-prompt flattened labels.
 Object IDs, stage counts, timings, and losses are preserved in L3 evidence.
 
-BLIP3 question capacity is an immutable operator startup setting:
-`SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` defaults to 256 and accepts 1..256
-questions/request. It is never uploaded YAML. Planning above the effective limit
-returns structured `resource_limit` 413 evidence before BLIP3 generation;
-response assembly overflow remains `response_too_large`.
+Uploaded service YAML accepts at most 32 BLIP3 rule definitions. This structural
+request-configuration ceiling is independent of the immutable operator startup
+question workload setting: `SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` defaults to 256
+and accepts 1..256 planned questions/request. It is never uploaded YAML. Planning
+above the effective question limit returns structured `resource_limit` 413
+evidence before BLIP3 generation; response assembly overflow remains
+`response_too_large`.
 
 This is a deterministic routing contract, not semantic-accuracy evidence.
 Optional artifact delivery is now non-fatal: `diagnostic_artifacts` can narrow

@@ -818,6 +818,7 @@ def test_capabilities_are_authenticated_static_deterministic_and_explicit(monkey
         "intrinsic_ranges",
         "operator_maxima",
         "blip3_question_capacity",
+        "blip3_rule_definition_limit",
         "defaults",
         "profiles",
         "source_precedence",

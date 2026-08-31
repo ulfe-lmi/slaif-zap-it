@@ -275,6 +275,28 @@ def test_blip3_question_capacity_accepts_32_and_256_without_model_loading():
             "legacy multi-rule scheduling shares this total cap."
         ),
     }
+    assert capabilities["blip3_rule_definition_limit"] == {
+        "max_definitions": 32,
+        "units": "rule definitions/request",
+        "stage": "request configuration validation before inference",
+        "request_configurable": True,
+        "notes": (
+            "This structural YAML ceiling is independent of the operator question "
+            "workload cap; one rule definition may plan work for routed candidates."
+        ),
+    }
+
+
+def test_blip3_rule_definition_limit_is_independent_from_question_capacity():
+    rules = {f"rule_{index}": {"question": f"question {index}"} for index in range(32)}
+    parsed = parse_hostile_config(yaml.safe_dump({"blip3": rules}).encode(), verbosity=3)
+    assert len(parsed.effective_mapping["blip3"]) == 32
+
+    too_many = {**rules, "rule_32": {"question": "question 32"}}
+    with pytest.raises(ServiceError) as error:
+        parse_hostile_config(yaml.safe_dump({"blip3": too_many}).encode(), verbosity=3)
+    assert error.value.code == "response_too_large"
+    assert "rule definition" in str(error.value)
 
 
 def test_blip3_planning_accepts_256_and_rejects_257_before_model_calls():
@@ -602,3 +624,8 @@ def test_exact_97_prompt_shape_reaches_fake_engine_with_five_semantic_classes():
         and obj["clip_routing"]["chosen_target"] == "ripe_tomato"
         for obj in body["service"]["objects"]
     )
+    visualization = next(
+        item for item in body["service"]["artifacts"] if item["name"].startswith("visualization/")
+    )
+    assert visualization["name"] == "visualization/stream-0001.png"
+    assert visualization["visualization_id"] == "final-labelled-ripe-tomatoes"

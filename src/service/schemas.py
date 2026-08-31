@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 from src.core.raw_visualizations import validate_raw_sam2_manifest
 
 from .settings import SERVICE_MODEL_ID
+from .yaml_input import VISUALIZATION_ID_PATTERN
 
 __all__ = [
     "ArtifactDescriptor",
@@ -69,6 +70,15 @@ FiniteNonNegativeFloat = Annotated[float, Field(ge=0)]
 
 class ArtifactDescriptor(BaseModel):
     name: str = Field(description="Logical artifact name; never a filesystem path")
+    visualization_id: Optional[str] = Field(
+        default=None,
+        pattern=VISUALIZATION_ID_PATTERN,
+        max_length=64,
+        description=(
+            "Validated logical visualization metadata; omitted for identity/debug artifacts "
+            "and never used as a path or member name"
+        ),
+    )
     media_type: str
     encoding: str = Field(default="base64", description="Always base64 in JSON responses")
     sha256: str = Field(description="SHA-256 hex digest of the artifact bytes")
@@ -80,6 +90,12 @@ class ArtifactOmission(BaseModel):
     """One bounded optional artifact that was not delivered."""
 
     name: str = Field(description="Fixed logical artifact name")
+    visualization_id: Optional[str] = Field(
+        default=None,
+        pattern=VISUALIZATION_ID_PATTERN,
+        max_length=64,
+        description="Logical visualization metadata; never a path or member name",
+    )
     stage: Literal["sam2", "clip", "blip3", "visualization"]
     source_candidate_id: Optional[int] = Field(default=None, ge=1)
     question_id: Optional[int] = Field(default=None, ge=1)

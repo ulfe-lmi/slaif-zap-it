@@ -23,6 +23,7 @@ from src.service.envelope import (
     build_completion_zip,
 )
 from src.service.errors import ServiceError
+from src.service.schemas import ArtifactDescriptor, ArtifactOmission
 from src.service.yaml_input import parse_hostile_config
 
 
@@ -459,6 +460,120 @@ def test_blip3_final_order_drives_manifest_and_json_zip_artifact_parity():
     assert document["service"]["artifacts"][1]["size"] == len(payload) == len(zip_payload)
     assert payload == zip_payload
     assert manifest["service"]["artifacts"][1]["name"] == "visualization/labelled-result.png"
+
+
+def test_service_safe_visualizations_keep_fixed_names_and_report_logical_ids():
+    outcome = _final_core_outcome()
+    context = ResponseContext(
+        request_id="request",
+        model_id="zap-it-1",
+        verbosity=3,
+        response_format="json",
+        config_digest="digest",
+        class_mapping={"final-0": 0, "final-1": 1},
+        service_safe_artifact_names=True,
+    )
+
+    document = build_completion_json(outcome, context)
+    artifacts = document["service"]["artifacts"]
+    assert artifacts[0]["name"] == "identity-mask.png"
+    assert "visualization_id" not in artifacts[0]
+    visualization = artifacts[1]
+    assert visualization["name"] == "visualization/stream-0001.png"
+    assert visualization["visualization_id"] == "labelled-result"
+    ArtifactDescriptor.model_validate(visualization)
+
+    zip_payload = build_completion_zip(outcome, context, max_bytes=1 << 20)
+    with zipfile.ZipFile(io.BytesIO(zip_payload)) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        member = archive.read("visualization/stream-0001.png")
+    manifest_visualization = manifest["service"]["artifacts"][1]
+    assert {key: value for key, value in visualization.items() if key != "data"} == (
+        manifest_visualization
+    )
+    assert member == base64.b64decode(visualization["data"])
+
+    trusted = build_completion_json(
+        outcome,
+        replace(context, service_safe_artifact_names=False),
+    )
+    assert trusted["service"]["artifacts"][1]["name"] == "visualization/labelled-result.png"
+    assert "visualization_id" not in trusted["service"]["artifacts"][1]
+
+
+def test_service_safe_multiple_visualizations_have_stable_ordinal_names_and_ledger_ids():
+    outcome = _final_core_outcome()
+    rendered = {
+        "path-like-looking-but-validated": np.full((80, 100, 3), 11, dtype=np.uint8),
+        "second-stream": np.full((80, 100, 3), 22, dtype=np.uint8),
+    }
+    outcome = replace(outcome, result=replace(outcome.result, rendered=rendered))
+    context = ResponseContext(
+        request_id="request",
+        model_id="zap-it-1",
+        verbosity=3,
+        response_format="json",
+        config_digest="digest",
+        class_mapping={"final-0": 0, "final-1": 1},
+        max_response_artifacts=2,
+        service_safe_artifact_names=True,
+    )
+    document = build_completion_json(outcome, context)
+    visuals = [
+        item
+        for item in document["service"]["artifacts"]
+        if item["name"].startswith("visualization/")
+    ]
+    assert [item["name"] for item in visuals] == [
+        "visualization/stream-0001.png",
+    ]
+    assert visuals[0]["visualization_id"] == "path-like-looking-but-validated"
+    delivery = document["service"]["artifact_delivery"]
+    assert delivery["omitted"] == [
+        {
+            "name": "visualization/stream-0002.png",
+            "stage": "visualization",
+            "source_candidate_id": None,
+            "question_id": None,
+            "estimated_raw_bytes": rendered["second-stream"].nbytes,
+            "reason": "omitted_count_limit",
+            "visualization_id": "second-stream",
+        }
+    ]
+    ArtifactOmission.model_validate(delivery["omitted"][0])
+    with pytest.raises(ValueError):
+        ArtifactDescriptor.model_validate({**visuals[0], "visualization_id": "../escape"})
+
+    changed = replace(
+        outcome,
+        result=replace(
+            outcome.result,
+            rendered={
+                "renamed-stream": rendered["path-like-looking-but-validated"],
+                "second-stream": rendered["second-stream"],
+            },
+        ),
+    )
+    changed_document = build_completion_json(outcome, replace(context, max_response_artifacts=3))
+    renamed_document = build_completion_json(changed, replace(context, max_response_artifacts=3))
+    original_visuals = [
+        item
+        for item in changed_document["service"]["artifacts"]
+        if item["name"].startswith("visualization/")
+    ]
+    renamed_visuals = [
+        item
+        for item in renamed_document["service"]["artifacts"]
+        if item["name"].startswith("visualization/")
+    ]
+    assert [item["name"] for item in original_visuals] == [item["name"] for item in renamed_visuals]
+    assert [item["sha256"] for item in original_visuals] == [
+        item["sha256"] for item in renamed_visuals
+    ]
+    assert [item["visualization_id"] for item in renamed_visuals] == [
+        "renamed-stream",
+        "second-stream",
+    ]
 
 
 @pytest.mark.parametrize("stage", ["sam2", "clip"])

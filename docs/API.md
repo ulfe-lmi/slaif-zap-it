@@ -180,6 +180,11 @@ Binary artifacts use one stable object shape:
  "sha256": "...", "size": 1234, "data": "<base64>"}
 ```
 
+For an L3 service visualization, the descriptor additionally carries
+`visualization_id`, the validated configured stream ID as logical metadata.
+Identity and candidate/debug descriptors omit it. The field never changes the
+fixed service member name (`visualization/stream-####.png`).
+
 ZIP responses contain `manifest.json` (the full envelope without base64
 payloads), `detections.yolo.txt`, `identity-mask.png` when applicable, and
 level-gated artifacts with matching hashes/sizes/media types. ZIP assembly
@@ -482,14 +487,22 @@ the first equal prompt index for duplicates, and the allowed limit. Prompt text
 and tokenizer IDs are never returned. The exact tokenizer's 78-token failure is
 therefore HTTP 400 `invalid_config` before SAM2 or model inference.
 
-BLIP3 capacity is operator-owned and immutable for the process. The
-`SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` startup setting accepts 1..256 and defaults
-to 256 questions/request. Canonical routing plans at most one question per
-routed candidate; legacy multi-rule scheduling shares the total cap. A planned
-excess returns HTTP 413 `resource_limit` with `planned_questions`,
+The service accepts at most 32 uploaded BLIP3 rule definitions during config
+validation. BLIP3 execution capacity is operator-owned and immutable for the
+process: the `SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` startup setting accepts 1..256
+and defaults to 256 planned questions/request. Canonical routing plans at most
+one question per routed candidate; legacy multi-rule scheduling shares the
+total cap. A planned excess returns HTTP 413 `resource_limit` with `planned_questions`,
 `allowed_limit`, `controlling_field`, and bounded `admissible_alternatives`
 before BLIP3 composition/generation. This is distinct from
 `response_too_large`, which means response assembly itself exceeded its budget.
+
+At L3, service visualization artifacts use fixed ordinal names such as
+`visualization/stream-0001.png`. The validated configured stream ID is logical
+metadata in `visualization_id` on the JSON descriptor, ZIP manifest descriptor,
+and any omission record; it is never a filesystem path or ZIP member name.
+Identity masks and candidate/debug artifacts omit that field. JSON and ZIP
+descriptors retain identical names, IDs, hashes, and sizes for delivered bytes.
 
 ## Data lifecycle
 
@@ -532,7 +545,8 @@ measured evidence and deployment prerequisites.
 - Live readiness requires the operator launcher, a freshly pinned exclusive
   GPU, and the complete local model cache.
 - No streaming; no asynchronous jobs; no video API.
-- BLIP3 request rules are bounded by the operator-only 1..256 planned-question
+- BLIP3 uploaded request YAML is bounded at 32 rule definitions. Planned BLIP3
+  work is separately bounded by the operator-only 1..256 planned-question
   capacity (default 256) and 32 generated tokens per question. Model identity,
   revision, dtype, device and residency are fixed operator policy; they cannot
   be selected by YAML or multipart fields.

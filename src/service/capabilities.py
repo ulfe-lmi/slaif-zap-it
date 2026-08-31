@@ -27,7 +27,7 @@ from src.runtime.models import APPROVED_MODEL_SPECS
 
 from .envelope import SCHEMA_VERSION
 from .settings import SERVICE_MODEL_ID, ServiceSettings
-from .yaml_input import service_config_leaf_paths
+from .yaml_input import MAX_BLIP3_RULE_DEFINITIONS, service_config_leaf_paths
 
 __all__ = [
     "CapabilityField",
@@ -40,6 +40,7 @@ __all__ = [
     "CandidateViewsCapability",
     "FixedControls",
     "Blip3QuestionCapacity",
+    "Blip3RuleDefinitionLimit",
     "CapabilitiesResponse",
     "RawSam2DebugPolicy",
     "build_capabilities",
@@ -150,6 +151,16 @@ class Blip3QuestionCapacity(BaseModel):
     notes: str
 
 
+class Blip3RuleDefinitionLimit(BaseModel):
+    """Authenticated static disclosure of the request YAML rule ceiling."""
+
+    max_definitions: Literal[32] = MAX_BLIP3_RULE_DEFINITIONS
+    units: Literal["rule definitions/request"]
+    stage: str
+    request_configurable: Literal[True] = True
+    notes: str
+
+
 class RawSam2DebugPolicy(BaseModel):
     """Static policy for the bounded L3 raw-candidate diagnostic."""
 
@@ -218,6 +229,7 @@ class CapabilitiesResponse(BaseModel):
     intrinsic_ranges: Dict[str, List[Any]]
     operator_maxima: Dict[str, int]
     blip3_question_capacity: Blip3QuestionCapacity
+    blip3_rule_definition_limit: Blip3RuleDefinitionLimit
     defaults: Dict[str, Any]
     profiles: Dict[str, Dict[str, Any]]
     source_precedence: List[str]
@@ -578,7 +590,10 @@ def _configuration_capabilities() -> ConfigurationCapabilities:
                 minimum=1,
                 maximum=64,
                 stage="visualization",
-                description="Safe visualization identifier.",
+                description=(
+                    "Validated logical visualization identifier; metadata only, never an "
+                    "artifact path or ZIP member name."
+                ),
             ),
             "renderer": _cap(
                 "string",
@@ -666,7 +681,11 @@ def _configuration_capabilities() -> ConfigurationCapabilities:
             fields=routing_fields, description="Complete CLIP-to-BLIP3 routing policy."
         ),
         "blip3": CapabilitySection(
-            fields=blip_fields, description="Dynamic BLIP3 verification rules."
+            fields=blip_fields,
+            description=(
+                "Dynamic BLIP3 verification rules; at most 32 uploaded rule definitions "
+                "per request, independent of the planned-question workload cap."
+            ),
         ),
         "candidate_views": CapabilitySection(
             fields=candidate_fields, description="CLIP and BLIP3 candidate-view policies."
@@ -751,6 +770,16 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
             notes=(
                 "Canonical routing plans at most one question per routed candidate; "
                 "legacy multi-rule scheduling shares this total cap."
+            ),
+        ),
+        blip3_rule_definition_limit=Blip3RuleDefinitionLimit(
+            max_definitions=MAX_BLIP3_RULE_DEFINITIONS,
+            units="rule definitions/request",
+            stage="request configuration validation before inference",
+            request_configurable=True,
+            notes=(
+                "This structural YAML ceiling is independent of the operator question "
+                "workload cap; one rule definition may plan work for routed candidates."
             ),
         ),
         defaults=dict(SAM2_DEFAULTS),
@@ -984,6 +1013,10 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
                 "truncated": "True only when an eligible selected optional artifact is omitted by an operator budget.",
                 "omitted": "Bounded typed entries identify fixed name, stage, source/question IDs, estimate, and reason.",
                 "hashes": "JSON descriptors and ZIP manifests identify exact delivered bytes by SHA-256 and size.",
+                "visualization_id": (
+                    "Logical metadata copied from the validated visualization.id; it is omitted "
+                    "for identity/debug artifacts and never becomes a path or ZIP member name."
+                ),
             },
             error_details={
                 "resource_limit": (

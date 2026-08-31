@@ -199,7 +199,12 @@ Candidate and question IDs are one-based; `filtered_index` is zero-based and is
 assigned immediately after the SAM2 area/bbox filter. Names never contain
 prompts, labels, rule names, answers, frame names or client paths. Effective
 values and application status are present in every service response, while
-bounded model-input records are L3-only.
+bounded model-input records are L3-only. Final service visualization artifacts
+use fixed ordinal members such as `visualization/stream-0001.png`; their
+validated configured `visualization.id` is returned only as logical
+`visualization_id` metadata in the descriptor/manifest and omission ledger. It
+never becomes a path or ZIP member name. Identity and candidate/debug artifacts
+omit `visualization_id`.
 
 ## `clip` (optional)
 
@@ -283,12 +288,13 @@ bounded L3 `blip3_candidate_views` list has one record per applicable candidate;
 debug records remain one-for-one with QA artifacts. This is pixel-boundary
 evidence, not a semantic-accuracy guarantee.
 
-The service accepts bounded nested rules and plans BLIP3 questions against the
-immutable operator-only `SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` setting (1..256,
-default 256). Canonical routing plans at most one question per routed candidate;
-legacy multi-rule scheduling shares the same total cap. Planned excess returns
-structured `resource_limit` 413 before BLIP3 generation. Generation remains
-fixed to at most 32 new tokens per question. It rejects `model_name`, `revision`, `dtype`,
+The service accepts at most 32 bounded nested BLIP3 rule definitions. It plans
+their candidate-question executions against the separate immutable operator-only
+`SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` setting (1..256, default 256). Canonical
+routing plans at most one question per routed candidate; legacy multi-rule
+scheduling shares the same total cap. Planned excess returns structured
+`resource_limit` 413 before BLIP3 generation. Generation remains fixed to at
+most 32 new tokens per question. It rejects `model_name`, `revision`, `dtype`,
 tokenizer/processor controls, paths, URLs, cache/download settings, devices,
 commands and remote-code controls anywhere in an upload.
 

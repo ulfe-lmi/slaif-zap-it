@@ -56,8 +56,10 @@ __all__ = [
     "MAX_COLLECTION_ITEMS",
     "MAX_SCALAR_CHARS",
     "DEFAULT_ALPHA",
+    "MAX_BLIP3_RULE_DEFINITIONS",
     "MAX_BLIP3_QUESTIONS",
     "CLIP_LABEL_IDENTIFIER",
+    "VISUALIZATION_ID_PATTERN",
     "CLIP_MAX_CLASSES",
     "CLIP_MAX_PROMPT_CHARACTERS",
     "CLIP_MAX_PROMPTS_PER_CLASS",
@@ -76,8 +78,14 @@ MAX_CONFIG_NODES = 10_000
 MAX_COLLECTION_ITEMS = 512
 MAX_SCALAR_CHARS = 16_384
 DEFAULT_ALPHA = 0.6
-MAX_BLIP3_QUESTIONS = 256
+MAX_BLIP3_RULE_DEFINITIONS = 32
+# Source compatibility for callers that imported the old name. Validation
+# uses the explicit rule-definition name; planned question workload is a
+# separate operator-owned 1..256 limit.
+MAX_BLIP3_QUESTIONS = MAX_BLIP3_RULE_DEFINITIONS
 CLIP_LABEL_IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
+VISUALIZATION_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+_VISUALIZATION_ID = re.compile(VISUALIZATION_ID_PATTERN)
 MAX_CLIP_LABELS = CLIP_MAX_CLASSES
 MAX_CLIP_PROMPT_CHARS = CLIP_MAX_PROMPT_CHARACTERS
 MAX_ROUTING_LABELS = 32
@@ -217,7 +225,6 @@ _CANDIDATE_VIEW_BLIP3_FIELDS = frozenset(
     }
 )
 
-_VISUALIZATION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _VISUALIZATION_STAGES = frozenset({"sam2", "clip", "blip3"})
 _VISUALIZATION_ENTRY_KEYS = frozenset({"id", "renderer", "alpha", "show_confidence"})
 _DIAGNOSTIC_ARTIFACT_FIELDS = frozenset({"stages", "candidate_ids", "page", "page_size"})
@@ -916,6 +923,7 @@ def _validate_visualization_policy(mapping: Mapping[str, Any], *, max_streams: i
             "visualization.alpha must be a finite number from 0 to 1", code="invalid_config"
         )
     stream_count = 0
+    visualization_ids: set[str] = set()
     for stage_name in _VISUALIZATION_STAGES:
         entries = mapping.get(stage_name, [])
         if entries is None:
@@ -944,6 +952,9 @@ def _validate_visualization_policy(mapping: Mapping[str, Any], *, max_streams: i
                 raise ServiceError(
                     "visualization ids must be bounded safe identifiers", code="unsafe_config"
                 )
+            if identifier in visualization_ids:
+                raise ServiceError("visualization ids must be unique", code="invalid_config")
+            visualization_ids.add(identifier)
             renderer_name = renderer.lower() if isinstance(renderer, str) else ""
             if renderer_name == "annotated-labelled" and stage_name != "blip3":
                 raise ServiceError(
@@ -984,8 +995,8 @@ def _validate_blip3_policy(value: Any, *, canonical_targets: tuple[str, ...] = (
         return
     if not isinstance(value, Mapping):
         raise ServiceError("blip3 must be a mapping of verification rules", code="invalid_config")
-    if len(value) > MAX_BLIP3_QUESTIONS:
-        raise ServiceError("BLIP3 question rule limit exceeded", code="response_too_large")
+    if len(value) > MAX_BLIP3_RULE_DEFINITIONS:
+        raise ServiceError("BLIP3 rule definition limit exceeded", code="response_too_large")
     allowed = {
         "question",
         "trueresult",

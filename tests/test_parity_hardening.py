@@ -125,6 +125,19 @@ def test_visualization_policy_rejects_panoptic_and_unsafe_ids():
         )
     assert unsafe.value.code == "unsafe_config"
 
+    with pytest.raises(ServiceError) as duplicate:
+        parse_hostile_config(
+            b"visualization:\n"
+            b"  sam2:\n"
+            b"    - id: same-stream\n"
+            b"      renderer: annotated\n"
+            b"  blip3:\n"
+            b"    - id: same-stream\n"
+            b"      renderer: annotated\n",
+            verbosity=3,
+        )
+    assert duplicate.value.code == "invalid_config"
+
 
 def test_visualization_policy_is_bounded():
     entries = "\n".join(f"    - id: v{i}\n      renderer: annotated" for i in range(9))

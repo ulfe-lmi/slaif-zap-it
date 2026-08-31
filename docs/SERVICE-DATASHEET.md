@@ -40,6 +40,12 @@ L3 RLE uses `coco_rle_uncompressed`, `size: [height, width]`,
 round-trippable source-mask truth, including disconnected components and
 overlap. The identity PNG remains a documented single-valued projection.
 
+L3 service visualization descriptors use fixed ordinal names such as
+`visualization/stream-0001.png`. They carry the configured stream as bounded
+logical `visualization_id` metadata in JSON and ZIP manifests, including a
+matching omission record when budget admission omits the bytes; identity and
+candidate/debug artifacts omit that field.
+
 The L3 `post_filter_diagnostics` field evaluates optional canonical geometry
 rules for every candidate, including empties. Inclusive bbox, area,
 aspect-ratio, and border checks retain equality and use fixed precedence.
@@ -144,7 +150,7 @@ separate for reasons other than GPU memory, as documented in
 | Host available floor | 2 GiB | `SLAIF_ZAP_IT_MIN_HOST_AVAILABLE_BYTES` |
 | `/dev/shm` free floor | 64 MiB | `SLAIF_ZAP_IT_MIN_SHM_FREE_BYTES` |
 | Deadline / queue | 120 s / 0 | `SLAIF_ZAP_IT_REQUEST_DEADLINE_SECONDS`, `SLAIF_ZAP_IT_QUEUE_DEPTH` |
-| BLIP3 questions / generated tokens | 1..256 (default 256) / 32 | `SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` is operator-only; planned excess is `resource_limit` 413 before generation |
+| BLIP3 rule definitions / planned questions / generated tokens | max 32 uploaded rules / 1..256 (default 256) planned questions / 32 | Rule count is a request YAML structural limit; `SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` is operator-only and planned excess is `resource_limit` 413 before generation |
 | CLIP semantic classes / prompts | 1..32 / 1..64 per class, 1..256 total | Canonical YAML policy; arrays are independent prompts, scalar values are indivisible |
 | CLIP prompt size / tokenizer context | 512 Unicode codepoints / 77 tokens including special tokens | Invalid values return sanitized `invalid_config` 400 before inference |
 | SAM2 points per side / batch | 64 / 64 | `SLAIF_ZAP_IT_SAM2_MAX_POINTS_PER_SIDE`, `SLAIF_ZAP_IT_SAM2_MAX_POINTS_PER_BATCH` |
@@ -162,6 +168,9 @@ delivered tuple and preserves the essential identity mask; CLIP/BLIP3 records
 retain candidate evidence with `omitted_response_limit` status. RLE and every
 serialization loop check the absolute 120-second request deadline. An essential
 response can still return `response_too_large` after optional tail omission.
+Visualization members retain fixed ordinal names (`visualization/stream-####.png`)
+and expose the validated configured ID as logical `visualization_id` metadata in
+JSON, ZIP manifests, and omission records; the ID is never a path or member name.
 
 ## SAM2 capability policy
 

@@ -87,10 +87,11 @@ service routing selects one target rule per candidate, asks a bounded question,
 compares normalized true/false tokens exactly, and assigns a request-authored
 terminal class. Trusted CLI retains explicit low-score/substring compatibility.
 
-Service requests provide only rule mappings. The model, revision, FP16 dtype,
-tokenizer, processor, device, cache, and residency strategy remain pinned. The
-service limits each request to an immutable operator-owned 1..256 planned
-questions, defaulting to 256, and 32 generated tokens per question. The
+Service requests provide only rule mappings, with at most 32 uploaded BLIP3
+rule definitions. The model, revision, FP16 dtype, tokenizer, processor,
+device, cache, and residency strategy remain pinned. The service limits planned
+BLIP3 work to an immutable operator-owned 1..256 questions/request, defaulting
+to 256, and 32 generated tokens per question. The
 `SLAIF_ZAP_IT_BLIP3_MAX_QUESTIONS` setting is not request YAML; canonical routing
 plans at most one question per routed candidate, while legacy multi-rule
 scheduling shares the same total cap. A planned excess is a structured

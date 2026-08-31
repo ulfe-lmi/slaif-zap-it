@@ -102,6 +102,7 @@ class FakeEngine:
                 verbosity=verbosity,
                 artifact_sink=artifact_sink,
                 class_labels=class_labels,
+                render_visualizations=render_visualizations,
                 service_safe_artifact_names=service_safe_artifact_names,
             )
         finally:
@@ -117,6 +118,7 @@ class FakeEngine:
         verbosity: int,
         artifact_sink=None,
         class_labels=(),
+        render_visualizations=None,
         service_safe_artifact_names=False,
     ) -> SingleImageOutcome:
         self.calls.append(
@@ -374,6 +376,24 @@ class FakeEngine:
                 if summary.total_prompt_count:
                     clip_prompt_metadata = summary.as_dict()
 
+        rendered = {}
+        if (
+            service_safe_artifact_names
+            and verbosity >= 3
+            and render_visualizations is not False
+            and config.vis_cfg
+        ):
+            from modules.visualizer import generate_visualizations
+
+            rendered = generate_visualizations(
+                image_rgb,
+                {"sam2": candidates, "clip": filtered, "blip3": routed},
+                config.vis_cfg,
+                default_alpha=config.alpha,
+                verbosity=verbosity,
+                final_objects=tuple(objects),
+            )
+
         result = PipelineResult(
             image_height=int(height),
             image_width=int(width),
@@ -402,7 +422,7 @@ class FakeEngine:
                     else {}
                 ),
             },
-            rendered={},
+            rendered=rendered,
             warnings=tuple(result_warnings),
             timings={
                 "stage.sam2": 0.5,
