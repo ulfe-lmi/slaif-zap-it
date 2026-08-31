@@ -117,8 +117,10 @@ and the asymmetric one-pixel containment regression. Returned composition arrays
 are crop-bounded; no redundant source-shaped masks are retained.
 
 The semantic seams are literal CPU/fake captures: the real CLIP
-`classify_single` path is exercised while a bounded processor records its
-`images=` argument, and the BLIP3 QA holder receives one shared image;
+`classify_single_scores` path is exercised by
+`test_real_clip_classify_single_receives_literal_raw_bbox_processor_view`
+while a bounded processor records its `images=` argument, and the BLIP3 QA
+holder receives one shared image;
 lossless debug PNG decoding is compared with the exact model input. A focused core
 flow carries one-based source candidate IDs and zero-based post-SAM2 filtered
 indices across removal, CLIP, BLIP3, final area ordering, labelled
@@ -149,3 +151,14 @@ all existing bytes; `check_state.py` reports duplicate IDs and latest human
 adjudication without treating `DEFERRED`, `REJECTED`, or `CHANGE REQUIRED` as
 accepted. These tests are CPU-only and must not become an excuse to add routine
 critical entries.
+
+## Objective 020 deterministic seam checks
+
+The CPU matrix independently verifies source-coordinate raw CLIP crops and
+half-up radius arithmetic, literal processor capture, complete ordered cosine
+vectors, every router branch and cap tie-break, optional geometry precedence
+and rejection facts, exact BLIP3 token mapping, separate debug pixels, stable
+IDs/counts/timings, all shipped YAML examples at levels 0 and 3, and JSON/ZIP
+parity. These checks establish contract fidelity only; they do not establish
+semantic accuracy or recall. Optional artifact overflow remains inference-fatal
+until Objective 021.

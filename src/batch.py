@@ -114,6 +114,7 @@ class PipelineContext:
     post_maxsize: int
     max_w: int
     max_h: int
+    clip_routing_cfg: Mapping[str, object] = field(default_factory=dict)
     candidate_views: Mapping[str, CandidateViewConfig] = field(
         default_factory=default_candidate_view_configs
     )
@@ -127,6 +128,7 @@ class PipelineContext:
             prep_debug=self.prep_debug,
             clip_cfg=self.clip_cfg,
             blip3_cfg=self.blip3_cfg,
+            clip_routing_cfg=self.clip_routing_cfg,
             sam2_cfg=self.sam2_cfg,
             postsam2_cfg=self.postsam2_cfg,
             vis_cfg=self.vis_cfg,
@@ -307,6 +309,7 @@ def pipeline_context_from_core_config(core_config: CoreConfig) -> PipelineContex
         post_maxsize=core_config.post_maxsize,
         max_w=core_config.max_w,
         max_h=core_config.max_h,
+        clip_routing_cfg=dict(core_config.clip_routing_cfg),
         candidate_views=core_config.candidate_views,
     )
 

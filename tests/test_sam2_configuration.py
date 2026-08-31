@@ -1040,7 +1040,7 @@ def test_l3_raw_candidate_count_survives_empty_remap_and_optional_stages():
         )
     )
     config = _config(
-        "clip:\n  labels:\n    goat: 'a goat'\nblip3:\n  goat:\n    question: 'is this a goat?'\n"
+        "clip:\n  labels:\n    goat: 'a goat'\nblip3:\n  goat:\n    question: 'is this a goat?'\n    trueresult: 'Yes'\n    falseresult: 'No'\n    newcategory: goat\n    falsecategory: negative\nclip_routing:\n  route_to_blip3:\n    labels: [goat]\n    top_k: 1\n    score_margin_from_best: null\n    minimum_target_score: null\n    uncertain_labels: []\n    max_candidates: null\n"
     )
     response = client.post(
         "/v1/completions",

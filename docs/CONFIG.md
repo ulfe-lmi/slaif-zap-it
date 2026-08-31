@@ -10,6 +10,7 @@ At a glance the batch runner understands these top-level sections:
 - `mask_generator`
 - `postsam2processing`
 - `clip`
+- `clip_routing`
 - `blip3`
 - `candidate_views`
 - `geometry`
@@ -18,8 +19,10 @@ At a glance the batch runner understands these top-level sections:
 - `video`
 - `export_yolo_det`
 
-The same configuration works for image directories and video files. When a
-video is processed, extracted frames and JSON manifests are written to an
+The trusted algorithm sections work for image directories and video files. The
+service additionally requires the canonical `clip_routing` section when CLIP
+and BLIP3 are both enabled; batch-only `geometry`, paths, and output controls
+are not service capabilities. When a video is processed, extracted frames and JSON manifests are written to an
 `output/<video-stem>/` folder next to the source file.
 
 ## `preprocessing`
@@ -109,29 +112,24 @@ rectangular JPEG patches.
 
 ## `postsam2processing`
 
-Filters applied after SAM2 but before CLIP. All thresholds are optional; if a
-value is missing the code uses a very large default so that nothing is removed.
+Filters applied after SAM2 but before CLIP. Canonical area, inclusive bbox,
+aspect-ratio, and border thresholds are optional; null disables a rule and no
+implicit geometry limit is invented. Legacy aliases remain available with a
+warning for trusted/API compatibility.
 
-- `maxsize`: maximum mask area in pixels.
-- `max_w`: maximum bounding-box width in pixels.
-- `max_h`: maximum bounding-box height in pixels.
+- `min_area`/`max_area`: optional mask-area bounds, 0..64,000,000.
+- `min_width`/`max_width` and `min_height`/`max_height`: optional inclusive
+  bbox bounds, 0..32,768.
+- `min_aspect_ratio`/`max_aspect_ratio`: optional width/height bounds, 0..1000.
+- `allow_border_touching`: strict boolean, default true.
 - `debug`: when `true`, the final mask patches that survive filtering are saved
   as JPEGs.
 
-At service verbosity 3, the response reports the filter's deterministic
-short-circuit decisions in `post_filter_diagnostics`. The area comparison is
-terminal and occurs before segmentation access: a `maxsize` rejection carries
-the exact area and zero bbox dimensions because those dimensions were not
-evaluated. Empty masks also carry zero dimensions for their distinct reason.
-Rejection precedence is `maxsize`, empty mask, `max_w`, then `max_h`; each
-comparison rejects only when the measured value is strictly greater, so equality
-is retained. Width and height use inclusive extents of the remapped
-segmentation. Aggregate counts reconcile evaluated, retained and each removal
-reason. Numeric-only rejection records are ordered by source candidate and capped
-at 256, with
-`rejections_truncated` for rejected candidates not represented. These records
-describe configured filtering and do not establish SAM2 recall or semantic
-accuracy.
+At service verbosity 3, `post_filter_diagnostics` evaluates every candidate,
+including empty masks. Rejection precedence is empty, min/max area, min/max
+width, min/max height, min/max aspect ratio, then border touching; equality is
+retained. Every rejection carries source ID, nullable inclusive bbox, area,
+dimensions, reason, configured limit field/value, and a bounded record count.
 
 ## `candidate_views`
 
@@ -142,12 +140,10 @@ these effective values:
 ```yaml
 candidate_views:
   clip:
-    mode: mask_dilated
+    mode: raw_bbox_crop
     context_fraction: 0.10
     min_context_pixels: 0
     max_context_pixels: 64
-    outside_fill: zero
-    context_intensity: 0.35
   blip3:
     mode: single_dilated_blur
     context_fraction: 0.20
@@ -162,7 +158,8 @@ candidate_views:
     contour_rgb: [255, 224, 0]
 ```
 
-CLIP retains its legacy field set and bounds. BLIP3 accepts only
+CLIP accepts only the four raw-crop fields `mode: raw_bbox_crop`,
+`context_fraction`, `min_context_pixels`, and `max_context_pixels`. BLIP3 accepts only
 `single_dilated_blur`, `context_fraction` 0..0.5, `min_context_pixels` 0..256,
 `max_context_pixels` 0..512 (not below the minimum),
 `crop_extent_multiplier` 1..2, `blur_sigma_fraction` 0..0.5,
@@ -209,12 +206,15 @@ CLIP stage is skipped entirely.
 - `debug` (bool): if set, every effective candidate view is written as a
   lossless PNG. The service uses the fixed tokenized name above; trusted legacy
   output prefixes it with a sanitized frame stem.
-- `labels` (mapping): label names to comma-separated prompt strings. Literal
-  block style (`|`) is recommended so that commas and line breaks are preserved.
+- `labels` (mapping): safe identifiers to one complete natural-language prompt
+  string. Commas and line breaks are prompt content, not list syntax.
 
-The loader also supports flattened keys such as `"label goat": "prompt1, prompt2"`
-for convenience. Every mask receives the label with the highest CLIP score; the
-score is stored in `clip_score` for later stages.
+The trusted loader also supports flattened keys such as `"label goat":
+"prompt1, prompt2"` for legacy CLI compatibility. The service uses exactly one
+natural-language value per safe identifier, preserves every label's cosine
+score in configuration order, and stores the deterministic winner in
+`clip_label`/`clip_score`. When canonical `clip_routing` is present, its OR
+rules—not the winner alone—decide BLIP3 admission.
 
 ## `blip3` (optional)
 
@@ -232,17 +232,17 @@ SLA, accuracy claim, commercial-license clearance, or external deployment;
 geometry/panoptic and deployment/release gates remain separate. Nested mappings
 define rules:
 
-- Nested mappings define rules. Keys that match existing CLIP labels trigger the
-  associated question whenever that label is assigned. Keys that start with
-  `"any,"` declare a CLIP score threshold. For example `any,0.15` fires when the
-  mask's CLIP score is ≤ 0.15, regardless of label.
+- In the service, each key matches one `clip_routing` target label. The router
+  selects it before BLIP3, even when another CLIP label is top-1; `any,<score>`
+  remains a trusted-CLI compatibility form only.
 
 Each rule supports these fields:
 
 - `question`: prompt passed to BLIP-3.
-- `trueresult` / `falseresult`: substrings that signal a positive/negative
-  answer (case-insensitive).
-- `newcategory`: optional replacement label applied when the answer is true.
+- `trueresult` / `falseresult`: exact normalized answer tokens in the service;
+  legacy CLI may use substring compatibility.
+- `newcategory` / `falsecategory`: terminal labels selected by true/false or
+  unmatched answers.
 - `debug`: when `true`, service verbosity 3 returns the exact single-image
   mask-isolated verification image as a lossless PNG named
   `blip3-verification-CANDIDATE-####-QUESTION-####.png`.
@@ -278,8 +278,10 @@ most 32 new tokens per question. It rejects `model_name`, `revision`, `dtype`,
 tokenizer/processor controls, paths, URLs, cache/download settings, devices,
 commands and remote-code controls anywhere in an upload.
 
-Masks that match the false string are relabelled to `negative`; matches on the
-true string keep their label or take `newcategory` if provided.
+For canonical service rules, an answer normalized exactly to `trueresult`
+selects `newcategory`; an exact `falseresult` selects `falsecategory`; and an
+unmatched answer conservatively selects `falsecategory`. Trusted legacy rules
+retain substring matching and their default `negative` fallback.
 
 ## `geometry` (legacy-only, not a service stage)
 
@@ -358,3 +360,18 @@ Supported options:
 
 If YOLO export is enabled while `--output-image-dir` points elsewhere, the
 exporter nests the dataset under that root to keep outputs together.
+
+## Objective 020 migration
+
+Service YAML uses `clip.labels` as `identifier: natural-language prompt` and
+adds `clip_routing.route_to_blip3`. Use `candidate_views.clip.mode:
+raw_bbox_crop`; its half-up context radius changes only the source crop
+boundary. Add one matching BLIP3 rule per routing target with `question`,
+`trueresult`, `falseresult`, `newcategory`, and `falsecategory`. Final
+visualization labels name terminal BLIP3 categories.
+
+The old `padding` and `label "name"` forms, `any,<score>` BLIP rules,
+implicit `negative` mapping, and masked CLIP views are trusted-CLI
+compatibility only. Canonical optional geometry fields replace the old aliases;
+aliases remain accepted with a warning. `geometry` and `blip2` are batch-only.
+Objective 021 changes optional artifact overflow to structured truncation.

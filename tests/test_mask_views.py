@@ -14,7 +14,12 @@ from PIL import Image, ImageFilter
 
 from modules.classifier import clip as clip_module
 from modules.verifier import blip3 as blip3_module
-from src.core import BoundedMemoryArtifactSink, CandidateViewConfig, build_mask_views
+from src.core import (
+    BoundedMemoryArtifactSink,
+    CandidateViewConfig,
+    build_mask_views,
+    build_raw_clip_crop,
+)
 from src.core.errors import CoreError
 from src.service.capabilities import build_capabilities
 from src.service.errors import ServiceError
@@ -31,6 +36,17 @@ def _clip_config(**overrides):
         "max_context_pixels": 64,
         "outside_fill": "zero",
         "context_intensity": 0.35,
+    }
+    values.update(overrides)
+    return CandidateViewConfig.from_mapping(values, stage="clip")
+
+
+def _raw_clip_config(**overrides):
+    values = {
+        "mode": "raw_bbox_crop",
+        "context_fraction": 0.10,
+        "min_context_pixels": 0,
+        "max_context_pixels": 64,
     }
     values.update(overrides)
     return CandidateViewConfig.from_mapping(values, stage="clip")
@@ -353,12 +369,10 @@ def test_blip3_defaults_are_a_separate_exact_policy_from_clip():
     clip = CandidateViewConfig.from_mapping(None, stage="clip").as_dict(stage="clip")
     blip = CandidateViewConfig.from_mapping(None, stage="blip3").as_dict(stage="blip3")
     assert clip == {
-        "mode": "mask_dilated",
+        "mode": "raw_bbox_crop",
         "context_fraction": 0.1,
         "min_context_pixels": 0,
         "max_context_pixels": 64,
-        "outside_fill": "zero",
-        "context_intensity": 0.35,
     }
     assert blip == {
         "mode": "single_dilated_blur",
@@ -864,7 +878,7 @@ def test_blip3_strict_validation_rejects_machine_limit_violations(raw):
     assert excinfo.value.code in {"invalid_config", "unsupported_field"}
 
 
-def test_real_clip_classify_single_receives_literal_processor_context_view():
+def test_real_clip_classify_single_receives_literal_raw_bbox_processor_view():
     class Scalar:
         def __init__(self, value):
             self.value = value
@@ -927,13 +941,22 @@ def test_real_clip_classify_single_receives_literal_processor_context_view():
     class Processor:
         def __init__(self):
             self.images = []
+            self.texts = []
 
-        def __call__(self, *, images, return_tensors):
+        def __call__(self, *, images=None, text=None, return_tensors, padding=False):
             assert return_tensors == "pt"
-            self.images.append(np.asarray(images).copy())
+            if text is not None:
+                assert images is None
+                assert padding is True
+                self.texts.append(list(text))
+            else:
+                self.images.append(np.asarray(images).copy())
             return {}
 
     class Model:
+        def get_text_features(self, **_inputs):
+            return torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+
         def get_image_features(self, **_inputs):
             return torch.tensor([[3.0, 1.0]])
 
@@ -951,25 +974,72 @@ def test_real_clip_classify_single_receives_literal_processor_context_view():
     clip_filter.verbosity = 0
     clip_filter.log_print = lambda *_args, **_kwargs: None
 
-    image = np.zeros((32, 36, 3), dtype=np.uint8)
+    canonical_prompts = {
+        "machine_id_with_underscore": "Natural-language value, with punctuation\nand a newline",
+        "other_id": "another natural-language value",
+    }
+    clip_filter.class_map = clip_module._class_map_from(
+        {"labels": canonical_prompts}, canonical_labels=True
+    )
+    clip_filter.all_prompts = [
+        "Natural-language value, with punctuation\nand a newline",
+        "another natural-language value",
+    ]
+    clip_filter._encode_text_prompts()
+    assert processor.texts == [clip_filter.all_prompts]
+    assert "machine_id_with_underscore" not in processor.texts[0][0]
+    # Restore the independent two-label seam used by the image-boundary proof.
+    clip_filter.class_map = {
+        "target": ["target prompt"],
+        "distractor": ["distractor prompt"],
+    }
+    clip_filter.class_idx = ["target", "distractor"]
+    clip_filter.all_prompts = ["target prompt", "distractor prompt"]
+    clip_filter.text_embeds = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+
+    image = _scene((32, 36))
     mask = np.zeros((32, 36), dtype=bool)
     mask[8:24, 10:26] = True
-    image[12:20, 14:22] = (250, 250, 250)
+    mask[12:20, 14:22] = False
+    image[10:12, 12:14] = (250, 250, 250)  # outside the mask, inside its tight bbox
+    image[4:8, 6:10] = (3, 251, 127)  # distinctive padded context pixels
+    image_before = image.copy()
+    mask_before = mask.copy()
     sink = BoundedMemoryArtifactSink()
     records = []
+    config = _raw_clip_config(
+        context_fraction=0.1875,
+        min_context_pixels=2,
+        max_context_pixels=3,
+    )
+    candidate = {"segmentation": mask, "_source_index": 7, "_filtered_index": 2}
     clip_filter.filter_masks(
-        [{"segmentation": mask, "_source_index": 7, "_filtered_index": 2}],
+        [candidate],
         image,
         None,
         "frame",
         artifact_sink=sink,
         safe_artifact_names=True,
-        candidate_view_config=_clip_config(context_fraction=0.0),
+        candidate_view_config=config,
         candidate_view_inputs=records,
     )
-    expected = build_mask_views(image, mask, 8, _clip_config(context_fraction=0.0)).context_rgb
+    expected_view = build_raw_clip_crop(
+        image,
+        mask,
+        8,
+        config,
+        filtered_index=2,
+        debug=True,
+    )
+    expected = expected_view.rgb
+    x0, y0, x1, y1 = expected_view.crop_bbox_xyxy_exclusive
+    assert expected_view.raw_context_radius == int(math.floor(0.1875 * 16 + 0.5)) == 3
+    assert expected_view.effective_context_radius == 3
+    assert (x0, y0, x1, y1) == (7, 5, 29, 27)
+    assert np.array_equal(expected, image[y0:y1, x0:x1])
     assert len(processor.images) == 1
     assert np.array_equal(processor.images[0], expected)
+    assert processor.images[0].shape == (y1 - y0, x1 - x0, 3)
     assert np.array_equal(sink.artifacts()[0].array, processor.images[0])
     assert sink.names() == ("clip-candidate-view-CANDIDATE-0008.png",)
     png = io.BytesIO()
@@ -978,6 +1048,30 @@ def test_real_clip_classify_single_receives_literal_processor_context_view():
     assert np.array_equal(decoded, processor.images[0])
     assert records[0]["source_candidate_id"] == 8
     assert records[0]["filtered_index"] == 2
+    assert records[0]["crop_bbox_xyxy_exclusive"] == [x0, y0, x1, y1]
+    assert records[0]["raw_context_radius"] == 3
+    assert records[0]["effective_context_radius"] == 3
+    assert records[0]["artifact_name"] == "clip-candidate-view-CANDIDATE-0008.png"
+    assert list(records[0]["config"]) == [
+        "mode",
+        "context_fraction",
+        "min_context_pixels",
+        "max_context_pixels",
+    ]
+    assert records[0]["config"]["mode"] == "raw_bbox_crop"
+    assert records[0]["config"]["context_fraction"] == 0.1875
+    assert records[0]["config"]["min_context_pixels"] == 2
+    assert records[0]["config"]["max_context_pixels"] == 3
+    assert records[0]["target_bbox_xyxy"] == [10, 8, 25, 23]
+    assert records[0]["model_input_dimensions"] == {"height": 22, "width": 22}
+    # ``classify_single_scores`` returns every configured label in order.
+    assert list(candidate["clip_scores"]) == ["target", "distractor"]
+    assert candidate["clip_scores"]["target"] == pytest.approx(3.0 / np.sqrt(10.0))
+    assert candidate["clip_scores"]["distractor"] == pytest.approx(1.0 / np.sqrt(10.0))
+    assert candidate["clip_label"] == "target"
+    assert candidate["clip_prompt"] == "target prompt"
+    assert np.array_equal(image, image_before)
+    assert np.array_equal(mask, mask_before)
 
 
 def test_resident_clip_debug_configuration_is_a_b_a_request_local():

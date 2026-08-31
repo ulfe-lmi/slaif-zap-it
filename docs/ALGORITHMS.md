@@ -61,10 +61,13 @@ keep-label filtering occurs after optional relabeling.
 
 ## CLIP classification
 
-CLIP performs zero-shot classification over each surviving mask crop. A YAML
-label maps to one or more natural-language prompts. ZAP-IT encodes the prompt
-set, embeds each crop, and assigns the class associated with the highest
-similarity.
+CLIP scores every surviving geometry candidate. In the service, each safe
+machine identifier maps to exactly one natural-language prompt; the trusted CLI
+alone retains multi-prompt and flattened-key compatibility. The service sends
+the untouched rectangular `raw_bbox_crop` to CLIP, preserves the complete
+cosine vector in configuration order, and records its deterministic winner.
+The permissive `clip_routing` conditions, rather than the winner alone, decide
+BLIP3 admission.
 
 The service keeps the pinned CLIP model resident and refreshes only
 request-specific prompt embeddings. CLIP similarity is useful ranking evidence,
@@ -75,9 +78,10 @@ the prompt format without depending on private or operator-held fixtures.
 
 ## BLIP3 verification
 
-BLIP3/XGen-MM is an optional visual question-answering verifier. Rules can
-target a CLIP label or low-score candidates, ask a bounded question, interpret
-configured true/false substrings, and optionally assign a replacement class.
+BLIP3/XGen-MM is an optional visual question-answering verifier. Canonical
+service routing selects one target rule per candidate, asks a bounded question,
+compares normalized true/false tokens exactly, and assigns a request-authored
+terminal class. Trusted CLI retains explicit low-score/substring compatibility.
 
 Service requests provide only rule mappings. The model, revision, FP16 dtype,
 tokenizer, processor, device, cache, and residency strategy remain pinned. The
@@ -98,12 +102,13 @@ the baseline. At or above 24,576 MiB, all three pinned FP16 holders remain on
 the assigned GPU and no request-time movement occurs. Objective 009's real
 matrix covers all four supported profiles. The resulting single images are
 bounded before the pinned processor maps
-arbitrary aspect ratios to a finite 378-pixel tile grid. The verifier's fixed
-instruction follows the delimited client question and asks whether the region
-inside the yellow outline itself is the requested object. Both modes expose only
-logical `cuda:0` after an explicit operator index and UUID pin; the evidence is
-bounded local research, not an SLA, accuracy claim, license clearance, or
-external deployment.
+arbitrary aspect ratios to a finite 378-pixel tile grid. The verifier's exact
+generic instruction follows the delimited client question: `The unblurred
+region inside the yellow boundary is the selected candidate. The blurred
+surroundings are context only. Answer exactly Yes or No.` Both modes expose
+only logical `cuda:0` after an explicit operator index and UUID pin; the
+evidence is bounded local research, not an SLA, accuracy claim, license
+clearance, or external deployment.
 
 ## Deterministic object results
 
@@ -182,7 +187,23 @@ through the stateless API.
 - Outputs depend on pretrained model behavior, prompts, thresholds, and image
   conditions; they are not guaranteed ground truth.
 - CLIP scores and SAM2 quality values are not calibrated end-to-end confidence.
-- BLIP3 answers are generated text interpreted by configured substring rules.
+- BLIP3 answers are generated text mapped by exact normalized configured tokens
+  in the canonical service route; trusted legacy rules retain explicit
+  substring compatibility.
 - Qualification demonstrates bounded execution and stability, not accuracy or
   fitness for a specific deployment.
 - Model licenses and use restrictions apply independently of repository code.
+
+## Objective 020 responsibility split
+
+SAM2 proposes; optional geometry removes only impossible candidates; CLIP2 sees
+the complete rectangular source crop and supplies all finite cosine similarities
+in configuration order; a permissive OR router chooses which target question
+BLIP3 verifies. BLIP3 receives one separately composed contextual image and its
+request-authored answer mapping determines the terminal label. CLIP identifiers
+are machine-safe keys while their natural-language values are the exact prompts.
+
+The raw CLIP radius is `floor(context_fraction * max(inclusive_bbox_width,
+inclusive_bbox_height) + 0.5)`, then min/max bounded and clamped to the source.
+Semantic accuracy, recall, and precision are not proved by the deterministic
+CPU/fake tests.

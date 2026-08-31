@@ -27,8 +27,9 @@ import numpy as np
 from modules.visualizer import generate_visualizations as _generate_visualizations
 from .config import CoreConfig, config_digest
 from .errors import CoreError
-from .mask_views import build_mask_views
+from .mask_views import build_mask_views, build_raw_clip_crop
 from .ordering import order_final_objects
+from .routing import apply_clip_routing
 from ..postprocessing import filter_by_area_bbox as _canonical_filter_by_area_bbox
 from .raw_visualizations import render_raw_sam2_visualizations
 from .results import ObjectResult, PipelineResult, Provenance, SingleImageOutcome, StageStatus
@@ -186,15 +187,27 @@ def _candidate_view_debug_capacity(
         source_index = mask.get("_source_index")
         source_id = int(source_index) + 1 if type(source_index) is int else ordinal + 1
         if clip_debug:
-            view = build_mask_views(
-                image_rgb,
-                mask["segmentation"],
-                source_id,
-                config.candidate_view_config("clip"),
-                stage="clip",
-            )
+            clip_view_config = config.candidate_view_config("clip")
+            if clip_view_config.mode == "raw_bbox_crop":
+                view = build_raw_clip_crop(
+                    image_rgb,
+                    mask["segmentation"],
+                    source_id,
+                    clip_view_config,
+                    filtered_index=int(mask.get("_filtered_index", ordinal)),
+                    debug=True,
+                )
+                size = int(view.rgb.nbytes)
+            else:
+                view = build_mask_views(
+                    image_rgb,
+                    mask["segmentation"],
+                    source_id,
+                    clip_view_config,
+                    stage="clip",
+                )
+                size = int(view.context_rgb.nbytes)
             artifact_count += 1
-            size = int(view.context_rgb.nbytes)
             raw_bytes += size
             artifact_sizes.append(size)
 
@@ -203,7 +216,12 @@ def _candidate_view_debug_capacity(
             label = mask.get("clip_label")
             debug_questions = 0
             for threshold, rule_label, rule in blip_debug_rules:
-                applies = score <= threshold if threshold is not None else label == rule_label
+                if config.clip_routing_cfg:
+                    applies = bool(mask.get("_route_to_blip3")) and rule_label == mask.get(
+                        "clip_routing", {}
+                    ).get("chosen_target")
+                else:
+                    applies = score <= threshold if threshold is not None else label == rule_label
                 if applies and rule.get("debug") is True:
                     debug_questions += 1
             if debug_questions:
@@ -355,33 +373,56 @@ def run_single_image(
     sam2_metadata["execution_time_ms"] = round(timings.get("stage.sam2", 0.0), 3)
     sam2_metadata.setdefault("resource_warnings", [])
 
+    canonical_geometry = any(
+        field in config.postsam2_cfg
+        for field in (
+            "min_area",
+            "max_area",
+            "min_width",
+            "max_width",
+            "min_height",
+            "max_height",
+            "min_aspect_ratio",
+            "max_aspect_ratio",
+            "allow_border_touching",
+        )
+    )
     all_masks_pre: List[dict] = []
+    non_empty_masks: List[dict] = []
     for candidate_index, mask in enumerate(partial_masks):
         seg_rs = mask["segmentation"]
-        if not np.any(seg_rs):
+        if not np.any(seg_rs) and not canonical_geometry:
             continue
         seg_global = _remap_mask_to_original(seg_rs, (x, y, x2, y2), seg_rs.shape, (h_orig, w_orig))
-        all_masks_pre.append(
+        record = {
+            "segmentation": seg_global,
+            "area": int(seg_global.sum()),
+            "predicted_iou": mask.get("predicted_iou", None),
+            "stability_score": mask.get("stability_score", None),
+            "_source_index": candidate_index,
+        }
+        all_masks_pre.append(record)
+        if np.any(seg_global):
+            non_empty_masks.append(record)
+    candidate_counts["sam2_candidates"] = len(non_empty_masks)
+    if canonical_geometry or config.clip_routing_cfg:
+        candidate_counts.update(
             {
-                "segmentation": seg_global,
-                "area": int(seg_global.sum()),
-                "predicted_iou": mask.get("predicted_iou", None),
-                "stability_score": mask.get("stability_score", None),
-                "_source_index": candidate_index,
+                "raw_sam2_generated": raw_candidate_count,
+                "non_empty_candidates": len(non_empty_masks),
             }
         )
-    candidate_counts["sam2_candidates"] = len(all_masks_pre)
 
     if config.sam2_cfg.get("debug", False):
         if service_safe_artifact_names:
             if verbosity >= 3:
                 sink = _require_sink("mask_generator.debug")
-                omitted_empty = raw_candidate_count - len(all_masks_pre)
+                omitted_empty = raw_candidate_count - len(non_empty_masks)
                 if omitted_empty < 0:
                     raise CoreError("SAM2 raw candidate accounting is inconsistent")
                 raw_rendered = render_raw_sam2_visualizations(
                     image_rgb,
-                    all_masks_pre,
+                    non_empty_masks,
                     raw_candidate_count=raw_candidate_count,
                     omitted_empty_candidate_count=omitted_empty,
                 )
@@ -393,7 +434,7 @@ def run_single_image(
         else:
             sink = _require_sink("mask_generator.debug")
             log("[mask_generator debug] => capturing raw SAM2 patches...", 1, verbosity)
-            for idx, mm in enumerate(all_masks_pre):
+            for idx, mm in enumerate(non_empty_masks):
                 seg = mm["segmentation"]
                 rr, cc = np.nonzero(seg)
                 if len(rr) == 0:
@@ -414,32 +455,61 @@ def run_single_image(
             filter_kwargs["diagnostics"] = post_filter_diagnostics
         if _accepts_keyword(filter_func, "collect_rejections"):
             filter_kwargs["collect_rejections"] = verbosity >= 3
-        filtered = filter_func(
-            all_masks_pre,
-            config.post_maxsize,
-            config.max_w,
-            config.max_h,
-            **filter_kwargs,
-        )
-        if not post_filter_diagnostics:
-            # Old injected fakes may not know about the sidecar. Derive an honest
-            # standard-filter view without changing their legacy list result.
-            _canonical_filter_by_area_bbox(
+        if canonical_geometry and _accepts_keyword(filter_func, "geometry_config"):
+            filter_kwargs["geometry_config"] = config.postsam2_cfg
+            filtered = filter_func(all_masks_pre, **filter_kwargs)
+        else:
+            filtered = filter_func(
                 all_masks_pre,
                 config.post_maxsize,
                 config.max_w,
                 config.max_h,
-                diagnostics=post_filter_diagnostics,
-                collect_rejections=verbosity >= 3,
+                **filter_kwargs,
             )
+        if not post_filter_diagnostics:
+            # Old injected fakes may not know about the sidecar. Derive an honest
+            # standard-filter view without changing their legacy list result.
+            if canonical_geometry:
+                from ..postprocessing import filter_by_geometry
+
+                filter_by_geometry(
+                    all_masks_pre,
+                    config.postsam2_cfg,
+                    diagnostics=post_filter_diagnostics,
+                    collect_rejections=verbosity >= 3,
+                )
+            else:
+                _canonical_filter_by_area_bbox(
+                    all_masks_pre,
+                    config.post_maxsize,
+                    config.max_w,
+                    config.max_h,
+                    diagnostics=post_filter_diagnostics,
+                    collect_rejections=verbosity >= 3,
+                )
         return filtered
 
     filtered_for_clip = timed("stage.postsam2_filter", _run_post_filter)
+    timings["stage.geometry"] = timings["stage.postsam2_filter"]
     # This index is assigned once, immediately after the SAM2 area/bbox filter,
     # and is never renumbered when a later stage rejects a candidate.
     for filtered_index, mask in enumerate(filtered_for_clip):
         mask["_filtered_index"] = filtered_index
     candidate_counts["after_area_bbox"] = len(filtered_for_clip)
+    if canonical_geometry or config.clip_routing_cfg:
+        candidate_counts.update(
+            {
+                "geometry_evaluated": int(post_filter_diagnostics.get("evaluated", 0)),
+                "after_geometry": len(filtered_for_clip),
+                "geometry_rejected": int(
+                    post_filter_diagnostics.get(
+                        "rejected",
+                        post_filter_diagnostics.get("evaluated", 0)
+                        - post_filter_diagnostics.get("retained", 0),
+                    )
+                ),
+            }
+        )
 
     if artifact_sink is not None and hasattr(artifact_sink, "ensure_capacity"):
         debug_artifacts, debug_bytes, debug_sizes = _candidate_view_debug_capacity(
@@ -459,6 +529,8 @@ def run_single_image(
             "dryrun": dryrun,
             "candidate_view_config": config.candidate_view_config("clip"),
             "candidate_view_inputs": candidate_view_inputs,
+            "canonical_labels": bool(config.clip_routing_cfg)
+            or config.candidate_view_config("clip").mode == "raw_bbox_crop",
         }
         if config.clip_cfg.get("debug", False):
             clip_params["artifact_sink"] = _require_sink("clip.debug")
@@ -476,24 +548,49 @@ def run_single_image(
         staged_clip_state, masked_after_clip, _clip_meta = timed("stage.clip", _run_clip)
         if staged_clip_state is not None:
             clip_state = staged_clip_state
+        if isinstance(_clip_meta, Mapping):
+            for key in ("crop_time_ms", "scoring_time_ms"):
+                if key in _clip_meta:
+                    timings[f"stage.clip_{key.removesuffix('_time_ms')}"] = max(
+                        0.0, float(_clip_meta[key])
+                    )
         log("[clip] => classification done, now final label filter...", 1, verbosity)
+        # Capture this before routing or BLIP3 can replace the working list.
+        # It is the number of candidates returned from the actual CLIP stage.
+        clip_scored_count = len(masked_after_clip)
     else:
         masked_after_clip = filtered_for_clip
-    candidate_counts["after_clip"] = len(masked_after_clip)
+        clip_scored_count = len(masked_after_clip)
+    candidate_counts["after_clip"] = clip_scored_count
+    if canonical_geometry or config.clip_routing_cfg:
+        candidate_counts["clip_scored"] = clip_scored_count
 
     clip_only_masks = [dict(m) for m in masked_after_clip]
+    clip_routing_diagnostics: list[Mapping[str, Any]] = []
+    routed_for_blip3 = masked_after_clip
+    if config.clip_routing_cfg:
+        routed_for_blip3, clip_routing_diagnostics, route_counts = timed(
+            "stage.clip_routing",
+            lambda: apply_clip_routing(masked_after_clip, config.clip_routing_cfg),
+        )
+        candidate_counts.update(route_counts)
+    if config.clip_cfg:
+        timings.setdefault("stage.clip_crop", 0.0)
+        timings.setdefault("stage.clip_scoring", timings.get("stage.clip", 0.0))
+    if config.clip_routing_cfg:
+        timings.setdefault("stage.clip_routing", 0.0)
 
     if config.blip3_cfg:
         if artifact_sink is not None and hasattr(artifact_sink, "ensure_capacity"):
             debug_artifacts, debug_bytes, debug_sizes = _candidate_view_debug_capacity(
-                image_rgb, masked_after_clip, config, stage="blip3"
+                image_rgb, routed_for_blip3, config, stage="blip3"
             )
             artifact_sink.ensure_capacity(debug_artifacts, debug_bytes, debug_sizes)
         log("[blip3] => verifying masks...", 1, verbosity)
         blip3_params = {
             "config": config.blip3_cfg,
             "device": resolved_device,
-            "masks": masked_after_clip,
+            "masks": routed_for_blip3,
             "fname_stem": frame_id,
             "dryrun": dryrun,
             "service_safe_artifact_names": service_safe_artifact_names,
@@ -527,15 +624,34 @@ def run_single_image(
         staged_blip3_state, masked_after_clip, _blip3_meta = timed("stage.blip3", _run_blip3)
         if staged_blip3_state is not None:
             blip3_state = staged_blip3_state
+        if canonical_geometry or config.clip_routing_cfg:
+            candidate_counts["blip3_verified"] = int(
+                (_blip3_meta or {}).get("verified_count", len(masked_after_clip))
+            )
+            if isinstance(_blip3_meta, Mapping):
+                for key in ("composition_time_ms", "verification_time_ms"):
+                    if key in _blip3_meta:
+                        timings[f"stage.blip3_{key.removesuffix('_time_ms')}"] = max(
+                            0.0, float(_blip3_meta[key])
+                        )
+            timings.setdefault("stage.blip3_composition", 0.0)
+            timings.setdefault("stage.blip3_verification", timings.get("stage.blip3", 0.0))
 
     # -- final label filter --------------------------------------------------
     pre_filter_count = len(masked_after_clip)
-    final_masks = [
-        mm
-        for mm in masked_after_clip
-        if not (config.keep_labels and mm.get("clip_label", None) not in config.keep_labels)
-    ]
+
+    def _run_final_filter():
+        return [
+            mm
+            for mm in masked_after_clip
+            if not (canonical_geometry or config.clip_routing_cfg) or not mm.get("_blip3_rejected")
+            if not (config.keep_labels and mm.get("clip_label", None) not in config.keep_labels)
+        ]
+
+    final_masks = timed("stage.final_filter", _run_final_filter)
     candidate_counts["final"] = len(final_masks)
+    if canonical_geometry or config.clip_routing_cfg:
+        candidate_counts["after_final_label_filter"] = len(final_masks)
 
     if config.postsam2_cfg.get("debug", False):
         sink = _require_sink("postsam2processing.debug")
@@ -558,7 +674,7 @@ def run_single_image(
             )
 
     # -- deterministic identity/ordering -------------------------------------
-    ordered_masks = order_final_objects(final_masks)
+    ordered_masks = timed("stage.ordering", lambda: order_final_objects(final_masks))
     objects: List[ObjectResult] = []
     class_mapping = _build_class_mapping(class_labels)
     for instance_id, mask in enumerate(ordered_masks, start=1):
@@ -641,7 +757,7 @@ def run_single_image(
         StageStatus(
             name="sam2",
             status="executed",
-            detail=f"{len(all_masks_pre)} non-empty candidates",
+            detail=f"{len(non_empty_masks)} non-empty of {raw_candidate_count} generated",
             duration_ms=timings.get("stage.sam2"),
         ),
         StageStatus(
@@ -651,14 +767,31 @@ def run_single_image(
             duration_ms=timings.get("stage.postsam2_filter"),
         ),
         StageStatus(
+            name="geometry",
+            status="executed",
+            detail=f"{len(all_masks_pre)} evaluated -> {len(filtered_for_clip)} retained",
+            duration_ms=timings.get("stage.geometry"),
+        ),
+        StageStatus(
             name="clip",
             status="executed" if config.clip_cfg else "not_configured",
             detail=(
-                f"{len(filtered_for_clip)} -> {len(masked_after_clip)}"
+                f"{len(filtered_for_clip)} -> {clip_scored_count}"
                 if config.clip_cfg
                 else "no clip configuration"
             ),
             duration_ms=timings.get("stage.clip") if config.clip_cfg else None,
+        ),
+        StageStatus(
+            name="clip_routing",
+            status="executed" if config.clip_routing_cfg else "not_configured",
+            detail=(
+                f"{candidate_counts.get('initially_routed', 0)} initially -> "
+                f"{candidate_counts.get('routed_after_cap', 0)} routed"
+                if config.clip_routing_cfg
+                else "no routing configuration"
+            ),
+            duration_ms=timings.get("stage.clip_routing") if config.clip_routing_cfg else None,
         ),
         StageStatus(
             name="blip3",
@@ -670,11 +803,13 @@ def run_single_image(
             name="label_filter",
             status="executed",
             detail=f"{pre_filter_count} -> {len(final_masks)}",
+            duration_ms=timings.get("stage.final_filter"),
         ),
         StageStatus(
             name="ordering",
             status="executed",
             detail=f"{len(objects)} final object(s) assigned ids 1..{len(objects)}",
+            duration_ms=timings.get("stage.ordering"),
         ),
         StageStatus(
             name="visualization",
@@ -718,6 +853,7 @@ def run_single_image(
         sam2_metadata=sam2_metadata,
         candidate_view_inputs=tuple(dict(record) for record in candidate_view_inputs),
         blip3_candidate_views=tuple(dict(record) for record in blip3_candidate_views),
+        clip_routing_diagnostics=tuple(dict(record) for record in clip_routing_diagnostics),
     )
     return SingleImageOutcome(
         result=result,

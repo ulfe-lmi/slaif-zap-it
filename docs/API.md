@@ -109,25 +109,12 @@ stripped from the effective config with an explicit warning.
 ### L3 post-filter diagnostics
 
 The L3 `service.post_filter_diagnostics` sibling of `candidate_counts` records
-one mutually exclusive outcome per candidate evaluated by the post-SAM2 filter.
-The area comparison is terminal and occurs before segmentation access, so a
-`maxsize` rejection records its exact `area_px` and zero `bbox_width_px` and
-`bbox_height_px` because bbox dimensions were not evaluated. Precedence is
-`maxsize`, `empty_mask`, `max_w`, then `max_h`; rejection uses strict `>` and
-equality is retained. Empty masks also report zero dimensions for their distinct
-reason; other bbox dimensions are inclusive extents of the exact remapped mask.
-Counts satisfy
-`evaluated = retained + removed_by_maxsize + removed_empty_mask +
-removed_by_max_w + removed_by_max_h`, and the canonical engine cross-checks
-`candidate_counts.sam2_candidates == evaluated` and
-`candidate_counts.after_area_bbox == retained`.
-
-Rejections contain only `source_index`, closed `reason`, `area_px`,
-`bbox_width_px`, and `bbox_height_px`. They are ordered by filter input and
-capped at 256; `rejections_truncated` reports rejected candidates beyond the
-cap. The field is absent at L0-L2, has no artifact of its own, and is shared by
-the JSON response and ZIP manifest. The two-wide-candidate roof case is a
-programmatic CPU filter regression, not a real-image SAM2 accuracy benchmark.
+one optional-geometry outcome per candidate evaluated by the post-SAM2 filter,
+including empty masks. It records fixed precedence across area, inclusive bbox,
+aspect-ratio, and border rules; equality is retained. Each rejection includes
+source candidate ID, nullable inclusive bbox, area, dimensions, configured limit
+field/value and reason. Counts reconcile exactly and bounded records report
+truncation at 256. The field is absent at L0-L2 and is shared by JSON and ZIP.
 
 When a BLIP3 rule executes, the verifier composes one deterministic RGB image
 per applicable candidate and passes that same image to every QA call for the
@@ -262,7 +249,8 @@ max 16 384 characters per scalar, zero aliases/anchors accepted.
 Top-level allowlist derived from the core boundary:
 
 - **Accepted** (algorithmic): `alpha`, `preprocessing`, `mask_generator`,
-  `postsam2processing`, `clip`, `blip3`, `candidate_views`, `visualization`.
+  `postsam2processing`, `clip`, `clip_routing`, `blip3`, `candidate_views`,
+  `visualization`.
 - **Ignored with warning** (batch-only, never honored):
   `images`, `video`, `export_yolo_det`.
 - **Rejected** (`unsupported_field`): anything else — including legacy
@@ -279,15 +267,18 @@ Anywhere in the document:
 Uploaded configs can therefore never select filesystem paths, URLs,
 commands, imports, Python symbols, devices, model repositories/revisions or
 deployment settings. Legacy `visualization.alpha` hoisting matches CLI
-normalization (default `0.6`). CLIP `labels` keys define the class mapping in
-document order.
+normalization (default `0.6`). CLIP `labels` keys are routing identifiers in
+document order; terminal class mapping comes from `visualization.labels`.
 
 ### Candidate-view policy
 
 `candidate_views` is a typed request-local section with independent `clip` and
-`blip3` children. CLIP keeps its legacy `mode: mask_dilated`, zero-fill,
-`context_fraction: 0.10`, `min_context_pixels: 0`, `max_context_pixels: 64`,
-and `context_intensity: 0.35` defaults. BLIP3 defaults to
+`blip3` children. CLIP defaults to and the API accepts only
+`mode: raw_bbox_crop`, `context_fraction: 0.10`, `min_context_pixels: 0`, and
+`max_context_pixels: 64`. The crop is a complete source-coordinate RGB
+rectangle; its mask-derived bbox and half-up radius never mask, fill, dim,
+blur, or otherwise alter pixels. Trusted CLI may explicitly use the separate
+`mask_dilated` compatibility builder. BLIP3 defaults to
 `mode: single_dilated_blur`, `context_fraction: 0.20`, context limits `0..64`,
 `crop_extent_multiplier: 2.0`, `blur_sigma_fraction: 0.15`, enabled contour
 fraction `0.02`, contour width limits `1..3`, and `contour_rgb: [255, 224, 0]`.
@@ -469,8 +460,27 @@ measured evidence and deployment prerequisites.
 - BLIP3 request rules are bounded to 32 questions and 32 generated tokens per
   question. Model identity, revision, dtype, device and residency are fixed
   operator policy; they cannot be selected by YAML or multipart fields.
-- Geometry and panoptic visualization remain explicitly unsupported service
-  capabilities; `annotated-labelled` is the supported final-object labelled
-  visualization and geometry activation requires a separate scientific-stage
-  order.
-- `geometry`/`blip2` config sections are rejected until the core consumes them.
+- Canny/Hough geometry and panoptic visualization remain explicitly unsupported
+  service capabilities; `annotated-labelled` is the supported final-object
+  labelled visualization. Optional `postsam2processing` impossibility geometry
+  is an independent in-memory filter supported by this contract.
+- `postsam2processing` accepts the canonical optional geometry rules
+  (`min_area`, `max_area`, `min_width`, `max_width`, `min_height`,
+  `max_height`, aspect-ratio bounds, and `allow_border_touching`). Legacy
+  `maxsize`, `max_w`, and `max_h` are compatibility aliases with migration
+  warnings. The unrelated batch-only `geometry` and `blip2` sections remain
+  rejected.
+
+## Objective 020 semantic contract
+
+API CLIP labels are mappings of safe identifiers to one complete natural-language
+prompt. `candidate_views.clip.mode` is always `raw_bbox_crop`; masked, filled,
+dimmed, or padded views are not accepted by the API. `clip_routing.route_to_blip3`
+uses OR conditions for top-1, top-k, score margin, minimum target score, and
+uncertain winners, with deterministic reasons and a source-ID-ranked cap.
+Complete vectors and routing diagnostics are L3-only; effective policy is
+available in service metadata. The selected target rule asks BLIP3 once using
+the existing delimited question and exact normalized true/false token mapping,
+with an exact true match selecting `newcategory`, an exact false or unmatched
+answer selecting configured `falsecategory`, and the mapping recorded.
+L2 objects carry their own semantic evidence; JSON and ZIP metadata agree.

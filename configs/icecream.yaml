@@ -1,136 +1,73 @@
-################################################################################
-# PREPROCESSING
-#
-# This section controls how we select which portion of the image to process
-# and whether or not we rescale that portion.
-#
-# "roi": "x,y,w,h"
-#   - The rectangular subregion of the image to process. If set to "False",
-#     the entire image is used (no sub-crop).
-#   - Example: "5,1825,5348,1092" means: from (x=5, y=1825), width=5348, height=1092.
-#
-# "resize": factor
-#   - If given a numeric factor < 1.0, we downscale that ROI and do a single-pass
-#     SAM2 segmentation on the resized region.
-#   - If = 1.0, we do single-pass SAM2 at the native scale.
-#   - If omitted altogether, we run SAM2 at the native scale.
-#
-# "debug": true/false
-#   - If true, the script will save a debug image of the ROI region for
-#     reference, named with a "-roiXX.jpg" suffix.
-################################################################################
+# Service-safe ice-cream example; semantic subtype decisions belong to BLIP3.
 preprocessing:
-  roi: false             # Use the whole image
-  resize: 1.0              # 1.0 => single-pass at native scale
-  debug: true              # Saves ROI debug image
-
-################################################################################
-# SAM2 MASK GENERATOR PARAMETERS
-#
-# These parameters control how SAM2 automatically generates masks:
-#
-# points_per_side:
-#   The grid resolution used by SAM2. Larger => more thorough detection but
-#   more GPU memory/time. If set to None/0, a different mode is used.
-#
-# pred_iou_thresh:
-#   Discard masks with lower predicted IoU than this threshold.
-#   Lower => keep more masks, higher => keep fewer but presumably better.
-#
-# stability_score_thresh:
-#   Discard masks with a lower stability score. Lower => keep more, higher => keep fewer.
-#
-# min_mask_region_area:
-#   Ignores extremely small masks below this pixel area.
-#
-# crop_n_layers:
-#   How many internal cropping scales SAM2 uses. >1 => multi-scale. More thorough but slower.
-#
-# crop_n_points_downscale_factor:
-#   For multi-scale crops, how the sampling grid changes for each scale.
-#   E.g. factor=2 => at each successive crop scale, the sampling is halved.
-#
-# crop_overlap_ratio:
-#   Overlap fraction between multi-scale crops. E.g. 0.4 => 40% overlap.
-#
-# box_nms_thresh:
-#   Non-maximum suppression threshold (IoU) for bounding boxes among all candidate masks.
-#   Lower => more aggressive merging, higher => less merging.
-#
-# multimask_output:
-#   If true, returns multiple mask candidates per grid point if relevant.
-#   Tends to produce more results but more duplicates.
-#
-# debug:
-#   If true, it will save each raw mask patch after SAM2 is done, to help debug
-#   the segmentation results before any CLIP classification.
-################################################################################
+  roi: false
+  resize: 1.0
+  debug: false
 mask_generator:
-  points_per_side: 64
-  pred_iou_thresh: 0.70
-  stability_score_thresh: 0.70
-  min_mask_region_area: 50000
-  crop_n_layers: 2
-  crop_n_points_downscale_factor: 2
-  crop_overlap_ratio: 0.4
-  box_nms_thresh: 0.3
-  multimask_output: true
-  debug: true
-
-################################################################################
-# POST-SAM2 PROCESSING
-#
-# After SAM2 has produced masks, we can filter them further by:
-#   maxsize:  discard masks whose area > maxsize in pixels
-#   max_w:    discard masks whose bounding box width > max_w
-#   max_h:    discard masks whose bounding box height > max_h
-#   debug:    if true, saves each final mask patch after these filters as well
-################################################################################
+  profile: fast
+  debug: false
 postsam2processing:
-  maxsize: 500000
-  max_w: 400
-  max_h: 400
-  debug: true
-
-################################################################################
-# CLIP FILTER (OPTIONAL)
-#
-# This is a zero-shot classification approach: each mask patch is passed to CLIP,
-# which chooses the best prompt from user-defined sets. If that best label is in
-# the "positive" set, we keep it; else we discard it.
-#
-# "padding": number of pixels to expand the bounding box around each mask so
-#            CLIP sees some context.
-#
-# Then we have lines like 'label "goat": "prompt1, prompt2"' which define all
-# the prompts for that label. If no label "..." lines are present, we skip CLIP entirely.
-#
-# debug: if true, saves each mask patch as a separate .jpg with best prompt in the name
-################################################################################
+  min_area: null
+  max_area: 500000
+  min_width: null
+  max_width: 400
+  min_height: null
+  max_height: 400
+  min_aspect_ratio: null
+  max_aspect_ratio: null
+  allow_border_touching: true
+  debug: false
+candidate_views:
+  clip:
+    mode: raw_bbox_crop
+    context_fraction: 0.10
+    min_context_pixels: 0
+    max_context_pixels: 64
+  blip3:
+    mode: single_dilated_blur
+    context_fraction: 0.20
+    min_context_pixels: 0
+    max_context_pixels: 64
+    crop_extent_multiplier: 2.0
+    blur_sigma_fraction: 0.15
+    contour_enabled: true
+    contour_fraction: 0.02
+    contour_min_pixels: 1
+    contour_max_pixels: 3
+    contour_rgb: [255, 224, 0]
 clip:
-  padding: 25
-  label "ice_lolly": "a paw-shaped ice cream, a paw print shaped ice lolly, an animal paw ice cream, a pink and white paw shaped dessert, a cartoon paw shaped popsicle, a novelty paw print ice cream, an ice cream shaped like a paw, a paw lollipop, a frozen paw print treat, a paw shape frozen dessert, a cream and pink paw print popsicle, a paw ice pop, a paw-shaped iced treat, a cartoon animal paw ice cream, a molded paw shape ice lolly,"
-  label "ice_lolly_stick": "a wooden popsicle stick,a popsicle stick, an ice lolly stick, a beige popsicle stick, a popsicle stick under ice cream, a lolly stick, a light brown popsicle stick"
-  label "negative": "metal tray, conveyor belt, factory background, tiled floor, shoe, human foot, black pants, person, electrical cord, hose, green cable, orange wire, table, metallic surface, grid floor, shadow, wall, stainless steel, machine, camera overlay, timestamp, reflection, support frame, floor tile, floor grout, edge of table, background object, ice build-up, screws, bolts, conveyor edge, plastic, spill, stain, tray edge, ice crystals, white highlight, metal bar, dark background, blurred region, anything not ice cream or stick, non-food object, processed background, machine part, technician, equipment, walkway, workspace, boundary, frozen surface, extraneous object, anything that isn’t an ice lolly or stick"
-  debug: true
-
-################################################################################
-# VISUALIZATION
-#
-# "labels": e.g. "goat,sign"
-#   The final set of clip_labels we actually want to keep. If a mask's best
-#   label isn't in this list, we discard it. 
-#
-# "alpha": how transparent the color overlay is when rendering "annotated" images.
-#   0 => fully transparent, 1 => fully opaque.
-#
-# "composite-sam2": if true, build a "pre" 2x2 summary image from all SAM2 masks
-# "composite-clip": if true, build a "post" 2x2 summary image from final kept masks
-# "final": if true, also build a detectron2-based "panoptic" overlay -final.jpg
-################################################################################
+  debug: false
+  labels:
+    ice_lolly: "an ice cream lolly or frozen dessert"
+    ice_lolly_stick: "a wooden popsicle or ice lolly stick"
+    background: "a machine, tray, floor, shadow, or unrelated background"
+clip_routing:
+  route_to_blip3:
+    labels: [ice_lolly, ice_lolly_stick]
+    top_k: 3
+    score_margin_from_best: 0.05
+    minimum_target_score: null
+    uncertain_labels: [background]
+    max_candidates: null
+blip3:
+  ice_lolly:
+    question: "Is the selected candidate an ice cream lolly or frozen dessert?"
+    trueresult: "Yes"
+    falseresult: "No"
+    newcategory: ice_lolly
+    falsecategory: negative
+    debug: false
+  ice_lolly_stick:
+    question: "Is the selected candidate a wooden popsicle or ice lolly stick?"
+    trueresult: "Yes"
+    falseresult: "No"
+    newcategory: ice_lolly_stick
+    falsecategory: negative
+    debug: false
 visualization:
-  labels: "ice_lolly,ice_lolly_stick"
+  labels: [ice_lolly, ice_lolly_stick]
   alpha: 0.75
-  composite-sam2: true
-  composite-clip: true
-  final: true
+  blip3:
+    - id: icecream-final
+      renderer: alpha-overlay
+      alpha: 0.75
