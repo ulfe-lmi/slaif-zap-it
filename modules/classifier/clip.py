@@ -52,7 +52,10 @@ class _DryRunClipFilter:
             labels = tuple(self.class_map)
             for idx, mask in enumerate(masks):
                 scores = {
-                    label: round(0.80 - 0.03 * label_index - 0.01 * idx, 4)
+                    label: round(
+                        max(-1.0, min(1.0, 0.80 - 0.03 * label_index - 0.01 * idx)),
+                        4,
+                    )
                     for label_index, label in enumerate(labels)
                 }
                 winner = max(

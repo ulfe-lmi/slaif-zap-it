@@ -14,6 +14,7 @@ from src.core.engine import run_single_image
 from src.core.routing import apply_clip_routing, route_clip_candidate
 from src.postprocessing import filter_by_area_bbox, filter_by_geometry
 from src.service.errors import ServiceError
+from src.service.schemas import ClipRoutingDiagnostic
 from src.service.settings import ServiceSettings
 from src.service.yaml_input import parse_hostile_config
 
@@ -199,6 +200,42 @@ def test_canonical_dryrun_clip_routing_and_blip3_never_initialize_models():
         for obj in outcome.result.objects
     )
     assert all(obj.metadata["clip_routing"]["route_to_blip3"] for obj in outcome.result.objects)
+
+
+def test_canonical_dryrun_score_vectors_are_bounded_at_maximum_size():
+    labels = {f"label_{index:02d}": f"Prompt {index}" for index in range(32)}
+    masks = [{} for _ in range(256)]
+    dryrun_filter = clip_module._DryRunClipFilter({"labels": labels, "_canonical_labels": True})
+
+    dryrun_filter.filter_masks(masks, None, None, "boundary")
+
+    label_order = list(labels)
+    for candidate_index, mask in enumerate(masks):
+        scores = mask["clip_scores"]
+        assert list(scores) == label_order
+        assert all(np.isfinite(score) and -1.0 <= score <= 1.0 for score in scores.values())
+        winner = max(
+            scores,
+            key=lambda label: (scores[label], -label_order.index(label)),
+        )
+        assert mask["clip_label"] == winner
+        assert mask["clip_score"] == scores[winner]
+        assert mask["clip_prompt"] == labels[winner]
+
+        if candidate_index in (0, 255):
+            ClipRoutingDiagnostic.model_validate(
+                {
+                    "source_candidate_id": candidate_index + 1,
+                    "filtered_index": candidate_index,
+                    "clip_scores": scores,
+                    "winner": winner,
+                    "winning_label": winner,
+                    "route_to_blip3": False,
+                    "matched_conditions": [],
+                    "primary_reason": "clear_negative",
+                    "cap_outcome": "not_routed",
+                }
+            )
 
 
 def test_geometry_records_empty_and_configured_rejections_without_disappearing():
