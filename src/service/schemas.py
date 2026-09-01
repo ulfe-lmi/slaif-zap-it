@@ -31,6 +31,7 @@ __all__ = [
     "ClipRoutingRule",
     "ClipRoutingConfiguration",
     "RuntimeMetadata",
+    "RuntimeBlip3Metadata",
     "ProvenanceMetadata",
     "Sam2ConfigValues",
     "Sam2ResourceAlternative",
@@ -305,6 +306,18 @@ class RuntimeModelControlMetadata(BaseModel):
     management_subset_only: bool
 
 
+class RuntimeBlip3Metadata(BaseModel):
+    """Sanitized operator-owned BLIP3 capacity facts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_questions: int = Field(ge=1, le=256)
+    max_new_tokens: int = Field(ge=1, le=32)
+    question_units: str = Field(min_length=1, max_length=64)
+    question_limit_stage: str = Field(min_length=1, max_length=64)
+    question_limit_source: str = Field(min_length=1, max_length=64)
+
+
 class RuntimeMetadata(BaseModel):
     """Typed, bounded operator provenance nested under the L3 runtime record."""
 
@@ -316,6 +329,7 @@ class RuntimeMetadata(BaseModel):
     models: Dict[str, RuntimeModelIdentity] = Field(min_length=1, max_length=3)
     residency: RuntimeResidencyMetadata
     model_control: Optional[RuntimeModelControlMetadata] = None
+    blip3: Optional[RuntimeBlip3Metadata] = None
 
 
 class ProvenanceMetadata(BaseModel):
