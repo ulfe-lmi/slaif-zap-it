@@ -213,10 +213,14 @@ The BLIP3 candidate-view policy defaults to `reject`. The explicit
 `centroid_radial_mask_chord` value is request-local and activates only after
 the existing Euclidean compositor reports its containment rejection. It uses
 the complete mask and whole-mask centroid, ordered external contours, and a
-common fixed-point radial scale; all crop, contour, scale and zero-context
-adjustments are bounded L3 metadata. It does not alter model residency,
-generation, routing, or artifact budgets, and its pure geometry workload is
-benchmarked separately from live GPU timings.
+common fixed-point radial scale; geometry scratch is tight-bbox/local-window
+bounded and ray sampling uses fixed-size batches. Raw radial diagnostics are
+pre-clamp and may exceed `max_context_pixels`; effective diagnostics remain
+bounded by that policy. All crop, contour, scale and zero-context adjustments
+are bounded L3 metadata, with `crop_shifted` compared to the unshifted nominal
+crop. It does not alter model residency, generation, routing, or artifact
+budgets, and its pure geometry workload is benchmarked separately from live GPU
+timings.
 
 `src.runtime.RuntimePolicy.for_capacity()` consumes the UUID-matched physical
 total-memory observation. `src.runtime.make_readiness_provider()` joins it to

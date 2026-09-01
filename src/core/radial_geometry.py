@@ -27,6 +27,10 @@ from PIL import Image, ImageDraw
 from .errors import CoreError
 
 _FIXED_SCALE = 1_000_000
+# A ray batch is deliberately fixed in production.  Keeping the vectorized
+# sampling matrix bounded by this count makes scratch memory depend on the
+# candidate-local window, never on the number of boundary samples.
+_RAY_BATCH_SIZE = 256
 _EIGHT_NEIGHBOURS = (
     (0, -1),
     (1, -1),
@@ -63,7 +67,11 @@ def _tight_bbox(mask: np.ndarray) -> tuple[int, int, int, int]:
 
 
 def _component_pixels(mask: np.ndarray) -> list[list[tuple[int, int]]]:
-    """Return 8-connected components as global ``(x, y)`` pixel points."""
+    """Return 8-connected components as local ``(x, y)`` pixel points.
+
+    Callers pass the tight candidate mask, so the visited array is candidate
+    local rather than source-image shaped.
+    """
     visited = np.zeros_like(mask, dtype=bool)
     height, width = mask.shape
     components: list[list[tuple[int, int]]] = []
@@ -251,11 +259,25 @@ def _half_up_nonnegative(values: np.ndarray) -> np.ndarray:
 
 
 def _rasterize_lines(
-    starts: np.ndarray, ends: np.ndarray
+    starts: np.ndarray,
+    ends: np.ndarray,
+    *,
+    batch_size: int = _RAY_BATCH_SIZE,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Rasterize all inclusive lines in one vectorized bounded batch."""
+    """Rasterize one inclusive vectorized ray batch.
+
+    ``batch_size`` is an internal test seam only.  Production callers use the
+    fixed ``_RAY_BATCH_SIZE`` default, and this low-level function refuses a
+    larger batch so its temporary matrices stay bounded.
+    """
     starts = np.asarray(starts, dtype=np.intp)
     ends = np.asarray(ends, dtype=np.intp)
+    if type(batch_size) is not int or not 1 <= batch_size <= _RAY_BATCH_SIZE:
+        raise CoreError("ray batch size must be an integer from 1 to the fixed production limit")
+    if starts.ndim != 2 or ends.ndim != 2 or starts.shape != ends.shape or starts.shape[1:] != (2,):
+        raise CoreError("ray endpoints must be matching N-by-2 arrays")
+    if starts.shape[0] > batch_size:
+        raise CoreError("ray rasterization batch exceeds the fixed production limit")
     if starts.size == 0:
         empty = np.empty((0, 0), dtype=np.intp)
         return empty, empty, np.empty((0, 0), dtype=bool)
@@ -288,13 +310,36 @@ def _rasterize_lines(
     return x_values, y_values, valid
 
 
-def _line_positive_counts(mask: np.ndarray, starts: np.ndarray, ends: np.ndarray) -> np.ndarray:
-    xs, ys, valid = _rasterize_lines(starts, ends)
-    if xs.shape[0] == 0:
-        return np.empty(0, dtype=np.intp)
-    safe_xs = np.clip(xs, 0, mask.shape[1] - 1)
-    safe_ys = np.clip(ys, 0, mask.shape[0] - 1)
-    return np.sum(mask[safe_ys, safe_xs] & valid, axis=1, dtype=np.intp)
+def _line_positive_counts(
+    mask: np.ndarray,
+    starts: np.ndarray,
+    ends: np.ndarray,
+    *,
+    ray_batch_size: int = _RAY_BATCH_SIZE,
+) -> np.ndarray:
+    """Count positive pixels in stable boundary order using bounded batches."""
+    starts = np.asarray(starts, dtype=np.intp)
+    ends = np.asarray(ends, dtype=np.intp)
+    if type(ray_batch_size) is not int or not 1 <= ray_batch_size <= _RAY_BATCH_SIZE:
+        raise CoreError("ray batch size must be an integer from 1 to the fixed production limit")
+    if starts.ndim != 2 or ends.ndim != 2 or starts.shape != ends.shape or starts.shape[1:] != (2,):
+        raise CoreError("ray endpoints must be matching N-by-2 arrays")
+    counts = np.empty(starts.shape[0], dtype=np.intp)
+    for batch_start in range(0, starts.shape[0], ray_batch_size):
+        batch_end = min(batch_start + ray_batch_size, starts.shape[0])
+        xs, ys, valid = _rasterize_lines(
+            starts[batch_start:batch_end],
+            ends[batch_start:batch_end],
+            batch_size=ray_batch_size,
+        )
+        if xs.shape[0] == 0:
+            continue
+        safe_xs = np.clip(xs, 0, mask.shape[1] - 1)
+        safe_ys = np.clip(ys, 0, mask.shape[0] - 1)
+        counts[batch_start:batch_end] = np.sum(
+            mask[safe_ys, safe_xs] & valid, axis=1, dtype=np.intp
+        )
+    return counts
 
 
 @dataclass(frozen=True)
@@ -341,11 +386,16 @@ class CentroidRadialGeometry:
         support = self.raw_mask_window.copy()
         local_points = points - np.asarray((wx0, wy0), dtype=np.intp)
         local_endpoints = endpoints - np.asarray((wx0, wy0), dtype=np.intp)
-        xs, ys, valid = _rasterize_lines(local_points, local_endpoints)
-        if xs.shape[0]:
-            safe_xs = np.clip(xs, 0, wx1 - wx0 - 1)
-            safe_ys = np.clip(ys, 0, wy1 - wy0 - 1)
-            support[safe_ys[valid], safe_xs[valid]] = True
+        for batch_start in range(0, local_points.shape[0], _RAY_BATCH_SIZE):
+            batch_end = min(batch_start + _RAY_BATCH_SIZE, local_points.shape[0])
+            xs, ys, valid = _rasterize_lines(
+                local_points[batch_start:batch_end],
+                local_endpoints[batch_start:batch_end],
+            )
+            if xs.shape[0]:
+                safe_xs = np.clip(xs, 0, wx1 - wx0 - 1)
+                safe_ys = np.clip(ys, 0, wy1 - wy0 - 1)
+                support[safe_ys[valid], safe_xs[valid]] = True
 
         # Pillow's integer polygon fill is inclusive and handles concave
         # quadrilateral degeneracies consistently.  Every contour is closed
@@ -379,20 +429,31 @@ def build_centroid_radial_geometry(
     The only source data inspected is the complete boolean mask.  Chord counts
     include every positive rasterized pixel, including positive runs after a
     zero-valued gap.  The returned arrays are immutable and all support work is
-    restricted to the raw bbox expanded by the configured maximum context and
-    contour margin.
+    restricted to the raw bbox expanded by the configured maximum context,
+    contour margin, nominal crop extension, and source edges.
     """
     source_shape = (int(source_shape_hw[0]), int(source_shape_hw[1]))
     _require_mask(segmentation_mask, source_shape, source_candidate_id)
     raw_bbox = _tight_bbox(segmentation_mask)
     raw_x0, raw_y0, raw_x1, raw_y1 = raw_bbox
-    rows, cols = np.nonzero(segmentation_mask)
-    count = float(rows.size)
-    centroid = (
-        float(np.sum(cols, dtype=np.float64) / count),
-        float(np.sum(rows, dtype=np.float64) / count),
+    # All geometry scratch after the public source-shaped boundary is local to
+    # the tight candidate bbox.  In particular, component labels, contours,
+    # and chord sampling never allocate a source-height by source-width array.
+    local_mask = np.ascontiguousarray(
+        segmentation_mask[raw_y0 : raw_y1 + 1, raw_x0 : raw_x1 + 1].copy()
     )
-    contours = _contours(segmentation_mask)
+    rows, cols = np.nonzero(local_mask)
+    count = float(rows.size)
+    x_sum = np.sum(cols, dtype=np.float64) + float(raw_x0) * count
+    y_sum = np.sum(rows, dtype=np.float64) + float(raw_y0) * count
+    centroid = (
+        float(x_sum / count),
+        float(y_sum / count),
+    )
+    local_contours = _contours(local_mask)
+    contours = tuple(
+        tuple((x + raw_x0, y + raw_y0) for x, y in contour) for contour in local_contours
+    )
     points_list: list[tuple[int, int]] = []
     ranges: list[tuple[int, int]] = []
     for contour in contours:
@@ -403,10 +464,11 @@ def build_centroid_radial_geometry(
 
     inward_ends = np.empty_like(points)
     outward_units = np.zeros((points.shape[0], 2), dtype=np.float64)
-    cx, cy = centroid
+    local_points = points - np.asarray((raw_x0, raw_y0), dtype=np.intp)
     bbox_edges = np.asarray((raw_x0, raw_y0, raw_x1, raw_y1), dtype=np.float64)
+    source_origin = np.asarray((raw_x0, raw_y0), dtype=np.intp)
     for index, (px, py) in enumerate(points):
-        vector = np.asarray((cx - px, cy - py), dtype=np.float64)
+        vector = np.asarray((centroid[0] - px, centroid[1] - py), dtype=np.float64)
         if vector[0] == 0.0 and vector[1] == 0.0:
             inward_ends[index] = (px, py)
             outward_units[index] = (1.0, 0.0)
@@ -424,12 +486,15 @@ def build_centroid_radial_geometry(
         ray_length = min(positive) if positive else 1.0
         continuous = np.asarray((px, py), dtype=np.float64) + ray_length * vector
         continuous = np.clip(continuous, (raw_x0, raw_y0), (raw_x1, raw_y1))
-        inward_ends[index] = _half_up_nonnegative(continuous)
-        difference = np.asarray((float(px) - cx, float(py) - cy), dtype=np.float64)
+        inward_ends[index] = _half_up_nonnegative(continuous) - source_origin
+        difference = np.asarray(
+            (float(px) - centroid[0], float(py) - centroid[1]),
+            dtype=np.float64,
+        )
         norm = float(np.linalg.norm(difference))
         outward_units[index] = difference / norm
 
-    positive_counts = _line_positive_counts(segmentation_mask, points, inward_ends)
+    positive_counts = _line_positive_counts(local_mask, local_points, inward_ends)
     raw_distances = np.asarray(
         [int(math.ceil(float(config.context_fraction) * int(value))) for value in positive_counts],
         dtype=np.intp,
@@ -442,11 +507,17 @@ def build_centroid_radial_geometry(
     maximum = int(np.max(bounded_distances, initial=0))
     contour_margin = int(getattr(config, "contour_max_pixels", 0) or 0)
     height, width = source_shape
+    nominal_width = min(width, math.ceil(config.crop_extent_multiplier * (raw_x1 - raw_x0 + 1)))
+    nominal_height = min(height, math.ceil(config.crop_extent_multiplier * (raw_y1 - raw_y0 + 1)))
+    nominal_margin_x = max(0, (nominal_width - (raw_x1 - raw_x0 + 1) + 1) // 2)
+    nominal_margin_y = max(0, (nominal_height - (raw_y1 - raw_y0 + 1) + 1) // 2)
+    margin_x = max(maximum + contour_margin + 1, nominal_margin_x)
+    margin_y = max(maximum + contour_margin + 1, nominal_margin_y)
     window_bbox = (
-        max(0, raw_x0 - maximum - contour_margin - 1),
-        max(0, raw_y0 - maximum - contour_margin - 1),
-        min(width, raw_x1 + maximum + contour_margin + 2),
-        min(height, raw_y1 + maximum + contour_margin + 2),
+        max(0, raw_x0 - margin_x),
+        max(0, raw_y0 - margin_y),
+        min(width, raw_x1 + margin_x + 1),
+        min(height, raw_y1 + margin_y + 1),
     )
     wx0, wy0, wx1, wy1 = window_bbox
     raw_window = np.ascontiguousarray(segmentation_mask[wy0:wy1, wx0:wx1].copy())

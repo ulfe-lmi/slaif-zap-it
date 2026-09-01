@@ -264,11 +264,18 @@ For a candidate whose nominal crop cannot contain the requested support, the
 optional request field `candidate_views.blip3.infeasible_geometry_policy:
 centroid_radial_mask_chord` enables the deterministic fallback. The default
 `reject` behavior and all successful Euclidean views remain compatible. The
-fallback uses the complete-mask centroid and external contour walk, may shift
-the full nominal crop, reduces or disables the contour before applying one
-common millionth radial scale, and records its strategy and adjustment at L3.
-It is mask-only geometry: zero-valued gaps may be crossed while measuring a
-whole-mask chord, but no rectangular bridge is added.
+fallback uses the complete-mask centroid and external contour walk in a
+tight-bbox/local-window scratch region, and processes rays in fixed-size
+batches. It may shift the full nominal crop; `crop_shifted` compares against
+the unshifted centered nominal crop. It reduces or disables the contour before
+applying one common millionth radial scale, and records the highest-precedence
+adjustment at L3. Raw radial diagnostics are pre-clamp and may exceed
+`max_context_pixels`; effective values cannot. It is mask-only geometry:
+zero-valued gaps may be crossed while measuring a whole-mask chord, but no
+rectangular bridge is added. The standalone benchmark uses a deterministic
+122-candidate mix of elongated, rotated, concave, fragmented, centroid-gap,
+hole, and high-boundary masks up to the 199-by-199 reference bound; its median
+and maximum are reported outside normal CI wall-clock assertions.
 
 The operator-only `scripts/profile_matrix.py` harness sends the exact sanitized
 sequence `sam2, sam2_clip, sam2_blip3, sam2_clip_blip3, sam2_clip_blip3,

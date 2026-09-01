@@ -97,8 +97,10 @@ The BLIP3 view policy defaults to `reject`. An explicit
 after the exact Euclidean containment rejection. Its complete-mask centroid,
 external contour walk, chord/spoke rasterization, fixed-point common scaling,
 crop shifting, contour adjustment order, and zero-context convention are
-deterministic and independently testable. Existing feasible Euclidean
-compositions are returned without recomputation or substitution.
+deterministic and independently testable. Geometry scratch is created in the
+tight candidate bbox and bounded local window; vectorized rays use fixed-size
+batches. Existing feasible Euclidean compositions are returned without
+recomputation or substitution.
 
 The service accepts at most 32 uploaded BLIP3 rule definitions during request
 configuration validation. This hostile-YAML structural ceiling is distinct from

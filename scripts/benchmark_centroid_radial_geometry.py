@@ -12,9 +12,9 @@ import hashlib
 import json
 import os
 import platform
+import statistics
 from pathlib import Path
 import sys
-import statistics
 import time
 
 import numpy as np
@@ -25,25 +25,65 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.core import CandidateViewConfig, build_centroid_radial_geometry
+from src.core.radial_geometry import _RAY_BATCH_SIZE
 
 
 def _workload() -> list[np.ndarray]:
-    """Build 122 bounded, deterministic non-empty candidate masks."""
+    """Build a deterministic 122-candidate mixed-shape qualification corpus."""
     masks: list[np.ndarray] = []
+    yy, xx = np.indices((199, 199))
+
+    def origin(center: int, extent: int) -> int:
+        return max(0, min(199 - extent, center - extent // 2))
+
     for index in range(122):
         mask = np.zeros((199, 199), dtype=bool)
-        x0 = 8 + (index * 17) % 150
-        y0 = 8 + (index * 23) % 156
-        width = 12 + (index % 20)
-        height = 10 + ((index * 7) % 20)
-        if index % 3 == 0:
-            mask[y0 : y0 + height, x0 : x0 + width] = True
-        elif index % 3 == 1:
-            mask[y0 : y0 + height // 2, x0 : x0 + width] = True
-            mask[y0 + height // 2 : y0 + height, x0 : x0 + width // 3] = True
+        center_x = 99 + (index % 5 - 2) * 3
+        center_y = 99 + ((index // 5) % 5 - 2) * 3
+        if index in (6, 67):
+            kind = 6
+        elif index in (7, 68):
+            kind = 7
         else:
-            mask[y0 : y0 + height // 3, x0 : x0 + width] = True
-            mask[y0 + height // 3 : y0 + height, x0 + width // 2 : x0 + width] = True
+            kind = index % 6
+        if kind == 0:  # horizontal elongated
+            width, height = 80 + index % 5 * 8, 5 + index % 4
+            x0, y0 = origin(center_x, width), origin(center_y, height)
+            mask[y0 : y0 + height, x0 : x0 + width] = True
+        elif kind == 1:  # vertical elongated
+            width, height = 5 + index % 4, 80 + index % 5 * 8
+            x0, y0 = origin(center_x, width), origin(center_y, height)
+            mask[y0 : y0 + height, x0 : x0 + width] = True
+        elif kind == 2:  # rotated elongated
+            angle = np.deg2rad(17.0 + index % 5 * 11.0)
+            dx, dy = xx - center_x, yy - center_y
+            rotated_x = dx * np.cos(angle) + dy * np.sin(angle)
+            rotated_y = -dx * np.sin(angle) + dy * np.cos(angle)
+            mask = (rotated_x / 45.0) ** 2 + (rotated_y / 8.0) ** 2 <= 1.0
+        elif kind == 3:  # concave L
+            x0, y0 = origin(center_x, 54), origin(center_y, 54)
+            mask[y0 : y0 + 54, x0 : x0 + 9] = True
+            mask[y0 : y0 + 9, x0 : x0 + 54] = True
+        elif kind == 4:  # disconnected fragmented blocks
+            x0, y0 = origin(center_x, 112), origin(center_y, 82)
+            for block in range(5):
+                bx = x0 + block * 23
+                by = y0 + (block % 2) * 41
+                mask[by : by + 13, bx : bx + 15] = True
+        elif kind == 5:  # centroid-in-gap pair
+            x0, y0 = origin(center_x, 150), origin(center_y, 24)
+            mask[y0 : y0 + 24, x0 : x0 + 30] = True
+            mask[y0 : y0 + 24, x0 + 120 : x0 + 150] = True
+        elif kind == 6:  # high-boundary, many local components
+            x0, y0 = origin(center_x, 180), origin(center_y, 180)
+            for row in range(7):
+                for column in range(7):
+                    by, bx = y0 + row * 30, x0 + column * 30
+                    mask[by : by + 6, bx : bx + 6] = True
+        else:  # a large mask with an interior hole
+            x0, y0 = origin(center_x, 118), origin(center_y, 118)
+            mask[y0 : y0 + 118, x0 : x0 + 118] = True
+            mask[y0 + 35 : y0 + 83, x0 + 35 : x0 + 83] = False
         masks.append(mask)
     return masks
 
@@ -103,7 +143,8 @@ def main() -> int:
     totals = [result[0] for result in measurements]
     candidate_times = measurements[0][1]
     threshold_ms = args.threshold_seconds * 1000.0
-    status = "PASSED" if len(digests) == 1 and min(totals) < threshold_ms else "FAILED"
+    median_total = statistics.median(totals)
+    status = "PASSED" if len(digests) == 1 and median_total < threshold_ms else "FAILED"
     result = {
         "status": status,
         "candidate_count": len(masks),
@@ -113,9 +154,10 @@ def main() -> int:
         "threshold_seconds": args.threshold_seconds,
         "total_geometry_ms": {
             "minimum": min(totals),
-            "median": statistics.median(totals),
+            "median": median_total,
             "maximum": max(totals),
         },
+        "repeated_total_geometry_ms": totals,
         "per_candidate_ms": {
             "minimum": min(candidate_times),
             "median": statistics.median(candidate_times),
@@ -130,6 +172,9 @@ def main() -> int:
         "cpu": platform.processor() or platform.machine(),
         "core_count": os.cpu_count(),
         "platform": platform.platform(),
+        "host": platform.node(),
+        "ray_batch_size": _RAY_BATCH_SIZE,
+        "qualification_judgement": "median total below threshold; maximum disclosed",
     }
     print(json.dumps(result, sort_keys=True))
     return 0 if status == "PASSED" else 1

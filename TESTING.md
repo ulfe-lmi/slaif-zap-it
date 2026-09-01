@@ -107,9 +107,10 @@ an explicit operational order creates and secures it.
   work to structured `resource_limit` 413 before BLIP3 generation; uploaded
   BLIP3 rule definitions remain independently capped at 32;
 - centroid-radial BLIP3 fallback policy validation, Euclidean-first byte
-  compatibility, whole-mask centroid/chord/contour determinism, fixed-point
-  scale and adjustment precedence, exact source-pixel compositing, L3 schema
-  parity, and the manually invoked `scripts/benchmark_centroid_radial_geometry.py`
+  compatibility, whole-mask centroid/chord/contour determinism with tight
+  candidate-local scratch, fixed-size ray batches, fixed-point scale and
+  adjustment precedence, exact source-pixel compositing, L3 schema parity,
+  and the manually invoked `scripts/benchmark_centroid_radial_geometry.py`
   sub-second workload;
 
 The explicit lifecycle test tier remains CPU/fake-only unless an order grants a
@@ -130,7 +131,9 @@ downloads or CUDA are used. Accepted and containment-rejected crops are tested.
 Crop arithmetic is independently checked for odd/even raw dimensions and nominal
 sizes, non-integer multiplier ceiling, interior and boundary-clamped placement,
 and the asymmetric one-pixel containment regression. Returned composition arrays
-are crop-bounded; no redundant source-shaped masks are retained.
+are crop-bounded; no redundant source-shaped masks are retained. Objective 023-b
+also records every production ray batch, proves translated candidates have the
+same local geometry, and validates the raw-600 pre-policy diagnostic path.
 
 The semantic seams are literal CPU/fake captures: the real CLIP
 `classify_single_scores` path is exercised by

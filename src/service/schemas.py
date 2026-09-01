@@ -514,10 +514,22 @@ class CandidateViewInputRecord(BaseModel):
         "euclidean_largest_axis", "centroid_radial_mask_chord_fallback"
     ] = "euclidean_largest_axis"
     mask_centroid_xy: Optional[List[float]] = Field(default=None, min_length=2, max_length=2)
-    external_boundary_pixel_count: Optional[int] = Field(default=None, ge=0, le=1_000_000)
-    raw_radial_distance_min: Optional[float] = Field(default=None, ge=0.0, le=512.0)
-    raw_radial_distance_max: Optional[float] = Field(default=None, ge=0.0, le=512.0)
-    raw_radial_distance_mean: Optional[float] = Field(default=None, ge=0.0, le=512.0)
+    external_boundary_pixel_count: Optional[int] = Field(default=None, ge=0)
+    raw_radial_distance_min: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Pre-policy radial diagnostic; not max_context_pixels capped",
+    )
+    raw_radial_distance_max: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Pre-policy radial diagnostic; not max_context_pixels capped",
+    )
+    raw_radial_distance_mean: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Pre-policy radial diagnostic; not max_context_pixels capped",
+    )
     effective_radial_distance_min: Optional[float] = Field(default=None, ge=0.0, le=512.0)
     effective_radial_distance_max: Optional[float] = Field(default=None, ge=0.0, le=512.0)
     effective_radial_distance_mean: Optional[float] = Field(default=None, ge=0.0, le=512.0)
@@ -543,6 +555,19 @@ class CandidateViewInputRecord(BaseModel):
             not math.isfinite(value) for value in self.mask_centroid_xy
         ):
             raise ValueError("mask_centroid_xy must contain finite values")
+        for field_name in (
+            "raw_radial_distance_min",
+            "raw_radial_distance_max",
+            "raw_radial_distance_mean",
+            "effective_radial_distance_min",
+            "effective_radial_distance_max",
+            "effective_radial_distance_mean",
+            "effective_radial_scale",
+            "effective_blur_sigma",
+        ):
+            value = getattr(self, field_name)
+            if value is not None and not math.isfinite(value):
+                raise ValueError(f"{field_name} must be finite")
         if self.stage == "clip":
             pattern = re.compile(
                 r"^(?:[A-Za-z0-9][A-Za-z0-9_.-]*-)?"
@@ -616,10 +641,22 @@ class Blip3CandidateViewRecord(BaseModel):
         "euclidean_largest_axis", "centroid_radial_mask_chord_fallback"
     ] = "euclidean_largest_axis"
     mask_centroid_xy: Optional[List[float]] = Field(default=None, min_length=2, max_length=2)
-    external_boundary_pixel_count: Optional[int] = Field(default=None, ge=0, le=1_000_000)
-    raw_radial_distance_min: Optional[float] = Field(default=None, ge=0.0, le=512.0)
-    raw_radial_distance_max: Optional[float] = Field(default=None, ge=0.0, le=512.0)
-    raw_radial_distance_mean: Optional[float] = Field(default=None, ge=0.0, le=512.0)
+    external_boundary_pixel_count: Optional[int] = Field(default=None, ge=0)
+    raw_radial_distance_min: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Pre-policy radial diagnostic; not max_context_pixels capped",
+    )
+    raw_radial_distance_max: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Pre-policy radial diagnostic; not max_context_pixels capped",
+    )
+    raw_radial_distance_mean: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Pre-policy radial diagnostic; not max_context_pixels capped",
+    )
     effective_radial_distance_min: Optional[float] = Field(default=None, ge=0.0, le=512.0)
     effective_radial_distance_max: Optional[float] = Field(default=None, ge=0.0, le=512.0)
     effective_radial_distance_mean: Optional[float] = Field(default=None, ge=0.0, le=512.0)
@@ -639,6 +676,19 @@ class Blip3CandidateViewRecord(BaseModel):
             not math.isfinite(value) for value in self.mask_centroid_xy
         ):
             raise ValueError("mask_centroid_xy must contain finite values")
+        for field_name in (
+            "raw_radial_distance_min",
+            "raw_radial_distance_max",
+            "raw_radial_distance_mean",
+            "effective_radial_distance_min",
+            "effective_radial_distance_max",
+            "effective_radial_distance_mean",
+            "effective_radial_scale",
+            "effective_blur_sigma",
+        ):
+            value = getattr(self, field_name)
+            if value is not None and not math.isfinite(value):
+                raise ValueError(f"{field_name} must be finite")
         if self.status == "rendered" and self.reason is not None:
             raise ValueError("rendered BLIP3 candidate views cannot have a diagnostic")
         if self.status == "rejected" and self.reason is None:

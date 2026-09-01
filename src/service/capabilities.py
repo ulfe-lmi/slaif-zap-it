@@ -876,6 +876,18 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
                         "default reject; centroid_radial_mask_chord is an explicit fallback "
                         "only after the existing containment rejection"
                     ),
+                    "geometry_resources": (
+                        "tight-bbox/local-window scratch; rays use fixed batches of at most 256"
+                    ),
+                    "geometry_metadata": (
+                        "raw radial diagnostics are pre-clamp and may exceed max_context_pixels; "
+                        "effective radial diagnostics remain policy-bounded"
+                    ),
+                    "geometry_adjustment": (
+                        "precedence is zero-context, radial scaling, contour disabled, contour "
+                        "reduced, crop shifted, none; crop_shifted compares with the unshifted "
+                        "candidate-centered nominal crop"
+                    ),
                 },
             ),
             dilation_formula=(
@@ -894,7 +906,8 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
             crop_policy=(
                 "nominal size = ceil(multiplier * raw inclusive bbox dimensions); start = "
                 "floor(inclusive pixel-center - (nominal size - 1) / 2); endpoints independently "
-                "clamped without shifting"
+                "clamped without shifting for Euclidean composition; the explicit fallback "
+                "retains nominal dimensions and shifts the origin for containment"
             ),
             blur_policy=(
                 "Pillow ImageFilter.GaussianBlur; sigma=min(max(blur_sigma_fraction * L, 2), 20)"

@@ -11,6 +11,7 @@ import pytest
 from PIL import Image, ImageFilter
 
 from modules.verifier.blip3 import _Blip3Filter, compose_single_blip3_view
+import src.core.radial_geometry as radial_geometry
 from src.core import (
     CandidateViewConfig,
     build_centroid_radial_geometry,
@@ -51,6 +52,38 @@ def _image(shape=(80, 90)) -> np.ndarray:
     height, width = shape
     values = np.arange(height * width * 3, dtype=np.uint32) % 251
     return values.astype(np.uint8).reshape(height, width, 3)
+
+
+def _horizontal_mask(mask: np.ndarray) -> None:
+    mask[45:55, 15:85] = True
+
+
+def _vertical_mask(mask: np.ndarray) -> None:
+    mask[15:85, 45:55] = True
+
+
+def _rotated_mask(mask: np.ndarray) -> None:
+    yy, xx = np.indices(mask.shape)
+    angle = np.deg2rad(31.0)
+    dx, dy = xx - 50, yy - 50
+    rotated_x = dx * np.cos(angle) + dy * np.sin(angle)
+    rotated_y = -dx * np.sin(angle) + dy * np.cos(angle)
+    mask[...] = (rotated_x / 38.0) ** 2 + (rotated_y / 8.0) ** 2 <= 1.0
+
+
+def _concave_mask(mask: np.ndarray) -> None:
+    mask[20:80, 20:28] = True
+    mask[20:28, 20:80] = True
+
+
+def _fragmented_mask(mask: np.ndarray) -> None:
+    mask[35:45, 10:20] = True
+    mask[35:45, 80:90] = True
+
+
+def _hole_mask(mask: np.ndarray) -> None:
+    mask[15:85, 15:85] = True
+    mask[35:65, 35:65] = False
 
 
 def test_policy_omission_reject_and_fallback_feasible_path_are_compatible():
@@ -353,6 +386,14 @@ def test_fallback_records_are_schema_valid_and_capabilities_advertise_both_polic
     )
     Blip3CandidateViewRecord.model_validate(records[0])
     CandidateViewInputRecord.model_validate(inputs[0])
+    invalid = dict(records[0])
+    invalid["raw_radial_distance_max"] = math.inf
+    with pytest.raises(ValueError, match="finite"):
+        Blip3CandidateViewRecord.model_validate(invalid)
+    invalid_input = dict(inputs[0])
+    invalid_input["raw_radial_distance_max"] = math.inf
+    with pytest.raises(ValueError, match="finite"):
+        CandidateViewInputRecord.model_validate(invalid_input)
     capabilities = build_capabilities(ServiceSettings())
     policy = capabilities["candidate_views"]["blip3"]["fields"]["infeasible_geometry_policy"]
     assert policy["allowed"] == ["reject", "centroid_radial_mask_chord"]
@@ -360,3 +401,136 @@ def test_fallback_records_are_schema_valid_and_capabilities_advertise_both_polic
         capabilities["candidate_views"]["blip3"]["defaults"]["infeasible_geometry_policy"]
         == "reject"
     )
+
+
+def test_ray_batches_are_fixed_and_forced_small_batches_are_identical(monkeypatch):
+    mask = _mask((199, 199), (5, 5, 193, 193))
+    observed: list[int] = []
+    original = radial_geometry._rasterize_lines
+
+    def recording_batch(starts, ends, **kwargs):
+        observed.append(int(np.asarray(starts).shape[0]))
+        return original(starts, ends, **kwargs)
+
+    monkeypatch.setattr(radial_geometry, "_rasterize_lines", recording_batch)
+    geometry = build_centroid_radial_geometry(mask, mask.shape, 1, _config())
+    production_support, _production_endpoints, _production_distances = geometry.support_for_scale(
+        1_000_000
+    )
+    assert len(observed) > 1
+    assert max(observed) <= radial_geometry._RAY_BATCH_SIZE
+
+    origin = np.asarray(geometry.window_bbox_xyxy_exclusive[:2], dtype=np.intp)
+    starts = geometry.boundary_points - origin
+    ends = starts.copy()
+    production_counts = radial_geometry._line_positive_counts(
+        geometry.raw_mask_window, starts, ends
+    )
+    small_counts = radial_geometry._line_positive_counts(
+        geometry.raw_mask_window, starts, ends, ray_batch_size=3
+    )
+    assert np.array_equal(production_counts, small_counts)
+    assert production_support.dtype == np.dtype(bool)
+
+
+def test_geometry_scratch_is_tight_bbox_local_and_translation_is_exact(monkeypatch):
+    small = np.zeros((220, 220), dtype=bool)
+    small[90:120, 80:106] = True
+    offset_x, offset_y = 150, 170
+    large = np.zeros((500, 500), dtype=bool)
+    large[offset_y + 90 : offset_y + 120, offset_x + 80 : offset_x + 106] = True
+    config = _config()
+
+    small_geometry = build_centroid_radial_geometry(small, small.shape, 1, config)
+    seen_shapes: list[tuple[int, int]] = []
+    original_components = radial_geometry._component_pixels
+
+    def recording_components(local_mask):
+        seen_shapes.append(tuple(local_mask.shape))
+        return original_components(local_mask)
+
+    monkeypatch.setattr(radial_geometry, "_component_pixels", recording_components)
+    large_geometry = build_centroid_radial_geometry(large, large.shape, 1, config)
+
+    assert seen_shapes == [(30, 26)]
+    assert large_geometry.raw_mask_window.shape == small_geometry.raw_mask_window.shape
+    assert np.array_equal(large_geometry.raw_mask_window, small_geometry.raw_mask_window)
+    assert large_geometry.raw_bbox_xyxy_inclusive == (
+        small_geometry.raw_bbox_xyxy_inclusive[0] + offset_x,
+        small_geometry.raw_bbox_xyxy_inclusive[1] + offset_y,
+        small_geometry.raw_bbox_xyxy_inclusive[2] + offset_x,
+        small_geometry.raw_bbox_xyxy_inclusive[3] + offset_y,
+    )
+    assert large_geometry.centroid_xy == pytest.approx(
+        (small_geometry.centroid_xy[0] + offset_x, small_geometry.centroid_xy[1] + offset_y)
+    )
+    assert large_geometry.contours == tuple(
+        tuple((x + offset_x, y + offset_y) for x, y in contour)
+        for contour in small_geometry.contours
+    )
+    assert np.array_equal(
+        large_geometry.boundary_points,
+        small_geometry.boundary_points + np.asarray((offset_x, offset_y)),
+    )
+    assert np.array_equal(large_geometry.raw_distances, small_geometry.raw_distances)
+    assert np.array_equal(large_geometry.bounded_distances, small_geometry.bounded_distances)
+    small_support, small_endpoints, _ = small_geometry.support_for_scale(1_000_000)
+    large_support, large_endpoints, _ = large_geometry.support_for_scale(1_000_000)
+    assert np.array_equal(large_support, small_support)
+    assert np.array_equal(
+        large_endpoints,
+        small_endpoints + np.asarray((offset_x, offset_y)),
+    )
+
+
+@pytest.mark.parametrize(
+    "shape_builder",
+    [_horizontal_mask, _vertical_mask, _rotated_mask, _concave_mask, _fragmented_mask, _hole_mask],
+    ids=["horizontal", "vertical", "rotated", "concave", "fragmented", "hole"],
+)
+def test_generated_mask_families_are_deterministic_and_preserve_raw_pixels(shape_builder):
+    mask = np.zeros((100, 100), dtype=bool)
+    shape_builder(mask)
+    first = compose_single_blip3_view(_image(mask.shape), mask, 1, _config())
+    second = compose_single_blip3_view(_image(mask.shape), mask, 1, _config())
+    assert np.array_equal(first.rgb, second.rgb)
+    assert np.array_equal(first.source_composite, second.source_composite)
+    assert np.array_equal(first.raw_mask, second.raw_mask)
+    x0, y0, x1, y1 = first.crop_bbox_xyxy_exclusive
+    assert np.array_equal(first.raw_mask, mask[y0:y1, x0:x1])
+    assert int(np.count_nonzero(first.raw_mask)) == int(np.count_nonzero(mask))
+
+
+@pytest.mark.parametrize(
+    ("shape_builder", "expected_raw_min", "expected_raw_max"),
+    [(_horizontal_mask, 2, 14), (_vertical_mask, 2, 14), (_rotated_mask, 3, 13)],
+    ids=["horizontal", "vertical", "rotated"],
+)
+def test_elongated_masks_are_forced_through_fallback_and_keep_chord_stats(
+    shape_builder, expected_raw_min, expected_raw_max
+):
+    mask = np.zeros((100, 100), dtype=bool)
+    shape_builder(mask)
+    composition = compose_single_blip3_view(
+        _image(mask.shape),
+        mask,
+        1,
+        _config(context_fraction=0.20, crop_extent_multiplier=1.0, contour_enabled=False),
+    )
+    assert composition.geometry_strategy_used == "centroid_radial_mask_chord_fallback"
+    assert composition.raw_radial_distance_min == expected_raw_min
+    assert composition.raw_radial_distance_max == expected_raw_max
+    assert composition.effective_radial_scale == 0.0
+
+
+def test_edge_containment_shift_is_reported_against_unshifted_nominal_crop():
+    mask = np.zeros((100, 200), dtype=bool)
+    mask[0:27, 60:160] = True
+    composition = compose_single_blip3_view(
+        _image(mask.shape),
+        mask,
+        1,
+        _config(context_fraction=0.20, crop_extent_multiplier=2.0),
+    )
+    assert composition.geometry_strategy_used == "centroid_radial_mask_chord_fallback"
+    assert composition.geometry_adjustment == "crop_shifted"

@@ -200,14 +200,18 @@ path is attempted first and remains unchanged whenever it fits. Only its exact
 containment rejection activates the fallback. The fallback uses the whole-mask
 float64 centroid, 8-connected components with ordered external contours (hole
 boundaries are not seeds), inclusive all-octant chord/spoke rasterization, and
-cross-gap positive-pixel counts. Raw distances are ceil(context fraction times
-the chord count), bounded by the configured limits, and any necessary context
-reduction uses one common integer-millionth scale with floor-rounded distances.
-The full nominal crop is shifted to contain the result; contour width is reduced
-before it is disabled, and scaling precedes the zero-context convention. L3
-records report these adjustments and bounded radial statistics, including the
-compatibility scalar radii. No rectangular bridge or RGB-based geometry is
-introduced.
+cross-gap positive-pixel counts. Component/contour scratch is tight-bbox local,
+support is built in a bounded local window, and rays use fixed-size batches.
+Raw distances are ceil(context fraction times the chord count) before policy
+clamping and may exceed `max_context_pixels`; effective distances are bounded
+by the configured limits. Any necessary context reduction uses one common
+integer-millionth scale with floor-rounded distances. The full nominal crop is
+shifted to contain the result; `crop_shifted` compares the final crop with the
+unshifted candidate-centered nominal crop. Contour width is reduced before it
+is disabled, and scaling precedes the zero-context convention. L3 records
+report these precedence-ordered adjustments and both raw/effective radial
+statistics, including the compatibility scalar radii. No rectangular bridge or
+RGB-based geometry is introduced.
 
 At L3, `clip.debug` emits the exact CLIP processor RGB input as
 `clip-candidate-view-CANDIDATE-####.png`. A debug BLIP3 rule emits the exact

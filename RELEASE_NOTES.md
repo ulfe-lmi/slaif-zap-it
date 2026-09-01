@@ -3,7 +3,10 @@
 Objective 023 adds the opt-in BLIP3 `centroid_radial_mask_chord` fallback after
 the existing containment rejection. The default `reject` path and feasible
 Euclidean compositions remain compatible; fallback geometry and adjustment
-evidence are exposed at L3.
+evidence are exposed at L3. The 023-b continuation bounds geometry scratch and
+ray batches, distinguishes pre-clamp raw diagnostics from effective values, and
+keeps `crop_shifted` metadata truthful; the opt-in/default-reject migration and
+artifact behavior are unchanged.
 
 Objective 017 adds request-local mask-isolated candidate views for CLIP and
 BLIP3. The service exposes effective view settings at every response level and

@@ -366,6 +366,21 @@ def _fallback_crop_box(
     return crop_x0, crop_y0, crop_x0 + nominal_width, crop_y0 + nominal_height
 
 
+def _unshifted_nominal_crop_box(
+    image_shape: tuple[int, int],
+    raw_bbox: tuple[int, int, int, int],
+    multiplier: float,
+) -> tuple[int, int, int, int]:
+    """Return the centered nominal crop before source-edge/containment shifts."""
+    height, width = image_shape
+    raw_x0, raw_y0, raw_x1, raw_y1 = raw_bbox
+    nominal_width = min(width, math.ceil(multiplier * (raw_x1 - raw_x0 + 1)))
+    nominal_height = min(height, math.ceil(multiplier * (raw_y1 - raw_y0 + 1)))
+    centered_x0 = math.floor((raw_x0 + raw_x1) / 2.0 - (nominal_width - 1) / 2.0)
+    centered_y0 = math.floor((raw_y0 + raw_y1) / 2.0 - (nominal_height - 1) / 2.0)
+    return centered_x0, centered_y0, centered_x0 + nominal_width, centered_y0 + nominal_height
+
+
 def _centroid_radial_fallback_geometry(
     image_shape,
     segmentation_mask: np.ndarray,
@@ -397,8 +412,8 @@ def _centroid_radial_fallback_geometry(
         radial.window_bbox_xyxy_exclusive[0],
         radial.window_bbox_xyxy_exclusive[1],
     )
-    centered_box = _fallback_crop_box(
-        (height, width), raw_bbox, raw_bbox, config.crop_extent_multiplier
+    unshifted_nominal_box = _unshifted_nominal_crop_box(
+        (height, width), raw_bbox, config.crop_extent_multiplier
     )
 
     def contour_for(support: np.ndarray, contour_width: int) -> np.ndarray:
@@ -490,7 +505,7 @@ def _centroid_radial_fallback_geometry(
         adjustment = "contour_reduced"
     else:
         crop_box = selected["crop_box"]
-        adjustment = "crop_shifted" if centered_box != crop_box else "none"
+        adjustment = "crop_shifted" if unshifted_nominal_box != crop_box else "none"
 
     model_height, model_width, scale = _model_dimensions(
         selected["crop_box"][3] - selected["crop_box"][1],
