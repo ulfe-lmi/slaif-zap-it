@@ -188,14 +188,14 @@ def _moore_walk(component: np.ndarray, boundary: np.ndarray) -> list[tuple[int, 
     # A thin or self-touching digital component can have external pixels that
     # the ordinary Moore stop pair does not visit.  A deterministic DFS tour of
     # the external-pixel graph adds only adjacent samples and keeps repetitions.
+    # The explicit frames preserve the recursive traversal's order without
+    # depending on Python's process-global recursion limit.
     boundary_set = set(boundary_points)
     if set(walk) != boundary_set:
         walk = []
         visited: set[tuple[int, int]] = set()
 
-        def visit(point: tuple[int, int]) -> None:
-            visited.add(point)
-            walk.append(point)
+        def neighbours_for(point: tuple[int, int]) -> list[tuple[int, int]]:
             neighbours = []
             for dx, dy in _EIGHT_NEIGHBOURS:
                 candidate = (point[0] + dx, point[1] + dy)
@@ -208,15 +208,35 @@ def _moore_walk(component: np.ndarray, boundary: np.ndarray) -> list[tuple[int, 
                     item[0],
                 )
             )
-            for candidate in neighbours:
-                if candidate not in visited:
-                    visit(candidate)
-                    walk.append(point)
+            return neighbours
 
-        visit(start)
-        for point in sorted(boundary_set.difference(visited), key=lambda item: (item[1], item[0])):
+        # Each frame stores the current point, its already-sorted neighbours,
+        # and the next neighbour position.  Popping a child frame appends its
+        # parent exactly where the recursive call would have returned.
+        def traverse(root: tuple[int, int]) -> None:
+            visited.add(root)
+            walk.append(root)
+            frames: list[list[Any]] = [[root, neighbours_for(root), 0]]
+            while frames:
+                point, neighbours, next_index = frames[-1]
+                if next_index >= len(neighbours):
+                    frames.pop()
+                    if frames:
+                        walk.append(frames[-1][0])
+                    continue
+                frames[-1][2] = next_index + 1
+                candidate = neighbours[next_index]
+                if candidate in visited:
+                    continue
+                visited.add(candidate)
+                walk.append(candidate)
+                frames.append([candidate, neighbours_for(candidate), 0])
+
+        traverse(start)
+        remaining = sorted(boundary_set.difference(visited), key=lambda item: (item[1], item[0]))
+        for point in remaining:
             walk.append(point)
-            visit(point)
+            traverse(point)
     return walk
 
 

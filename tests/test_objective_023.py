@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import math
+import sys
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 from PIL import Image, ImageFilter
 
+from modules.verifier import blip3 as blip3_module
 from modules.verifier.blip3 import _Blip3Filter, compose_single_blip3_view
 import src.core.radial_geometry as radial_geometry
 from src.core import (
     CandidateViewConfig,
+    MemoryArtifactSink,
     build_centroid_radial_geometry,
 )
 from src.service.capabilities import build_capabilities
@@ -84,6 +88,14 @@ def _fragmented_mask(mask: np.ndarray) -> None:
 def _hole_mask(mask: np.ndarray) -> None:
     mask[15:85, 15:85] = True
     mask[35:65, 35:65] = False
+
+
+def _comb_mask(size: int = 600, teeth_step: int = 150) -> np.ndarray:
+    mask = np.zeros((size, size), dtype=bool)
+    mask[size // 2, :] = True
+    for x in range(0, size, teeth_step):
+        mask[:, x] = True
+    return mask
 
 
 def test_policy_omission_reject_and_fallback_feasible_path_are_compatible():
@@ -414,7 +426,7 @@ def test_ray_batches_are_fixed_and_forced_small_batches_are_identical(monkeypatc
 
     monkeypatch.setattr(radial_geometry, "_rasterize_lines", recording_batch)
     geometry = build_centroid_radial_geometry(mask, mask.shape, 1, _config())
-    production_support, _production_endpoints, _production_distances = geometry.support_for_scale(
+    production_support, production_endpoints, _production_distances = geometry.support_for_scale(
         1_000_000
     )
     assert len(observed) > 1
@@ -422,7 +434,8 @@ def test_ray_batches_are_fixed_and_forced_small_batches_are_identical(monkeypatc
 
     origin = np.asarray(geometry.window_bbox_xyxy_exclusive[:2], dtype=np.intp)
     starts = geometry.boundary_points - origin
-    ends = starts.copy()
+    ends = production_endpoints - origin
+    assert np.any(starts != ends)
     production_counts = radial_geometry._line_positive_counts(
         geometry.raw_mask_window, starts, ends
     )
@@ -534,3 +547,211 @@ def test_edge_containment_shift_is_reported_against_unshifted_nominal_crop():
     )
     assert composition.geometry_strategy_used == "centroid_radial_mask_chord_fallback"
     assert composition.geometry_adjustment == "crop_shifted"
+
+
+def test_iterative_repair_preserves_the_400_by_400_contour_oracle():
+    contour = np.asarray(radial_geometry._contours(_comb_mask(400, 4))[0], dtype=np.int64)
+    assert contour.shape == (80598, 2)
+    expected_digest = "".join(
+        (
+            "e7220b56",
+            "27a0d318",
+            "5f7467fa",
+            "16bc58c2",
+            "877fe5e4",
+            "659e3ad8",
+            "07c43d8d",
+            "8c77b3ba",
+        )
+    )
+    assert hashlib.sha256(np.ascontiguousarray(contour).tobytes()).hexdigest() == expected_digest
+
+
+def test_high_boundary_comb_is_deterministic_and_does_not_bridge_teeth():
+    mask = _comb_mask()
+    first = radial_geometry._contours(mask)
+    second = radial_geometry._contours(mask)
+    assert first == second
+    assert len(first) == 1
+    config = _config(
+        max_context_pixels=16,
+        crop_extent_multiplier=1.0,
+        contour_enabled=False,
+    )
+    first_geometry = build_centroid_radial_geometry(mask, mask.shape, 1, config)
+    second_geometry = build_centroid_radial_geometry(mask, mask.shape, 1, config)
+    first_support, first_endpoints, first_distances = first_geometry.support_for_scale(1_000_000)
+    second_support, second_endpoints, second_distances = second_geometry.support_for_scale(
+        1_000_000
+    )
+    assert first_geometry.contours == second_geometry.contours
+    assert np.array_equal(first_support, second_support)
+    assert np.array_equal(first_endpoints, second_endpoints)
+    assert np.array_equal(first_distances, second_distances)
+    wx0, wy0, wx1, wy1 = first_geometry.window_bbox_xyxy_exclusive
+    source_support = np.zeros_like(mask)
+    source_support[wy0:wy1, wx0:wx1] = first_support
+    assert np.all(source_support[mask])
+    assert not np.all(first_support[100 - wy0, 1 - wx0 : 149 - wx0])
+    assert first_geometry.external_boundary_pixel_count == 5990
+
+
+def test_source_embedded_high_boundary_mask_composes_through_fallback():
+    mask = np.zeros((320, 320), dtype=bool)
+    embedded = _comb_mask(300, 150)
+    mask[10:310, 10:310] = embedded
+    composition = compose_single_blip3_view(
+        _image(mask.shape),
+        mask,
+        1,
+        _config(
+            max_context_pixels=16,
+            crop_extent_multiplier=1.0,
+            contour_enabled=False,
+        ),
+    )
+    assert composition.geometry_strategy_used == "centroid_radial_mask_chord_fallback"
+    assert composition.crop_shape_hw == (300, 300)
+    x0, y0, x1, y1 = composition.crop_bbox_xyxy_exclusive
+    assert np.array_equal(composition.raw_mask, mask[y0:y1, x0:x1])
+    assert composition.raw_mask.any()
+
+
+def test_iterative_repair_is_independent_of_python_recursion_limit():
+    mask = _comb_mask()
+    expected = radial_geometry._contours(mask)
+    original_limit = sys.getrecursionlimit()
+    try:
+        sys.setrecursionlimit(50)
+        actual = radial_geometry._contours(mask)
+    finally:
+        sys.setrecursionlimit(original_limit)
+    assert actual == expected
+
+
+def test_omitted_and_explicit_reject_have_identical_records_and_no_qa():
+    image = _image((100, 100))
+    mask = np.zeros((100, 100), dtype=bool)
+    mask[45:55, :] = True
+    common = {
+        "context_fraction": 0.20,
+        "min_context_pixels": 0,
+        "max_context_pixels": 16,
+        "crop_extent_multiplier": 1.0,
+        "blur_sigma_fraction": 0.15,
+        "contour_enabled": False,
+        "contour_fraction": 0.02,
+        "contour_min_pixels": 1,
+        "contour_max_pixels": 3,
+        "contour_rgb": [255, 224, 0],
+    }
+    omitted = CandidateViewConfig.from_mapping(common, stage="blip3")
+    explicit = CandidateViewConfig.from_mapping(
+        {**common, "infeasible_geometry_policy": "reject"}, stage="blip3"
+    )
+
+    def run(config):
+        holder, received = _fake_filter()
+        records: list[dict] = []
+        holder.filter_masks(
+            [{"segmentation": mask.copy(), "clip_label": "target", "clip_score": 0.1}],
+            image,
+            None,
+            "request",
+            candidate_view_config=config,
+            candidate_view_records=records,
+        )
+        return records, received
+
+    omitted_records, omitted_received = run(omitted)
+    explicit_records, explicit_received = run(explicit)
+    assert omitted_records == explicit_records
+    assert omitted_records[0]["reason"] == "crop_cannot_contain_support_and_contour"
+    assert omitted_received == explicit_received == []
+
+
+def test_composition_and_qa_timers_are_exact_and_debug_is_outside(monkeypatch):
+    holder, _received = _fake_filter()
+    events: list[str] = []
+    clock_values = iter((0.0, 0.0125, 0.02, 0.0275))
+    observed_clock_values: list[float] = []
+
+    def fake_perf_counter():
+        events.append("clock")
+        value = next(clock_values)
+        observed_clock_values.append(value)
+        return value
+
+    monkeypatch.setattr(blip3_module.time, "perf_counter", fake_perf_counter)
+    original_answer = holder.qa.answer
+
+    def answer_with_event(*args, **kwargs):
+        events.append("qa")
+        return original_answer(*args, **kwargs)
+
+    holder.qa.answer = answer_with_event
+    original_write = holder._write_debug_artifact
+
+    def write_with_event(*args, **kwargs):
+        events.append("debug")
+        return original_write(*args, **kwargs)
+
+    holder._write_debug_artifact = write_with_event
+    holder.filter_masks(
+        [{"segmentation": _mask((70, 70), (20, 20, 29, 29)), "clip_label": "target"}],
+        _image((70, 70)),
+        None,
+        "request",
+        artifact_sink=MemoryArtifactSink(),
+        service_safe_artifact_names=True,
+        candidate_view_config=_config(
+            crop_extent_multiplier=1.0, context_fraction=0.5, contour_enabled=False
+        ),
+    )
+    assert observed_clock_values == [0.0, 0.0125, 0.02, 0.0275]
+    assert holder._last_composition_time_ms == 12.5
+    assert holder._last_verification_time_ms == 7.5
+    assert events == ["clock", "clock", "clock", "qa", "clock", "debug"]
+    assert events.index("debug") > max(
+        index for index, event in enumerate(events) if event == "clock"
+    )
+
+
+def test_small_diagnostic_budget_omits_artifacts_without_losing_fallback_metadata():
+    from src.core import ArtifactBudget, BoundedMemoryArtifactSink
+
+    holder, received = _fake_filter()
+    masks = [
+        {"segmentation": _mask((70, 70), (20, 20, 29, 29)), "clip_label": "target"},
+        {"segmentation": _mask((70, 70), (40, 40, 49, 49)), "clip_label": "target"},
+    ]
+    records: list[dict] = []
+    inputs: list[dict] = []
+    sink = BoundedMemoryArtifactSink(
+        ArtifactBudget(max_artifacts=1, max_single_bytes=1, max_total_bytes=1)
+    )
+    updated, answers = holder.filter_masks(
+        masks,
+        _image((70, 70)),
+        None,
+        "request",
+        artifact_sink=sink,
+        service_safe_artifact_names=True,
+        candidate_view_config=_config(
+            crop_extent_multiplier=1.0, context_fraction=0.5, contour_enabled=False
+        ),
+        candidate_view_inputs=inputs,
+        candidate_view_records=records,
+    )
+    assert len(updated) == len(masks) == len(answers) == len(received) == 2
+    assert len(records) == len(inputs) == 2
+    assert all(record["status"] == "rendered" for record in records)
+    assert all(
+        record["geometry_strategy_used"] == "centroid_radial_mask_chord_fallback"
+        for record in records
+    )
+    assert all(
+        input_record["artifact_status"] == "omitted_single_size_limit" for input_record in inputs
+    )
+    assert len(sink.artifacts()) == 0
+    assert len(sink.omissions()) == 2
