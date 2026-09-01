@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import re
+import time
 import unicodedata
 from inspect import Parameter, signature
 from typing import Any, Dict, Tuple
@@ -67,6 +68,18 @@ class Blip3VerificationComposition:
     effective_contour_width: int
     effective_blur_sigma: float
     source_candidate_id: int
+    infeasible_geometry_policy: str = "reject"
+    geometry_strategy_used: str = "euclidean_largest_axis"
+    mask_centroid_xy: tuple[float, float] | None = None
+    external_boundary_pixel_count: int | None = None
+    raw_radial_distance_min: float | None = None
+    raw_radial_distance_max: float | None = None
+    raw_radial_distance_mean: float | None = None
+    effective_radial_distance_min: float | None = None
+    effective_radial_distance_max: float | None = None
+    effective_radial_distance_mean: float | None = None
+    effective_radial_scale: float | None = None
+    geometry_adjustment: str = "none"
 
     @property
     def array(self) -> np.ndarray:
@@ -102,6 +115,20 @@ class Blip3VerificationComposition:
             "raw_contour_width": self.raw_contour_width,
             "effective_contour_width": self.effective_contour_width,
             "effective_blur_sigma": self.effective_blur_sigma,
+            "infeasible_geometry_policy": self.infeasible_geometry_policy,
+            "geometry_strategy_used": self.geometry_strategy_used,
+            "mask_centroid_xy": (
+                list(self.mask_centroid_xy) if self.mask_centroid_xy is not None else None
+            ),
+            "external_boundary_pixel_count": self.external_boundary_pixel_count,
+            "raw_radial_distance_min": self.raw_radial_distance_min,
+            "raw_radial_distance_max": self.raw_radial_distance_max,
+            "raw_radial_distance_mean": self.raw_radial_distance_mean,
+            "effective_radial_distance_min": self.effective_radial_distance_min,
+            "effective_radial_distance_max": self.effective_radial_distance_max,
+            "effective_radial_distance_mean": self.effective_radial_distance_mean,
+            "effective_radial_scale": self.effective_radial_scale,
+            "geometry_adjustment": self.geometry_adjustment,
             "source_composite_dimensions": {
                 "height": self.source_composite_shape_hw[0],
                 "width": self.source_composite_shape_hw[1],
@@ -223,6 +250,18 @@ def _single_view_geometry(image_shape, segmentation_mask, source_candidate_id, c
             "height": max(crop_y1 - crop_y0, 0),
             "width": max(crop_x1 - crop_x0, 0),
         },
+        "infeasible_geometry_policy": config.infeasible_geometry_policy,
+        "geometry_strategy_used": "euclidean_largest_axis",
+        "mask_centroid_xy": None,
+        "external_boundary_pixel_count": None,
+        "raw_radial_distance_min": None,
+        "raw_radial_distance_max": None,
+        "raw_radial_distance_mean": None,
+        "effective_radial_distance_min": None,
+        "effective_radial_distance_max": None,
+        "effective_radial_distance_mean": None,
+        "effective_radial_scale": None,
+        "geometry_adjustment": "none",
     }
     if crop_x1 > crop_x0 and crop_y1 > crop_y0:
         planned_height, planned_width, _planned_scale = _model_dimensions(
@@ -250,6 +289,257 @@ def _single_view_geometry(image_shape, segmentation_mask, source_candidate_id, c
         "model_height": model_height,
         "model_width": model_width,
         "scale": scale,
+        "infeasible_geometry_policy": config.infeasible_geometry_policy,
+        "geometry_strategy_used": "euclidean_largest_axis",
+        "mask_centroid_xy": None,
+        "external_boundary_pixel_count": None,
+        "raw_radial_distance_min": None,
+        "raw_radial_distance_max": None,
+        "raw_radial_distance_mean": None,
+        "effective_radial_distance_min": None,
+        "effective_radial_distance_max": None,
+        "effective_radial_distance_mean": None,
+        "effective_radial_scale": None,
+        "geometry_adjustment": "none",
+    }
+
+
+def _inclusive_bbox_for_window(
+    mask: np.ndarray, window_origin: tuple[int, int]
+) -> tuple[int, int, int, int]:
+    rows, cols = np.nonzero(mask)
+    if rows.size == 0:
+        raise CoreError("BLIP3 view support must be non-empty")
+    x0, y0 = window_origin
+    return (
+        int(cols.min()) + x0,
+        int(rows.min()) + y0,
+        int(cols.max()) + x0,
+        int(rows.max()) + y0,
+    )
+
+
+def _union_inclusive_bboxes(*boxes: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    return (
+        min(box[0] for box in boxes),
+        min(box[1] for box in boxes),
+        max(box[2] for box in boxes),
+        max(box[3] for box in boxes),
+    )
+
+
+def _fallback_crop_box(
+    image_shape: tuple[int, int],
+    raw_bbox: tuple[int, int, int, int],
+    required_bbox: tuple[int, int, int, int],
+    multiplier: float,
+) -> tuple[int, int, int, int] | None:
+    """Choose the nearest valid full-size crop that contains ``required_bbox``."""
+    height, width = image_shape
+    raw_x0, raw_y0, raw_x1, raw_y1 = raw_bbox
+    required_x0, required_y0, required_x1, required_y1 = required_bbox
+    nominal_width = min(width, math.ceil(multiplier * (raw_x1 - raw_x0 + 1)))
+    nominal_height = min(height, math.ceil(multiplier * (raw_y1 - raw_y0 + 1)))
+
+    def choose_axis(
+        raw_start: int,
+        raw_end: int,
+        required_start: int,
+        required_end: int,
+        nominal: int,
+        source_size: int,
+    ) -> int | None:
+        centered_unclamped = math.floor((raw_start + raw_end) / 2.0 - (nominal - 1) / 2.0)
+        legacy_origin = max(0, min(source_size, centered_unclamped))
+        lower = max(0, required_end + 1 - nominal)
+        upper = min(required_start, source_size - nominal)
+        if lower > upper:
+            return None
+        # The valid origins form one integer interval, so clamping the old
+        # centered origin is the unique nearest choice (lower wins ties).
+        return min(max(legacy_origin, lower), upper)
+
+    crop_x0 = choose_axis(raw_x0, raw_x1, required_x0, required_x1, nominal_width, width)
+    crop_y0 = choose_axis(raw_y0, raw_y1, required_y0, required_y1, nominal_height, height)
+    if crop_x0 is None or crop_y0 is None:
+        return None
+    return crop_x0, crop_y0, crop_x0 + nominal_width, crop_y0 + nominal_height
+
+
+def _unshifted_nominal_crop_box(
+    image_shape: tuple[int, int],
+    raw_bbox: tuple[int, int, int, int],
+    multiplier: float,
+) -> tuple[int, int, int, int]:
+    """Return the centered nominal crop before source-edge/containment shifts."""
+    height, width = image_shape
+    raw_x0, raw_y0, raw_x1, raw_y1 = raw_bbox
+    nominal_width = min(width, math.ceil(multiplier * (raw_x1 - raw_x0 + 1)))
+    nominal_height = min(height, math.ceil(multiplier * (raw_y1 - raw_y0 + 1)))
+    centered_x0 = math.floor((raw_x0 + raw_x1) / 2.0 - (nominal_width - 1) / 2.0)
+    centered_y0 = math.floor((raw_y0 + raw_y1) / 2.0 - (nominal_height - 1) / 2.0)
+    return centered_x0, centered_y0, centered_x0 + nominal_width, centered_y0 + nominal_height
+
+
+def _centroid_radial_fallback_geometry(
+    image_shape,
+    segmentation_mask: np.ndarray,
+    source_candidate_id: int,
+    config,
+):
+    """Build the expert-directed fallback after the Euclidean path rejects."""
+    from src.core.mask_views import exact_euclidean_dilate
+    from src.core.radial_geometry import build_centroid_radial_geometry
+
+    height, width = (int(image_shape[0]), int(image_shape[1]))
+    radial = build_centroid_radial_geometry(
+        segmentation_mask, (height, width), source_candidate_id, config
+    )
+    raw_bbox = radial.raw_bbox_xyxy_inclusive
+    raw_width = raw_bbox[2] - raw_bbox[0] + 1
+    raw_height = raw_bbox[3] - raw_bbox[1] + 1
+    extent = max(raw_width, raw_height)
+    requested_raw_contour = math.ceil(config.contour_fraction * extent)
+    requested_contour = (
+        min(
+            max(requested_raw_contour, config.contour_min_pixels),
+            config.contour_max_pixels,
+        )
+        if config.contour_enabled
+        else 0
+    )
+    window_origin = (
+        radial.window_bbox_xyxy_exclusive[0],
+        radial.window_bbox_xyxy_exclusive[1],
+    )
+    unshifted_nominal_box = _unshifted_nominal_crop_box(
+        (height, width), raw_bbox, config.crop_extent_multiplier
+    )
+
+    def contour_for(support: np.ndarray, contour_width: int) -> np.ndarray:
+        if contour_width == 0:
+            return np.zeros_like(support, dtype=bool)
+        return exact_euclidean_dilate(support, contour_width) & ~support
+
+    def attempt(
+        support: np.ndarray, contour_width: int, effective_distances: np.ndarray
+    ) -> dict[str, Any] | None:
+        support_bbox = _inclusive_bbox_for_window(support, window_origin)
+        contour = contour_for(support, contour_width)
+        required_bbox = (
+            _union_inclusive_bboxes(
+                support_bbox, _inclusive_bbox_for_window(contour, window_origin)
+            )
+            if np.any(contour)
+            else support_bbox
+        )
+        crop_box = _fallback_crop_box(
+            (height, width), raw_bbox, required_bbox, config.crop_extent_multiplier
+        )
+        if crop_box is None:
+            return None
+        return {
+            "support": support,
+            "contour": contour,
+            "support_bbox": support_bbox,
+            "crop_box": crop_box,
+            "effective_distances": effective_distances,
+        }
+
+    initial_support, _initial_endpoints, initial_distances = radial.support_for_scale(1_000_000)
+    selected = attempt(initial_support, requested_contour, initial_distances)
+    selected_contour_width = requested_contour
+    selected_scale_q = 1_000_000
+
+    if selected is None and requested_contour:
+        for contour_width in range(requested_contour - 1, 0, -1):
+            selected = attempt(initial_support, contour_width, initial_distances)
+            if selected is not None:
+                selected_contour_width = contour_width
+                break
+        if selected is None:
+            selected_contour_width = 0
+            selected = attempt(initial_support, 0, initial_distances)
+
+    if selected is None:
+        # At this point support itself cannot fit.  Search the single common
+        # fixed-point scale; a successful q=0 result is guaranteed because the
+        # nominal crop is at least the raw bbox and the contour is disabled.
+        selected_contour_width = 0
+        low, high, best = 0, 1_000_000, 0
+        while low <= high:
+            candidate_q = (low + high) // 2
+            support, _endpoints, distances = radial.support_for_scale(candidate_q)
+            candidate = attempt(support, 0, distances)
+            if candidate is None:
+                high = candidate_q - 1
+            else:
+                best = candidate_q
+                low = candidate_q + 1
+        selected_scale_q = best
+        support, _endpoints, distances = radial.support_for_scale(selected_scale_q)
+        selected = attempt(support, 0, distances)
+        while selected is None and selected_scale_q > 0:
+            selected_scale_q -= 1
+            support, _endpoints, distances = radial.support_for_scale(selected_scale_q)
+            selected = attempt(support, 0, distances)
+        if selected is None:
+            raise CoreError("centroid-radial fallback could not contain the raw mask")
+        if selected_scale_q > 0 and not np.any(selected["effective_distances"]):
+            selected_scale_q = 0
+            support, _endpoints, distances = radial.support_for_scale(0)
+            selected = attempt(support, 0, distances)
+            if selected is None:
+                raise CoreError(
+                    "centroid-radial zero-context fallback could not contain the raw mask"
+                )
+
+    effective_distances = selected["effective_distances"]
+    if selected_scale_q == 0:
+        adjustment = "zero_context_fallback"
+    elif selected_scale_q < 1_000_000:
+        adjustment = "radial_context_scaled"
+    elif requested_contour and selected_contour_width == 0:
+        adjustment = "contour_disabled"
+    elif selected_contour_width < requested_contour:
+        adjustment = "contour_reduced"
+    else:
+        crop_box = selected["crop_box"]
+        adjustment = "crop_shifted" if unshifted_nominal_box != crop_box else "none"
+
+    model_height, model_width, scale = _model_dimensions(
+        selected["crop_box"][3] - selected["crop_box"][1],
+        selected["crop_box"][2] - selected["crop_box"][0],
+    )
+    raw_distances = radial.raw_distances.astype(np.float64)
+    effective_distances_float = effective_distances.astype(np.float64)
+    return {
+        "raw_bbox": raw_bbox,
+        "support_bbox": selected["support_bbox"],
+        "crop_box": selected["crop_box"],
+        "support": selected["support"],
+        "contour": selected["contour"],
+        "raw_radius": int(np.max(radial.raw_distances)),
+        "effective_radius": int(np.max(effective_distances)),
+        "raw_contour_width": requested_raw_contour,
+        "effective_contour_width": selected_contour_width,
+        "effective_sigma": min(max(config.blur_sigma_fraction * extent, 2.0), 20.0),
+        "model_height": model_height,
+        "model_width": model_width,
+        "scale": scale,
+        "infeasible_geometry_policy": config.infeasible_geometry_policy,
+        "geometry_strategy_used": "centroid_radial_mask_chord_fallback",
+        "mask_centroid_xy": radial.centroid_xy,
+        "external_boundary_pixel_count": radial.external_boundary_pixel_count,
+        "raw_radial_distance_min": float(np.min(raw_distances)),
+        "raw_radial_distance_max": float(np.max(raw_distances)),
+        "raw_radial_distance_mean": float(np.mean(raw_distances)),
+        "effective_radial_distance_min": float(np.min(effective_distances_float)),
+        "effective_radial_distance_max": float(np.max(effective_distances_float)),
+        "effective_radial_distance_mean": float(np.mean(effective_distances_float)),
+        "effective_radial_scale": selected_scale_q / 1_000_000.0,
+        "geometry_adjustment": adjustment,
+        "window_origin": window_origin,
     }
 
 
@@ -278,13 +568,42 @@ def compose_single_blip3_view(
             view_config.as_dict(stage="blip3"), stage="blip3"
         )
     _validate_single_view_inputs(image_rgb, segmentation_mask, source_candidate_id)
-    geometry = _single_view_geometry(
-        image_rgb.shape, segmentation_mask, source_candidate_id, view_config
-    )
+    try:
+        # Compatibility is intentional: the reviewed Euclidean path is always
+        # evaluated first, even when the opt-in fallback is configured.
+        geometry = _single_view_geometry(
+            image_rgb.shape, segmentation_mask, source_candidate_id, view_config
+        )
+    except Blip3CandidateViewRejected:
+        if view_config.infeasible_geometry_policy != "centroid_radial_mask_chord":
+            raise
+        geometry = _centroid_radial_fallback_geometry(
+            image_rgb.shape, segmentation_mask, source_candidate_id, view_config
+        )
     x0, y0, x1, y1 = geometry["crop_box"]
     raw_mask_crop = np.ascontiguousarray(segmentation_mask[y0:y1, x0:x1].copy())
-    support_crop = np.ascontiguousarray(geometry["support"][y0:y1, x0:x1].copy())
-    contour_crop = np.ascontiguousarray(geometry["contour"][y0:y1, x0:x1].copy())
+    if "window_origin" in geometry:
+        wx0, wy0 = geometry["window_origin"]
+
+        def crop_local(source: np.ndarray) -> np.ndarray:
+            result = np.zeros((y1 - y0, x1 - x0), dtype=bool)
+            overlap_x0, overlap_y0 = max(x0, wx0), max(y0, wy0)
+            overlap_x1, overlap_y1 = min(x1, wx0 + source.shape[1]), min(y1, wy0 + source.shape[0])
+            if overlap_x0 < overlap_x1 and overlap_y0 < overlap_y1:
+                result[
+                    overlap_y0 - y0 : overlap_y1 - y0,
+                    overlap_x0 - x0 : overlap_x1 - x0,
+                ] = source[
+                    overlap_y0 - wy0 : overlap_y1 - wy0,
+                    overlap_x0 - wx0 : overlap_x1 - wx0,
+                ]
+            return result
+
+        support_crop = crop_local(geometry["support"])
+        contour_crop = crop_local(geometry["contour"])
+    else:
+        support_crop = np.ascontiguousarray(geometry["support"][y0:y1, x0:x1].copy())
+        contour_crop = np.ascontiguousarray(geometry["contour"][y0:y1, x0:x1].copy())
     source_crop = np.ascontiguousarray(image_rgb[y0:y1, x0:x1].copy())
     blurred = np.asarray(
         Image.fromarray(source_crop, mode="RGB").filter(
@@ -326,6 +645,18 @@ def compose_single_blip3_view(
         effective_contour_width=geometry["effective_contour_width"],
         effective_blur_sigma=float(geometry["effective_sigma"]),
         source_candidate_id=source_candidate_id,
+        infeasible_geometry_policy=geometry["infeasible_geometry_policy"],
+        geometry_strategy_used=geometry["geometry_strategy_used"],
+        mask_centroid_xy=geometry["mask_centroid_xy"],
+        external_boundary_pixel_count=geometry["external_boundary_pixel_count"],
+        raw_radial_distance_min=geometry["raw_radial_distance_min"],
+        raw_radial_distance_max=geometry["raw_radial_distance_max"],
+        raw_radial_distance_mean=geometry["raw_radial_distance_mean"],
+        effective_radial_distance_min=geometry["effective_radial_distance_min"],
+        effective_radial_distance_max=geometry["effective_radial_distance_max"],
+        effective_radial_distance_mean=geometry["effective_radial_distance_mean"],
+        effective_radial_scale=geometry["effective_radial_scale"],
+        geometry_adjustment=geometry["geometry_adjustment"],
     )
 
 
@@ -349,9 +680,16 @@ def single_blip3_view_model_input_shape(
         view_config = CandidateViewConfig.from_mapping(
             view_config.as_dict(stage="blip3"), stage="blip3"
         )
-    geometry = _single_view_geometry(
-        image_shape, segmentation_mask, source_candidate_id, view_config
-    )
+    try:
+        geometry = _single_view_geometry(
+            image_shape, segmentation_mask, source_candidate_id, view_config
+        )
+    except Blip3CandidateViewRejected:
+        if view_config.infeasible_geometry_policy != "centroid_radial_mask_chord":
+            raise
+        geometry = _centroid_radial_fallback_geometry(
+            image_shape, segmentation_mask, source_candidate_id, view_config
+        )
     return geometry["model_height"], geometry["model_width"]
 
 
@@ -837,6 +1175,11 @@ class _Blip3Filter:
     ):
         from src.core.mask_views import CandidateViewConfig
 
+        composition_time_ms = 0.0
+        verification_time_ms = 0.0
+        self._last_composition_time_ms = composition_time_ms
+        self._last_verification_time_ms = verification_time_ms
+
         if not self.label_cfg:
             return masks, []
 
@@ -895,6 +1238,7 @@ class _Blip3Filter:
             if not applicable_rules:
                 continue
 
+            composition_started = time.perf_counter()
             try:
                 verification = compose_single_blip3_view(
                     image_np,
@@ -903,6 +1247,7 @@ class _Blip3Filter:
                     view_config,
                 )
             except Blip3CandidateViewRejected as exc:
+                composition_time_ms += (time.perf_counter() - composition_started) * 1000.0
                 m["_blip3_rejected"] = True
                 record = dict(exc.metadata)
                 record.update(
@@ -916,6 +1261,8 @@ class _Blip3Filter:
                 if blip3_candidate_views is not None:
                     blip3_candidate_views.append(record)
                 continue
+            else:
+                composition_time_ms += (time.perf_counter() - composition_started) * 1000.0
 
             if blip3_candidate_views is not None:
                 blip3_candidate_views.append(
@@ -923,19 +1270,23 @@ class _Blip3Filter:
                 )
 
             def ask(cfg):
-                nonlocal question_index
+                nonlocal question_index, verification_time_ms
                 current_question_index = question_index
                 question_index += 1
                 question = cfg.get("question", "")
                 query = compose_verification_query(question)
                 debug_array = verification.rgb.copy() if cfg.get("debug") is True else None
-                answer = self.qa.answer(
-                    verification.image,
-                    query,
-                    max_new_tokens=(
-                        self.max_new_tokens if self.max_new_tokens is not None else 768
-                    ),
-                )
+                verification_started = time.perf_counter()
+                try:
+                    answer = self.qa.answer(
+                        verification.image,
+                        query,
+                        max_new_tokens=(
+                            self.max_new_tokens if self.max_new_tokens is not None else 768
+                        ),
+                    )
+                finally:
+                    verification_time_ms += (time.perf_counter() - verification_started) * 1000.0
                 if cfg.get("debug") is True:
                     public_question_id = current_question_index + 1
                     artifact_name = self._write_debug_artifact(
@@ -983,6 +1334,30 @@ class _Blip3Filter:
                                     "height": int(verification.rgb.shape[0]),
                                     "width": int(verification.rgb.shape[1]),
                                 },
+                                "infeasible_geometry_policy": verification.infeasible_geometry_policy,
+                                "geometry_strategy_used": verification.geometry_strategy_used,
+                                "mask_centroid_xy": (
+                                    list(verification.mask_centroid_xy)
+                                    if verification.mask_centroid_xy is not None
+                                    else None
+                                ),
+                                "external_boundary_pixel_count": (
+                                    verification.external_boundary_pixel_count
+                                ),
+                                "raw_radial_distance_min": verification.raw_radial_distance_min,
+                                "raw_radial_distance_max": verification.raw_radial_distance_max,
+                                "raw_radial_distance_mean": verification.raw_radial_distance_mean,
+                                "effective_radial_distance_min": (
+                                    verification.effective_radial_distance_min
+                                ),
+                                "effective_radial_distance_max": (
+                                    verification.effective_radial_distance_max
+                                ),
+                                "effective_radial_distance_mean": (
+                                    verification.effective_radial_distance_mean
+                                ),
+                                "effective_radial_scale": verification.effective_radial_scale,
+                                "geometry_adjustment": verification.geometry_adjustment,
                             }
                         )
                 return (
@@ -1077,6 +1452,8 @@ class _Blip3Filter:
             if cfg:
                 apply_answer(cfg, ask(cfg))
 
+        self._last_composition_time_ms = max(0.0, composition_time_ms)
+        self._last_verification_time_ms = max(0.0, verification_time_ms)
         return masks, answers
 
 
@@ -1116,9 +1493,6 @@ def run(
     log_print_func=None,
 ) -> Tuple[Dict[str, Any], Any, Dict[str, Any]]:
     """Run BLIP-3 verification using the unified module interface."""
-    import time
-
-    started = time.perf_counter()
     log = log_print_func or (lambda *a, **k: None)
     if state is None:
         state = {}
@@ -1192,8 +1566,12 @@ def run(
         "answers": answers,
         "num_masks": len(updated_masks) if updated_masks is not None else 0,
         "verified_count": len(answers),
-        "composition_time_ms": 0.0,
-        "verification_time_ms": (time.perf_counter() - started) * 1000.0,
+        "composition_time_ms": max(
+            0.0, float(getattr(blip_filter, "_last_composition_time_ms", 0.0))
+        ),
+        "verification_time_ms": max(
+            0.0, float(getattr(blip_filter, "_last_verification_time_ms", 0.0))
+        ),
     }
     return (state if holder is not None else request_state), updated_masks, meta
 

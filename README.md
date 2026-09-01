@@ -183,6 +183,19 @@ remain `blip3-verification-CANDIDATE-####-QUESTION-####.png` and use one-based
 public IDs; RGB pixels decoded from the lossless PNG equal the sole QA image's
 model-input array.
 
+`candidate_views.blip3.infeasible_geometry_policy` defaults to `reject`. The
+explicit `centroid_radial_mask_chord` value invokes a deterministic fallback
+only after that exact containment rejection. It uses the whole-mask centroid,
+ordered external contours, inclusive all-octant chord/spoke rasterization, and
+one common fixed-point radial scale. Geometry scratch is tight-bbox/local-window
+bounded and rays are processed in fixed-size batches. It may reduce or disable
+the contour or scale context to retain a valid nominal crop; raw L3 radial
+diagnostics are pre-clamp and may exceed `max_context_pixels`, while effective
+values cannot. L3 records expose the strategy, centroid, boundary count, radial
+statistics, scale, and precedence-ordered adjustment; `crop_shifted` compares
+the final crop with the unshifted centered nominal crop. Existing successful
+Euclidean views remain byte-identical.
+
 L3 post-filter diagnostics evaluate optional canonical area, bbox, aspect-ratio,
 and border rules for every candidate, including empty masks. Rejections carry
 source ID, nullable inclusive bbox, area, dimensions, configured limit and

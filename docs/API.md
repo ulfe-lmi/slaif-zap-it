@@ -325,6 +325,8 @@ blur, or otherwise alter pixels. Trusted CLI may explicitly use the separate
 `mode: single_dilated_blur`, `context_fraction: 0.20`, context limits `0..64`,
 `crop_extent_multiplier: 2.0`, `blur_sigma_fraction: 0.15`, enabled contour
 fraction `0.02`, contour width limits `1..3`, and `contour_rgb: [255, 224, 0]`.
+`infeasible_geometry_policy` defaults to `reject`; the only alternate value is
+the explicit `centroid_radial_mask_chord` fallback.
 BLIP3 accepts only its new field set; the old `mode: mask_dilated`,
 `outside_fill`, `context_intensity`, and `contour_width` fields are rejected.
 Null, bool-as-number, non-finite, unknown, out-of-range, cross-field and
@@ -347,6 +349,23 @@ candidate, while debug records remain one-for-one with fixed-name lossless
 model-input PNGs. Both contain only bounded numeric provenance, not image
 pixels or client text. BLIP3 capacity is admitted after actual CLIP
 labels/scores and before any QA call.
+
+The fallback policy is evaluated only after the existing Euclidean compositor
+raises `crop_cannot_contain_support_and_contour`. It uses the whole-mask
+float64 centroid, 8-connected external contours, inclusive all-octant
+chords/spokes, cross-gap positive counts, and one common integer-millionth
+radial scale. Component and contour scratch uses the tight candidate bbox and
+the support uses a bounded local window; rays are processed in fixed-size
+batches. It shifts a full nominal crop, reduces contour width before disabling
+it, and reports the highest-precedence actual adjustment. `crop_shifted` means
+the final crop differs from the unshifted candidate-centered nominal crop,
+including a source-edge shift. L3 composition and exact-input records add the
+strategy, centroid, external boundary count, raw/effective radial min/max/mean,
+scale, policy, and adjustment; raw diagnostics are pre-policy and may exceed
+`max_context_pixels`, while effective diagnostics cannot. Successful
+existing-path views retain their prior pixels and values.
+`stage.blip3_composition` measures composition attempts and
+`stage.blip3_verification` measures only QA calls.
 
 ### Optional diagnostic artifact selection
 

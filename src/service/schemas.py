@@ -31,6 +31,7 @@ __all__ = [
     "ClipRoutingRule",
     "ClipRoutingConfiguration",
     "RuntimeMetadata",
+    "RuntimeBlip3Metadata",
     "ProvenanceMetadata",
     "Sam2ConfigValues",
     "Sam2ResourceAlternative",
@@ -305,6 +306,18 @@ class RuntimeModelControlMetadata(BaseModel):
     management_subset_only: bool
 
 
+class RuntimeBlip3Metadata(BaseModel):
+    """Sanitized operator-owned BLIP3 capacity facts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_questions: int = Field(ge=1, le=256)
+    max_new_tokens: int = Field(ge=1, le=32)
+    question_units: str = Field(min_length=1, max_length=64)
+    question_limit_stage: str = Field(min_length=1, max_length=64)
+    question_limit_source: str = Field(min_length=1, max_length=64)
+
+
 class RuntimeMetadata(BaseModel):
     """Typed, bounded operator provenance nested under the L3 runtime record."""
 
@@ -316,6 +329,7 @@ class RuntimeMetadata(BaseModel):
     models: Dict[str, RuntimeModelIdentity] = Field(min_length=1, max_length=3)
     residency: RuntimeResidencyMetadata
     model_control: Optional[RuntimeModelControlMetadata] = None
+    blip3: Optional[RuntimeBlip3Metadata] = None
 
 
 class ProvenanceMetadata(BaseModel):
@@ -440,6 +454,7 @@ class CandidateViewBlip3Config(BaseModel):
     """Effective request-local single-image BLIP3 view policy."""
 
     mode: Literal["single_dilated_blur"]
+    infeasible_geometry_policy: Literal["reject", "centroid_radial_mask_chord"] = "reject"
     context_fraction: float = Field(ge=0.0, le=0.5)
     min_context_pixels: int = Field(ge=0, le=256)
     max_context_pixels: int = Field(ge=0, le=512)
@@ -494,6 +509,39 @@ class CandidateViewInputRecord(BaseModel):
     raw_contour_width: Optional[int] = Field(default=None, ge=0)
     effective_contour_width: Optional[int] = Field(default=None, ge=0, le=3)
     effective_blur_sigma: Optional[float] = Field(default=None, ge=0.0, le=20.0)
+    infeasible_geometry_policy: Literal["reject", "centroid_radial_mask_chord"] = "reject"
+    geometry_strategy_used: Literal[
+        "euclidean_largest_axis", "centroid_radial_mask_chord_fallback"
+    ] = "euclidean_largest_axis"
+    mask_centroid_xy: Optional[List[float]] = Field(default=None, min_length=2, max_length=2)
+    external_boundary_pixel_count: Optional[int] = Field(default=None, ge=0)
+    raw_radial_distance_min: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Pre-policy radial diagnostic; not max_context_pixels capped",
+    )
+    raw_radial_distance_max: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Pre-policy radial diagnostic; not max_context_pixels capped",
+    )
+    raw_radial_distance_mean: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Pre-policy radial diagnostic; not max_context_pixels capped",
+    )
+    effective_radial_distance_min: Optional[float] = Field(default=None, ge=0.0, le=512.0)
+    effective_radial_distance_max: Optional[float] = Field(default=None, ge=0.0, le=512.0)
+    effective_radial_distance_mean: Optional[float] = Field(default=None, ge=0.0, le=512.0)
+    effective_radial_scale: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    geometry_adjustment: Literal[
+        "none",
+        "crop_shifted",
+        "contour_reduced",
+        "contour_disabled",
+        "radial_context_scaled",
+        "zero_context_fallback",
+    ] = "none"
     source_composite_dimensions: Optional[Dict[str, int]] = None
     config: Optional[Dict[str, Any]] = Field(
         default=None,
@@ -503,6 +551,23 @@ class CandidateViewInputRecord(BaseModel):
     @model_validator(mode="after")
     def validate_artifact_identity(self) -> "CandidateViewInputRecord":
         """Require a fixed tokenized name matching this input record."""
+        if self.mask_centroid_xy is not None and any(
+            not math.isfinite(value) for value in self.mask_centroid_xy
+        ):
+            raise ValueError("mask_centroid_xy must contain finite values")
+        for field_name in (
+            "raw_radial_distance_min",
+            "raw_radial_distance_max",
+            "raw_radial_distance_mean",
+            "effective_radial_distance_min",
+            "effective_radial_distance_max",
+            "effective_radial_distance_mean",
+            "effective_radial_scale",
+            "effective_blur_sigma",
+        ):
+            value = getattr(self, field_name)
+            if value is not None and not math.isfinite(value):
+                raise ValueError(f"{field_name} must be finite")
         if self.stage == "clip":
             pattern = re.compile(
                 r"^(?:[A-Za-z0-9][A-Za-z0-9_.-]*-)?"
@@ -571,9 +636,59 @@ class Blip3CandidateViewRecord(BaseModel):
     effective_blur_sigma: float = Field(ge=0.0, le=20.0)
     source_composite_dimensions: Dict[str, int]
     model_input_dimensions: Optional[Dict[str, int]] = None
+    infeasible_geometry_policy: Literal["reject", "centroid_radial_mask_chord"] = "reject"
+    geometry_strategy_used: Literal[
+        "euclidean_largest_axis", "centroid_radial_mask_chord_fallback"
+    ] = "euclidean_largest_axis"
+    mask_centroid_xy: Optional[List[float]] = Field(default=None, min_length=2, max_length=2)
+    external_boundary_pixel_count: Optional[int] = Field(default=None, ge=0)
+    raw_radial_distance_min: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Pre-policy radial diagnostic; not max_context_pixels capped",
+    )
+    raw_radial_distance_max: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Pre-policy radial diagnostic; not max_context_pixels capped",
+    )
+    raw_radial_distance_mean: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Pre-policy radial diagnostic; not max_context_pixels capped",
+    )
+    effective_radial_distance_min: Optional[float] = Field(default=None, ge=0.0, le=512.0)
+    effective_radial_distance_max: Optional[float] = Field(default=None, ge=0.0, le=512.0)
+    effective_radial_distance_mean: Optional[float] = Field(default=None, ge=0.0, le=512.0)
+    effective_radial_scale: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    geometry_adjustment: Literal[
+        "none",
+        "crop_shifted",
+        "contour_reduced",
+        "contour_disabled",
+        "radial_context_scaled",
+        "zero_context_fallback",
+    ] = "none"
 
     @model_validator(mode="after")
     def validate_status_reason(self) -> "Blip3CandidateViewRecord":
+        if self.mask_centroid_xy is not None and any(
+            not math.isfinite(value) for value in self.mask_centroid_xy
+        ):
+            raise ValueError("mask_centroid_xy must contain finite values")
+        for field_name in (
+            "raw_radial_distance_min",
+            "raw_radial_distance_max",
+            "raw_radial_distance_mean",
+            "effective_radial_distance_min",
+            "effective_radial_distance_max",
+            "effective_radial_distance_mean",
+            "effective_radial_scale",
+            "effective_blur_sigma",
+        ):
+            value = getattr(self, field_name)
+            if value is not None and not math.isfinite(value):
+                raise ValueError(f"{field_name} must be finite")
         if self.status == "rendered" and self.reason is not None:
             raise ValueError("rendered BLIP3 candidate views cannot have a diagnostic")
         if self.status == "rejected" and self.reason is None:

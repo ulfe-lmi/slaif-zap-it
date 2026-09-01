@@ -50,9 +50,10 @@ class _QA:
 
 
 class _CandidateViewEngine:
-    def __init__(self):
+    def __init__(self, *, mask_box=None):
         self.clip_inputs = []
         self.qa = _QA()
+        self.mask_box = mask_box
         clip_filter = object.__new__(clip_module._ClipFilter)
 
         class _TextEmbeds:
@@ -92,7 +93,11 @@ class _CandidateViewEngine:
 
         def run_sam2(state, _params, image, **_kwargs):
             mask = np.zeros(image.shape[:2], dtype=bool)
-            mask[4:20, 8:24] = True
+            if self.mask_box is None:
+                mask[4:20, 8:24] = True
+            else:
+                x0, y0, x1, y1 = self.mask_box
+                mask[y0:y1, x0:x1] = True
             return state or {}, [{"segmentation": mask, "predicted_iou": 0.9}], {"num_masks": 1}
 
         stages = StageFunctions(
@@ -119,7 +124,19 @@ class _CandidateViewEngine:
         )
 
 
-def _files(*, response_format="json", clip_fraction=0.25, context_fraction=0.2, debug=True):
+def _files(
+    *,
+    response_format="json",
+    clip_fraction=0.25,
+    context_fraction=0.2,
+    debug=True,
+    infeasible_geometry_policy="reject",
+    crop_extent_multiplier=2.0,
+    image_width=32,
+    image_height=24,
+    blip_max_context_pixels=8,
+    contour_enabled=True,
+):
     config = f"""alpha: 0.5
 clip:
   debug: true
@@ -147,12 +164,14 @@ candidate_views:
     max_context_pixels: 8
   blip3:
     context_fraction: {context_fraction}
-    max_context_pixels: 8
-    contour_enabled: true
+    max_context_pixels: {blip_max_context_pixels}
+    crop_extent_multiplier: {crop_extent_multiplier}
+    infeasible_geometry_policy: {infeasible_geometry_policy}
+    contour_enabled: {str(contour_enabled).lower()}
     contour_rgb: [255, 224, 0]
 """.encode()
     return {
-        "image": ("input.png", _png_bytes(), "image/png"),
+        "image": ("input.png", _png_bytes(image_width, image_height), "image/png"),
         "config": ("config.yaml", config, "application/yaml"),
     }, {"verbosity": "3", "response_format": response_format}
 
@@ -172,6 +191,7 @@ def test_effective_policy_and_l0_l3_gating():
         service = document["service"]
         assert service["candidate_views"]["blip3"] == {
             "mode": "single_dilated_blur",
+            "infeasible_geometry_policy": "reject",
             "context_fraction": 0.2,
             "min_context_pixels": 0,
             "max_context_pixels": 8,
@@ -200,19 +220,87 @@ def test_effective_policy_and_l0_l3_gating():
             assert [record.stage for record in debug_records] == ["clip", "blip3"]
 
 
+def test_opt_in_policy_reaches_fallback_compositor_and_preserves_api_schema():
+    engine = _CandidateViewEngine()
+    client = TestClient(
+        create_app(engine=engine, readiness_provider=lambda: ReadyState(True, "fake ready"))
+    )
+    files, data = _files(
+        context_fraction=0.5,
+        crop_extent_multiplier=1.0,
+        infeasible_geometry_policy="centroid_radial_mask_chord",
+    )
+    response = client.post("/v1/completions", files=files, data={**data, "verbosity": "3"})
+    assert response.status_code == 200, response.text
+    document = response.json()
+    CompletionResponse.model_validate(document)
+    service = document["service"]
+    assert (
+        service["candidate_views"]["blip3"]["infeasible_geometry_policy"]
+        == "centroid_radial_mask_chord"
+    )
+    records = [
+        Blip3CandidateViewRecord.model_validate(item) for item in service["blip3_candidate_views"]
+    ]
+    assert len(records) == 1
+    assert records[0].geometry_strategy_used == "centroid_radial_mask_chord_fallback"
+    assert records[0].status == "rendered"
+    inputs = [
+        CandidateViewInputRecord.model_validate(item)
+        for item in service["candidate_view_inputs"]
+        if item["stage"] == "blip3"
+    ]
+    assert len(inputs) == 1
+    assert inputs[0].geometry_strategy_used == "centroid_radial_mask_chord_fallback"
+
+
+def test_raw_radial_diagnostic_can_exceed_effective_cap_in_l3_response():
+    engine = _CandidateViewEngine(mask_box=(40, 350, 1240, 370))
+    client = TestClient(
+        create_app(engine=engine, readiness_provider=lambda: ReadyState(True, "fake ready"))
+    )
+    files, data = _files(
+        image_width=1280,
+        image_height=720,
+        context_fraction=0.5,
+        blip_max_context_pixels=512,
+        crop_extent_multiplier=1.0,
+        contour_enabled=False,
+        infeasible_geometry_policy="centroid_radial_mask_chord",
+    )
+    response = client.post("/v1/completions", files=files, data={**data, "verbosity": "3"})
+    assert response.status_code == 200, response.text
+    document = response.json()
+    CompletionResponse.model_validate(document)
+    records = [
+        Blip3CandidateViewRecord.model_validate(item)
+        for item in document["service"]["blip3_candidate_views"]
+    ]
+    assert len(records) == 1
+    assert records[0].raw_radial_distance_max == 600.0
+    assert records[0].effective_radial_distance_max == 0.0
+    assert records[0].effective_context_radius == 0
+
+
 def test_json_zip_manifest_and_debug_payload_are_identical():
     engine = _CandidateViewEngine()
     client = TestClient(
         create_app(engine=engine, readiness_provider=lambda: ReadyState(True, "fake ready"))
     )
-    json_files, json_data = _files()
+    parity_kwargs = {
+        "context_fraction": 0.5,
+        "crop_extent_multiplier": 1.0,
+        "contour_enabled": False,
+        "infeasible_geometry_policy": "centroid_radial_mask_chord",
+    }
+    json_files, json_data = _files(**parity_kwargs)
     json_response = client.post("/v1/completions", files=json_files, data=json_data)
     assert json_response.status_code == 200
     document = json_response.json()
     descriptors = {item["name"]: item for item in document["service"]["artifacts"]}
     json_payloads = {name: base64.b64decode(item["data"]) for name, item in descriptors.items()}
 
-    zip_files, zip_data = _files(response_format="zip")
+    zip_files, zip_data = _files(response_format="zip", **parity_kwargs)
     zip_response = client.post("/v1/completions", files=zip_files, data=zip_data)
     assert zip_response.status_code == 200
     with zipfile.ZipFile(io.BytesIO(zip_response.content)) as archive:
@@ -228,6 +316,9 @@ def test_json_zip_manifest_and_debug_payload_are_identical():
         }
     )
     assert zip_payloads == json_payloads
+    assert (
+        manifest["service"]["blip3_candidate_views"] == document["service"]["blip3_candidate_views"]
+    )
     for name, payload in zip_payloads.items():
         descriptor = next(item for item in manifest["service"]["artifacts"] if item["name"] == name)
         assert hashlib.sha256(payload).hexdigest() == descriptor["sha256"]

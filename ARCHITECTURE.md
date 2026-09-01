@@ -92,6 +92,16 @@ fully composed image is bilinearly resized for QA, with short side 256 and long
 side capped at 768. The fixed instruction follows the delimited client
 question. This is pixel-boundary evidence, not semantic-accuracy evidence.
 
+The BLIP3 view policy defaults to `reject`. An explicit
+`centroid_radial_mask_chord` value invokes a pure request-local fallback only
+after the exact Euclidean containment rejection. Its complete-mask centroid,
+external contour walk, chord/spoke rasterization, fixed-point common scaling,
+crop shifting, contour adjustment order, and zero-context convention are
+deterministic and independently testable. Geometry scratch is created in the
+tight candidate bbox and bounded local window; vectorized rays use fixed-size
+batches. Existing feasible Euclidean compositions are returned without
+recomputation or substitution.
+
 The service accepts at most 32 uploaded BLIP3 rule definitions during request
 configuration validation. This hostile-YAML structural ceiling is distinct from
 BLIP3 execution planning, which is bounded by the immutable operator startup

@@ -5,6 +5,13 @@ otherwise. No ZAP-IT package, tag, or GitHub release has been published.
 
 ## Unreleased
 
+- Objective 023 adds the opt-in BLIP3 `centroid_radial_mask_chord` fallback
+  after the existing containment rejection, with deterministic mask-only
+  geometry, bounded L3 adjustment metadata, and separate composition/QA timing.
+- Objective 023-b closes candidate-local geometry scratch, fixed-size ray
+  batches, pre-clamp radial diagnostics, truthful crop-shift metadata, and the
+  mixed-shape non-CI benchmark without changing the opt-in/default-reject
+  migration or artifact behavior.
 - Objective 017 isolates CLIP and BLIP3 candidate views from rectangular
   semantic leakage with one deterministic mask-derived builder, strict
   `candidate_views` settings, fixed lossless debug artifacts, public candidate

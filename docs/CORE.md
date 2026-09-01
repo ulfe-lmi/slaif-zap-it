@@ -217,6 +217,19 @@ source candidate ID, filtered index, status, bboxes, radii, widths, sigma and
 source/model dimensions; `blip3_candidate_views` is separate from one-record-
 per-debug-question artifact inputs.
 
+The effective BLIP3 policy defaults to `reject`. The explicit
+`centroid_radial_mask_chord` policy runs only after the existing Euclidean
+containment exception. The pure fallback uses the whole-mask centroid and
+ordered external contours, counts positive pixels across chord gaps, and
+applies one common millionth fixed-point radial scale. Its component/contour
+scratch is tight-bbox local and ray matrices are fixed-size batches. Its L3
+records expose the strategy, centroid, boundary count, raw pre-clamp radial
+statistics (which may exceed `max_context_pixels`), effective bounded radial
+statistics, scale, and the highest-precedence adjustment. `crop_shifted` is
+reported when the final crop differs from the unshifted candidate-centered
+nominal crop, including source-edge shifting. Composition and QA timings are
+separate; debug encoding is not QA time.
+
 ## Compatibility notes
 
 - `run_frame_pipeline(...)` keeps its exact signature and return shape; it now

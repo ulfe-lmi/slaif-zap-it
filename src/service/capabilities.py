@@ -364,6 +364,9 @@ def _candidate_view_fields(*, include_contour: bool) -> Dict[str, CapabilityFiel
         return _decorate_candidate_fields(
             {
                 "mode": CapabilityField(type="string", allowed=["single_dilated_blur"]),
+                "infeasible_geometry_policy": CapabilityField(
+                    type="string", allowed=["reject", "centroid_radial_mask_chord"]
+                ),
                 "context_fraction": CapabilityField(type="number", minimum=0.0, maximum=0.5),
                 "min_context_pixels": CapabilityField(type="integer", minimum=0, maximum=256),
                 "max_context_pixels": CapabilityField(type="integer", minimum=0, maximum=512),
@@ -869,6 +872,22 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
                         "decoded lossless PNG RGB pixels equal the sole final model-input array"
                     ),
                     "contour_rgb": "array of exactly three strict integers, each from 0 to 255",
+                    "infeasible_geometry_policy": (
+                        "default reject; centroid_radial_mask_chord is an explicit fallback "
+                        "only after the existing containment rejection"
+                    ),
+                    "geometry_resources": (
+                        "tight-bbox/local-window scratch; rays use fixed batches of at most 256"
+                    ),
+                    "geometry_metadata": (
+                        "raw radial diagnostics are pre-clamp and may exceed max_context_pixels; "
+                        "effective radial diagnostics remain policy-bounded"
+                    ),
+                    "geometry_adjustment": (
+                        "precedence is zero-context, radial scaling, contour disabled, contour "
+                        "reduced, crop shifted, none; crop_shifted compares with the unshifted "
+                        "candidate-centered nominal crop"
+                    ),
                 },
             ),
             dilation_formula=(
@@ -887,7 +906,8 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
             crop_policy=(
                 "nominal size = ceil(multiplier * raw inclusive bbox dimensions); start = "
                 "floor(inclusive pixel-center - (nominal size - 1) / 2); endpoints independently "
-                "clamped without shifting"
+                "clamped without shifting for Euclidean composition; the explicit fallback "
+                "retains nominal dimensions and shifts the origin for containment"
             ),
             blur_policy=(
                 "Pillow ImageFilter.GaussianBlur; sigma=min(max(blur_sigma_fraction * L, 2), 20)"
@@ -897,8 +917,10 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
                 "disabled contour is empty"
             ),
             containment_policy=(
-                "support plus contour must be wholly inside the clamped crop; otherwise "
-                "candidate-local rejection crop_cannot_contain_support_and_contour"
+                "reject is the default and preserves the existing candidate-local "
+                "crop_cannot_contain_support_and_contour result; the explicit "
+                "centroid_radial_mask_chord policy invokes its deterministic fallback "
+                "only after that exact rejection"
             ),
             effective_policy=(
                 "L0-L3 expose only the stage field set plus applied; detailed BLIP3 records "
