@@ -260,6 +260,16 @@ and 768-pixel long-side cap. The service returns the exact lossless image as
 the question, label, answer or filename in that logical name. This qualifies
 the pixel/instruction/artifact integration, not universal BLIP3 accuracy.
 
+For a candidate whose nominal crop cannot contain the requested support, the
+optional request field `candidate_views.blip3.infeasible_geometry_policy:
+centroid_radial_mask_chord` enables the deterministic fallback. The default
+`reject` behavior and all successful Euclidean views remain compatible. The
+fallback uses the complete-mask centroid and external contour walk, may shift
+the full nominal crop, reduces or disables the contour before applying one
+common millionth radial scale, and records its strategy and adjustment at L3.
+It is mask-only geometry: zero-valued gaps may be crossed while measuring a
+whole-mask chord, but no rectangular bridge is added.
+
 The operator-only `scripts/profile_matrix.py` harness sends the exact sanitized
 sequence `sam2, sam2_clip, sam2_blip3, sam2_clip_blip3, sam2_clip_blip3,
 sam2_blip3, sam2_clip, sam2` as authenticated L3 JSON requests. It requires

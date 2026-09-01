@@ -42,6 +42,7 @@ CANDIDATE_VIEW_DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "blip3": {
         "mode": "single_dilated_blur",
+        "infeasible_geometry_policy": "reject",
         "context_fraction": 0.20,
         "min_context_pixels": 0,
         "max_context_pixels": 64,
@@ -72,6 +73,7 @@ class CandidateViewConfig:
     """Validated scalar policy for one candidate-view stage."""
 
     mode: str = "raw_bbox_crop"
+    infeasible_geometry_policy: str = "reject"
     context_fraction: float = 0.10
     min_context_pixels: int = 0
     max_context_pixels: int = 64
@@ -98,6 +100,7 @@ class CandidateViewConfig:
         if stage == "blip3":
             allowed = {
                 "mode",
+                "infeasible_geometry_policy",
                 "context_fraction",
                 "min_context_pixels",
                 "max_context_pixels",
@@ -136,6 +139,15 @@ class CandidateViewConfig:
         ):
             expected = "single_dilated_blur" if stage == "blip3" else "raw_bbox_crop"
             raise _invalid(f"candidate_views.{stage}.mode must be {expected!r}")
+
+        policy = value.get("infeasible_geometry_policy", defaults.get("infeasible_geometry_policy"))
+        if stage == "blip3" and (
+            type(policy) is not str or policy not in {"reject", "centroid_radial_mask_chord"}
+        ):
+            raise _invalid(
+                f"candidate_views.{stage}.infeasible_geometry_policy must be "
+                "'reject' or 'centroid_radial_mask_chord'"
+            )
 
         outside_fill = None
         intensity = None
@@ -234,6 +246,7 @@ class CandidateViewConfig:
 
         return cls(
             mode=mode,
+            infeasible_geometry_policy=(policy if stage == "blip3" else "reject"),
             context_fraction=float(fraction),
             min_context_pixels=minimum,
             max_context_pixels=maximum,
@@ -258,6 +271,7 @@ class CandidateViewConfig:
         if stage == "blip3":
             result: dict[str, Any] = {
                 "mode": self.mode,
+                "infeasible_geometry_policy": self.infeasible_geometry_policy,
                 "context_fraction": self.context_fraction,
                 "min_context_pixels": self.min_context_pixels,
                 "max_context_pixels": self.max_context_pixels,

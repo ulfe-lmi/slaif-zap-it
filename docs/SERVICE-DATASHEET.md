@@ -81,6 +81,16 @@ from the lossless PNG equal the sole image passed to QA; encoded PNG bytes are
 not raw RGB bytes. This artifact documents pixel
 identity and does not guarantee semantic accuracy.
 
+The BLIP3 `infeasible_geometry_policy` defaults to `reject`. The explicit
+`centroid_radial_mask_chord` value is tried only after the existing Euclidean
+containment rejection. It uses a whole-mask centroid, ordered external
+contours, cross-gap chord counts, inclusive spokes/quadrilaterals, and a common
+millionth fixed-point scale. Contour reduction, contour disabling, crop
+shifting, radial scaling, and zero-context fallback are reported in L3
+composition/input records with bounded radial statistics. Existing feasible
+views retain their prior pixels and metadata; composition and QA timings are
+reported separately.
+
 The exact radius-512 disk dilation uses a local-window squared distance
 transform with a constant number of temporary arrays. Debug resource admission
 is two-phase: CLIP artifacts are admitted before CLIP, and actual post-CLIP

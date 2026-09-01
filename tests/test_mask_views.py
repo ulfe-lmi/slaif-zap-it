@@ -376,6 +376,7 @@ def test_blip3_defaults_are_a_separate_exact_policy_from_clip():
     }
     assert blip == {
         "mode": "single_dilated_blur",
+        "infeasible_geometry_policy": "reject",
         "context_fraction": 0.2,
         "min_context_pixels": 0,
         "max_context_pixels": 64,

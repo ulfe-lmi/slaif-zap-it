@@ -119,7 +119,15 @@ class _CandidateViewEngine:
         )
 
 
-def _files(*, response_format="json", clip_fraction=0.25, context_fraction=0.2, debug=True):
+def _files(
+    *,
+    response_format="json",
+    clip_fraction=0.25,
+    context_fraction=0.2,
+    debug=True,
+    infeasible_geometry_policy="reject",
+    crop_extent_multiplier=2.0,
+):
     config = f"""alpha: 0.5
 clip:
   debug: true
@@ -148,6 +156,8 @@ candidate_views:
   blip3:
     context_fraction: {context_fraction}
     max_context_pixels: 8
+    crop_extent_multiplier: {crop_extent_multiplier}
+    infeasible_geometry_policy: {infeasible_geometry_policy}
     contour_enabled: true
     contour_rgb: [255, 224, 0]
 """.encode()
@@ -172,6 +182,7 @@ def test_effective_policy_and_l0_l3_gating():
         service = document["service"]
         assert service["candidate_views"]["blip3"] == {
             "mode": "single_dilated_blur",
+            "infeasible_geometry_policy": "reject",
             "context_fraction": 0.2,
             "min_context_pixels": 0,
             "max_context_pixels": 8,
@@ -198,6 +209,40 @@ def test_effective_policy_and_l0_l3_gating():
                 for item in service["candidate_view_inputs"]
             ]
             assert [record.stage for record in debug_records] == ["clip", "blip3"]
+
+
+def test_opt_in_policy_reaches_fallback_compositor_and_preserves_api_schema():
+    engine = _CandidateViewEngine()
+    client = TestClient(
+        create_app(engine=engine, readiness_provider=lambda: ReadyState(True, "fake ready"))
+    )
+    files, data = _files(
+        context_fraction=0.5,
+        crop_extent_multiplier=1.0,
+        infeasible_geometry_policy="centroid_radial_mask_chord",
+    )
+    response = client.post("/v1/completions", files=files, data={**data, "verbosity": "3"})
+    assert response.status_code == 200, response.text
+    document = response.json()
+    CompletionResponse.model_validate(document)
+    service = document["service"]
+    assert (
+        service["candidate_views"]["blip3"]["infeasible_geometry_policy"]
+        == "centroid_radial_mask_chord"
+    )
+    records = [
+        Blip3CandidateViewRecord.model_validate(item) for item in service["blip3_candidate_views"]
+    ]
+    assert len(records) == 1
+    assert records[0].geometry_strategy_used == "centroid_radial_mask_chord_fallback"
+    assert records[0].status == "rendered"
+    inputs = [
+        CandidateViewInputRecord.model_validate(item)
+        for item in service["candidate_view_inputs"]
+        if item["stage"] == "blip3"
+    ]
+    assert len(inputs) == 1
+    assert inputs[0].geometry_strategy_used == "centroid_radial_mask_chord_fallback"
 
 
 def test_json_zip_manifest_and_debug_payload_are_identical():

@@ -212,6 +212,7 @@ _CANDIDATE_VIEW_CLIP_FIELDS = frozenset(
 _CANDIDATE_VIEW_BLIP3_FIELDS = frozenset(
     {
         "mode",
+        "infeasible_geometry_policy",
         "context_fraction",
         "min_context_pixels",
         "max_context_pixels",
@@ -1218,6 +1219,14 @@ def _validate_candidate_view_stage(value: Any, stage: str) -> Dict[str, Any]:
     expected_mode = "single_dilated_blur" if stage == "blip3" else "raw_bbox_crop"
     if type(mode) is not str or mode != expected_mode:
         raise ServiceError(f"{path}.mode supports only {expected_mode!r}", code="unsupported_field")
+    policy = value.get("infeasible_geometry_policy", defaults.get("infeasible_geometry_policy"))
+    if stage == "blip3" and (
+        type(policy) is not str or policy not in {"reject", "centroid_radial_mask_chord"}
+    ):
+        raise _candidate_view_invalid(
+            f"{path}.infeasible_geometry_policy",
+            "'reject' or 'centroid_radial_mask_chord'",
+        )
     fraction = value.get("context_fraction", defaults["context_fraction"])
     if type(fraction) not in (int, float) or not math.isfinite(float(fraction)):
         raise _candidate_view_invalid(f"{path}.context_fraction", "a finite number")
@@ -1281,6 +1290,7 @@ def _validate_candidate_view_stage(value: Any, stage: str) -> Dict[str, Any]:
         )
     return {
         "mode": mode,
+        "infeasible_geometry_policy": policy,
         "context_fraction": float(fraction),
         "min_context_pixels": minimum,
         "max_context_pixels": maximum,

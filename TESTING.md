@@ -106,6 +106,11 @@ an explicit operational order creates and secures it.
   startup values, carries no request-YAML control, and maps planned over-limit
   work to structured `resource_limit` 413 before BLIP3 generation; uploaded
   BLIP3 rule definitions remain independently capped at 32;
+- centroid-radial BLIP3 fallback policy validation, Euclidean-first byte
+  compatibility, whole-mask centroid/chord/contour determinism, fixed-point
+  scale and adjustment precedence, exact source-pixel compositing, L3 schema
+  parity, and the manually invoked `scripts/benchmark_centroid_radial_geometry.py`
+  sub-second workload;
 
 The explicit lifecycle test tier remains CPU/fake-only unless an order grants a
 live qualification. A live qualification must use the exact order-assigned

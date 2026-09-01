@@ -55,6 +55,7 @@ from .routing import (
     route_clip_candidate,
 )
 from .ordering import mask_centroid_rc, order_final_objects, ordering_key
+from .radial_geometry import CentroidRadialGeometry, build_centroid_radial_geometry
 from .renderers import (
     MAX_IDENTITY_OBJECTS,
     YOLO_DECIMALS,
@@ -121,6 +122,7 @@ __all__ = [
     "ClipPromptSummary",
     "ClipPromptValidationError",
     "CoreError",
+    "CentroidRadialGeometry",
     "CANDIDATE_VIEW_DEFAULTS",
     "CANDIDATE_VIEW_LIMITS",
     "CandidateViewConfig",
@@ -150,6 +152,7 @@ __all__ = [
     "default_candidate_view_configs",
     "effective_candidate_view_configs",
     "exact_euclidean_dilate",
+    "build_centroid_radial_geometry",
     "ROUTING_PRIMARY_REASONS",
     "ClipRoutingDecision",
     "apply_clip_routing",
