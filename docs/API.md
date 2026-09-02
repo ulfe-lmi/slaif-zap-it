@@ -8,6 +8,13 @@ Content-Type: multipart/form-data
 This is a **ZAP-IT-specific multimodal pipeline endpoint** using a conventional
 path. It is **not** drop-in OpenAI `text-completions` compatibility.
 
+ZAP-IT has two distinct inference surfaces. `/v1/completions` is the
+native/private multipart operator, research, and debugging API. It is not the
+`slaif-api-gateway` backend contract and is not the general-public SLAIF
+surface. `/v1/responses` is the narrow stateless, non-streaming JSON facade
+intended as the future gateway/public compatibility surface; this does not
+claim that gateway integration or public/WAN deployment is complete.
+
 The contract is tested with a CPU fake engine and qualified locally with pinned
 SAM2, CLIP, and BLIP3 models. Operational residency is capacity-selected: the
 historical 11-GB profile uses serialized host-RAM/GPU transitions for BLIP3,
@@ -22,7 +29,8 @@ gates remain separate. No persistent listener is started by the package factory.
 
 | Path | Method | Purpose |
 |---|---|---|
-| `/v1/completions` | POST | one image + one YAML config -> one result |
+| `/v1/completions` | POST | native/private operator, research, and debug API: one image + one YAML config -> one result |
+| `/v1/responses` | POST | future gateway/public compatibility facade: inline data -> public JSON projection and optional annotated PNG |
 | `/v1/capabilities` | GET | authenticated static SAM2/candidate-view policy and schema |
 | `/healthz` | GET | process/event-loop health (always unauthenticated) |
 | `/readyz` | GET | engine readiness via injected provider; honest `not_ready` |
@@ -35,11 +43,22 @@ gates remain separate. No persistent listener is started by the package factory.
 The `/v2` paths implement only the [Triton Model Repository
 Extension](https://docs.nvidia.com/deeplearning/triton-inference-server/archives/triton-inference-server-2450/user-guide/docs/protocol/extension_model_repository.html)
 management vocabulary (`index`, `load`, `unload`) for the immutable `zap-it-1`
-holder. They do not implement KServe V2 tensor inference; `/v1/completions`
-remains the only inference contract. This deliberately does not claim the
+holder. They do not implement KServe V2 tensor inference. The supported
+inference surfaces are `/v1/completions` and `/v1/responses`; neither is a KServe
+V2 tensor inference endpoint. This deliberately does not claim the
 [KServe V2 inference protocol](https://kserve.github.io/website/docs/concepts/architecture/data-plane/v2-protocol).
 Load and unload return an empty HTTP 200 body only after their lifecycle work
 has completed.
+
+`/v1/responses` is documented in [RESPONSES-FACADE.md](RESPONSES-FACADE.md).
+It is a separate JSON transport over the same inference gate and executor, not
+an HTTP call through `/v1/completions`. The native multipart endpoint and its
+verbosity/JSON/ZIP private diagnostics remain unchanged.
+
+The native multipart endpoint is private operator/research/debug behavior and
+does not route through the gateway or define the general-public SLAIF contract.
+The Responses facade is the future gateway-facing/public compatibility boundary;
+its separate gateway implementation and public deployment remain later work.
 
 ## Explicit model control
 
@@ -446,8 +465,9 @@ process model is one Uvicorn process, workers=1, no fork after CUDA init.
 
 Strict-loopback deployments default to NO key. Setting
 `SLAIF_ZAP_IT_API_KEY` before start enables mandatory
-`Authorization: Bearer <key>` on `/v1/completions` and `/metrics` using
-constant-time comparison. Keys are never logged or echoed; health endpoints
+`Authorization: Bearer <key>` on `/v1/completions`, `/v1/responses`, and
+`/metrics` using constant-time comparison. `/v1/capabilities` always requires
+the same inference bearer. Keys are never logged or echoed; health endpoints
 stay open.
 
 Human-authorized private-LAN deployment sets
@@ -455,8 +475,9 @@ Human-authorized private-LAN deployment sets
 containing RFC1918 CIDR. Startup fails unless the inference key is at least 32
 characters. Wildcard, public, hostname and scope-mismatched binds are rejected.
 `/docs` and `/openapi.json` are disabled on that listener;
-`/v1/completions` and `/metrics` require the fixed bearer. TLS/WAN and
-multi-user authorization are not provided by this mode.
+`/v1/completions`, `/v1/responses`, `/v1/capabilities`, and `/metrics` require
+the fixed bearer. TLS/WAN and multi-user authorization are not provided by this
+mode.
 
 ## Errors
 

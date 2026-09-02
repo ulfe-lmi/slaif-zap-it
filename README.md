@@ -22,6 +22,20 @@ service accepts one image and one API-safe YAML configuration through
 verbosity levels. It is a ZAP-IT-specific multimodal contract, not a generic
 OpenAI text-completions implementation.
 
+It also provides a deliberately narrow, stateless, non-streaming
+`POST /v1/responses` facade for future gateway compatibility. It accepts one
+inline base64 image and one inline base64 YAML file, returns a canonical
+`zap-it.public.v1` JSON projection in `output_text`, and optionally appends the
+existing deterministic final annotated PNG for the sole supported
+`image_generation` declaration. It does not invoke a generative image model,
+support state/URLs/file IDs/hosted tools, or claim gateway/public deployment;
+see [the facade contract](docs/RESPONSES-FACADE.md).
+
+The `/v1/completions` route remains the native/private operator, research, and
+debugging API: it is not OpenAI Completions compatibility, not gateway-facing,
+and not the general-public SLAIF contract. The Responses facade is the future
+gateway/public compatibility surface pending separate gateway work.
+
 At L3, `annotated` remains the mask-only overlay. The final-stage
 `annotated-labelled` stream is a deterministic, Detectron2-free overlay whose
 labels and manifest instance numbers come from the final structured objects;

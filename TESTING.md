@@ -102,6 +102,10 @@ an explicit operational order creates and secures it.
   characters/tokens, sanitized `invalid_config` details, pre-SAM2 tokenizer
   rejection, L3 prompt accounting/winning indices, JSON/ZIP parity, and
   canonical routed BLIP3 `falsecategory` requirement;
+- narrow `/v1/responses` inline-data parser, strict unsupported-field/source/tool
+  errors, shared gate/executor, public projection determinism and object-record
+  parity, exact labelled PNG bytes, authenticated body-boundary behavior,
+  OpenAPI/capability agreement, and official `openai==3.7.0` typed SDK parsing;
 - operator-owned BLIP3 question capacity accepts 32 and 256, rejects invalid
   startup values, carries no request-YAML control, and maps planned over-limit
   work to structured `resource_limit` 413 before BLIP3 generation; uploaded

@@ -16,6 +16,13 @@ Both paths use the same algorithm adapters and in-memory core. Legacy helpers
 remain available where documented, but their mere presence does not make them a
 service capability.
 
+The native `/v1/completions` path is a private multipart operator, research,
+and debugging surface; it is intentionally not OpenAI Completions compatibility,
+the `slaif-api-gateway` backend contract, or the general-public SLAIF surface.
+The separate `/v1/responses` path is the narrow future gateway/public
+compatibility facade, with gateway integration and public deployment still
+requiring later cross-repository work.
+
 ## System overview
 
 ```text
@@ -170,6 +177,8 @@ FastAPI exposes:
 - `GET /readyz` — device and model-registry readiness;
 - `GET /metrics` — bounded Prometheus evidence;
 - `POST /v1/completions` — one image plus one YAML configuration.
+- `POST /v1/responses` — one inline image plus one inline YAML file projected
+  through the narrow, stateless `zap-it.public.v1` Responses facade.
 
 The optional fixed-model management subset also exposes `GET /v2`,
 `POST /v2/repository/index`, and fixed-name `load`/`unload` paths. These follow
@@ -193,7 +202,11 @@ cancelled operations settle in a stable sanitized state.
 The completion path enforces multipart cardinality, upload and decoded-image
 limits, YAML policy, host and shared-memory floors, one active inference,
 absolute deadlines, object/artifact/response bounds, optional bearer auth, and
-sanitized errors. The API returns no token-usage fiction; `usage` remains null.
+sanitized errors. The Responses adapter applies its own bounded JSON/data-URL
+parser and then enters this same decode/validation/readiness/gate/executor seam;
+it never calls the completion route or creates a second model registry. The API
+returns no token-usage fiction; native `usage` remains null and the facade
+omits usage entirely.
 
 ### Results and renderers
 
@@ -211,6 +224,12 @@ annotated overlays, warnings, timings, and provenance according to verbosity.
 `annotated-labelled` is an L3-only, deterministic, Detectron2-free final-object
 overlay with sanitized labels and exact instance IDs. JSON binary data uses
 bounded base64 descriptors; ZIP uses a deterministic manifest and names.
+
+The Responses facade reuses this renderer with fixed `alpha=0.5` and
+`show_confidence=false` only when its standard `image_generation` declaration
+is present. Its public projection reuses the private object-record builder but
+removes mask/RLE and all private diagnostics. It does not expose identity masks,
+candidate views, contact sheets, debug artifacts, ZIPs or runtime provenance.
 
 Post-filter diagnostics use optional canonical area, bbox, aspect-ratio, and
 border rules with equality retained and fixed first-reason precedence. Every

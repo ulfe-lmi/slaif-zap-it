@@ -11,6 +11,12 @@ bounded local research evidence, not a public/WAN, customer-data,
 production-release, SLA, accuracy, or commercial-license runbook. Geometry,
 panoptic, deployment and release gates remain separate.
 
+The native `/v1/completions` route documented below is the private operator,
+research, and debugging surface. It is not OpenAI Completions compatibility,
+not gateway-facing, and not the general-public SLAIF contract. The separate
+`/v1/responses` route is the future gateway/public compatibility facade; the
+gateway repository and public deployment remain later work.
+
 ## Before every activation
 
 Use the repo-owned `.venv-gpu` environment and verify the host without changing
@@ -144,6 +150,38 @@ file is shipped uninstalled; installing or enabling it is a deliberate operator
 choice and is not required by tests.
 
 ## Request smoke
+
+### Responses facade qualification
+
+The future compatibility surface is a separate, stateless JSON endpoint over
+the same one-slot inference authority:
+
+```text
+POST /v1/responses
+model=zap-it-1
+input=[one user message: one inline image data URL + one inline YAML data URL]
+tools=[] or [{"type":"image_generation"}]
+```
+
+Use the official pinned client after health, readiness, authenticated
+capabilities and the exact private-LAN listener have been checked:
+
+```bash
+.venv/bin/python scripts/qualify_responses.py \
+  --host "$SLAIF_ZAP_IT_HOST" --port "$SLAIF_ZAP_IT_PORT" \
+  --evidence-root "$SLAIF_ZAP_IT_TMP_ROOT"
+```
+
+The qualification validates the typed SDK `Response`, `output_text`, public
+projection, exactly one completed `image_generation_call`, strict base64 and
+PNG dimensions. It retains only bounded mode-0600 summaries/hashes below a
+mode-0700 `/dev/shm` directory and prints no key, YAML, prompt, answer or
+response body. A no-tool request is covered by the CPU/fake contract unless a
+protocol-only live uncertainty requires another inference. The facade never
+exposes native completion identity masks, RLE, candidate views, contact sheets,
+debug artifacts or ZIP members, and `image_generation` invokes no generative
+model. Do not claim `slaif-api-gateway` or public/WAN qualification; that path
+is unchanged and remains future work.
 
 The endpoint is the ZAP-IT-specific multipart contract, not generic OpenAI text
 completion compatibility:

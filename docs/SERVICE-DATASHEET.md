@@ -9,12 +9,43 @@ or claim of leak-proof operation.
 The service accepts one image and one hostile-but-validated YAML document and
 returns deterministic segmentation/classification artifacts through loopback or
 an explicitly authorized authenticated RFC1918 `POST /v1/completions` endpoint.
-It is a ZAP-IT multimodal contract, not generic
-OpenAI text-completion compatibility.
+This native endpoint is the private operator/research/debug contract: it is not
+generic OpenAI Completions compatibility, not the `slaif-api-gateway` backend
+contract, and not the general-public SLAIF surface.
+
+`POST /v1/responses` is the separate future gateway/public compatibility
+facade. It is stateless, non-streaming, and returns the bounded public JSON
+projection with an optional standard annotated PNG; gateway integration and
+public/WAN deployment are not claimed here.
 
 It does not provide public/WAN exposure, TLS, gateway integration, async jobs,
 history, persistence, training, multi-worker CUDA, Canny/Hough geometry activation,
 Detectron2 panoptic output, or customer-data handling.
+
+## Responses facade
+
+`POST /v1/responses` is a separate, stateless, non-streaming JSON transport for
+the future gateway surface. It accepts exactly one `user` message with one
+inline strict-base64 JPEG/PNG/WebP `input_image` and one inline strict-base64
+UTF-8 YAML `input_file`; the file name is a safe ASCII `.yaml`/`.yml` basename
+used only as metadata. The required model is `zap-it-1`, and only `store: false`,
+`stream: false`, `background: false`, and the optional standard
+`image_generation` declaration are supported. URLs, file IDs, text, state,
+hosted tools and extra fields are rejected before inference.
+
+The assistant `output_text` is canonical `zap-it.public.v1` JSON containing
+public final-object evidence without masks/RLE, private debug artifacts,
+runtime/GPU facts, paths, ZIPs or token usage. The image declaration appends
+one `image_generation_call` whose standard base64 result is the existing final
+annotated renderer at fixed `alpha=0.5` and `show_confidence=false`; it is not
+generative image output. The route shares the completion gate, executor,
+readiness, model holders and request limits. The derived encoded body cap and
+decoded limits are authenticated through `/v1/capabilities`.
+
+Responses errors use the OpenAI-shaped `message/type/param/code` body and put
+the opaque request ID in `x-request-id`. The official `openai==3.7.0` CPU and
+operator qualification uses typed SDK parsing. `slaif-api-gateway` is unchanged
+and its end-to-end Responses multimodal/image-generation path is not qualified.
 
 ## Model-control subset
 

@@ -28,6 +28,7 @@ from src.runtime.models import APPROVED_MODEL_SPECS
 from .envelope import SCHEMA_VERSION
 from .settings import SERVICE_MODEL_ID, ServiceSettings
 from .yaml_input import MAX_BLIP3_RULE_DEFINITIONS, service_config_leaf_paths
+from .responses import PUBLIC_SCHEMA_VERSION, responses_request_body_limit
 
 __all__ = [
     "CapabilityField",
@@ -36,6 +37,7 @@ __all__ = [
     "ConfigurationCapabilities",
     "DiagnosticArtifactCapability",
     "ResponseEvidenceCapability",
+    "ApiSurfaceMetadata",
     "CandidateViewCapabilityStage",
     "CandidateViewsCapability",
     "FixedControls",
@@ -119,6 +121,41 @@ class ResponseEvidenceCapability(BaseModel):
     levels: Dict[str, str]
     artifact_delivery: Dict[str, str]
     error_details: Dict[str, str]
+    api_surfaces: Dict[str, "ApiSurfaceMetadata"]
+
+
+class ApiSurfaceMetadata(BaseModel):
+    """Typed capability metadata for the two distinct HTTP surfaces."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    method: Literal["POST"]
+    path: str
+    purpose: str
+    classification: str
+    model_id: str
+    stateless: Literal[True] = True
+    non_streaming: Literal[True] = True
+    background: Literal[False] = False
+    store: Literal[False] = False
+    authentication: str
+    request_content_type: str
+    accepted_input_sources: List[str]
+    accepted_mime_types: List[str]
+    input_cardinality: str
+    supported_tools: List[str]
+    tool_meaning: str
+    output_types: List[str]
+    projection_version: str | None = None
+    token_usage: Literal["omitted"]
+    decoded_limits: Dict[str, int]
+    encoded_request_body_limit_bytes: int | None = None
+    response_limit_bytes: int
+    private_evidence: List[str]
+    gateway_qualification: str
+
+
+ResponseEvidenceCapability.model_rebuild()
 
 
 class FixedControls(BaseModel):
@@ -1050,6 +1087,92 @@ def build_capabilities(settings: ServiceSettings) -> Dict[str, Any]:
                     "invalid_config 400 details identify only safe class/index, stable reason, "
                     "measured count, actual type where relevant, duplicate first index and limit; "
                     "prompt text and tokenizer IDs are never returned."
+                ),
+            },
+            api_surfaces={
+                "completions": ApiSurfaceMetadata(
+                    method="POST",
+                    path="/v1/completions",
+                    purpose="native ZAP-IT single-image research and debug pipeline",
+                    classification="private multipart operator surface; not OpenAI compatibility",
+                    model_id=SERVICE_MODEL_ID,
+                    authentication="fixed bearer when configured; optional only in strict loopback development",
+                    request_content_type="multipart/form-data",
+                    accepted_input_sources=["one uploaded image", "one uploaded UTF-8 YAML file"],
+                    accepted_mime_types=[
+                        "image/jpeg",
+                        "image/png",
+                        "image/webp",
+                        "application/yaml",
+                    ],
+                    input_cardinality="exactly one image and one YAML file",
+                    supported_tools=[],
+                    tool_meaning="none",
+                    output_types=["native completion envelope", "JSON or ZIP private artifacts"],
+                    projection_version=None,
+                    token_usage="omitted",
+                    decoded_limits={
+                        "image_bytes": settings.max_image_upload_bytes,
+                        "config_bytes": settings.max_config_upload_bytes,
+                        "pixels": settings.max_decoded_pixels,
+                    },
+                    encoded_request_body_limit_bytes=settings.max_request_bytes,
+                    response_limit_bytes=settings.max_response_bytes,
+                    private_evidence=[
+                        "identity masks",
+                        "mask RLE",
+                        "candidate views",
+                        "debug artifacts",
+                    ],
+                    gateway_qualification="not a gateway-facing contract",
+                ),
+                "responses": ApiSurfaceMetadata(
+                    method="POST",
+                    path="/v1/responses",
+                    purpose="narrow OpenAI Responses-compatible future gateway facade",
+                    classification="stateless non-streaming public projection adapter",
+                    model_id=SERVICE_MODEL_ID,
+                    authentication="fixed deployment bearer; strict loopback development remains key-optional",
+                    request_content_type="application/json",
+                    accepted_input_sources=[
+                        "inline base64 image data URL",
+                        "inline base64 YAML data URL",
+                    ],
+                    accepted_mime_types=[
+                        "image/jpeg",
+                        "image/png",
+                        "image/webp",
+                        "application/yaml",
+                        "application/x-yaml",
+                        "text/yaml",
+                        "text/x-yaml",
+                        "text/plain",
+                    ],
+                    input_cardinality="exactly one user message with one image and one YAML file",
+                    supported_tools=["image_generation"],
+                    tool_meaning="append the canonical final annotated PNG; no generative model is invoked",
+                    output_types=["message.output_text", "optional image_generation_call"],
+                    projection_version=PUBLIC_SCHEMA_VERSION,
+                    token_usage="omitted",
+                    decoded_limits={
+                        "image_bytes": settings.max_image_upload_bytes,
+                        "config_bytes": settings.max_config_upload_bytes,
+                        "pixels": settings.max_decoded_pixels,
+                    },
+                    encoded_request_body_limit_bytes=responses_request_body_limit(settings),
+                    response_limit_bytes=settings.max_response_bytes,
+                    private_evidence=[
+                        "identity masks",
+                        "mask RLE",
+                        "candidate views",
+                        "contact sheets",
+                        "debug artifacts",
+                        "ZIP members",
+                    ],
+                    gateway_qualification=(
+                        "not end-to-end qualified; slaif-api-gateway lacks its canonical "
+                        "Responses multimodal/image-generation path"
+                    ),
                 ),
             },
         ),
