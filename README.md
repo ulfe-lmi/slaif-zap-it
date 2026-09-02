@@ -31,6 +31,11 @@ existing deterministic final annotated PNG for the sole supported
 support state/URLs/file IDs/hosted tools, or claim gateway/public deployment;
 see [the facade contract](docs/RESPONSES-FACADE.md).
 
+The `/v1/completions` route remains the native/private operator, research, and
+debugging API: it is not OpenAI Completions compatibility, not gateway-facing,
+and not the general-public SLAIF contract. The Responses facade is the future
+gateway/public compatibility surface pending separate gateway work.
+
 At L3, `annotated` remains the mask-only overlay. The final-stage
 `annotated-labelled` stream is a deterministic, Detectron2-free overlay whose
 labels and manifest instance numbers come from the final structured objects;

@@ -16,6 +16,13 @@ Both paths use the same algorithm adapters and in-memory core. Legacy helpers
 remain available where documented, but their mere presence does not make them a
 service capability.
 
+The native `/v1/completions` path is a private multipart operator, research,
+and debugging surface; it is intentionally not OpenAI Completions compatibility,
+the `slaif-api-gateway` backend contract, or the general-public SLAIF surface.
+The separate `/v1/responses` path is the narrow future gateway/public
+compatibility facade, with gateway integration and public deployment still
+requiring later cross-repository work.
+
 ## System overview
 
 ```text

@@ -11,6 +11,12 @@ bounded local research evidence, not a public/WAN, customer-data,
 production-release, SLA, accuracy, or commercial-license runbook. Geometry,
 panoptic, deployment and release gates remain separate.
 
+The native `/v1/completions` route documented below is the private operator,
+research, and debugging surface. It is not OpenAI Completions compatibility,
+not gateway-facing, and not the general-public SLAIF contract. The separate
+`/v1/responses` route is the future gateway/public compatibility facade; the
+gateway repository and public deployment remain later work.
+
 ## Before every activation
 
 Use the repo-owned `.venv-gpu` environment and verify the host without changing

@@ -9,8 +9,14 @@ or claim of leak-proof operation.
 The service accepts one image and one hostile-but-validated YAML document and
 returns deterministic segmentation/classification artifacts through loopback or
 an explicitly authorized authenticated RFC1918 `POST /v1/completions` endpoint.
-It is a ZAP-IT multimodal contract, not generic
-OpenAI text-completion compatibility.
+This native endpoint is the private operator/research/debug contract: it is not
+generic OpenAI Completions compatibility, not the `slaif-api-gateway` backend
+contract, and not the general-public SLAIF surface.
+
+`POST /v1/responses` is the separate future gateway/public compatibility
+facade. It is stateless, non-streaming, and returns the bounded public JSON
+projection with an optional standard annotated PNG; gateway integration and
+public/WAN deployment are not claimed here.
 
 It does not provide public/WAN exposure, TLS, gateway integration, async jobs,
 history, persistence, training, multi-worker CUDA, Canny/Hough geometry activation,
