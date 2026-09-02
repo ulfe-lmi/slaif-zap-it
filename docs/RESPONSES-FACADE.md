@@ -79,13 +79,18 @@ contact sheets and private visualization streams. Equal decoded image,
 effective YAML, fixed model outputs and renderer version yield equal projection
 text. Outer protocol IDs and timestamps intentionally do not.
 
-When the image tool is present, the response appends exactly one completed
+When the image tool is present, the successful response echoes exactly
+`tools: [{"type":"image_generation"}]`, sets `tool_choice: "auto"`, retains
+`parallel_tool_calls: false`, and appends exactly one completed
 `image_generation_call`. Its `result` is standard base64 PNG (not a data URL),
 created by the existing `render_annotated_labelled` renderer with
 `alpha=0.5` and `show_confidence=false`, then encoded by the shared PNG
-encoder. No-tool responses have no image item. Raw, encoded and complete
-response budgets are checked; an essential PNG that does not fit returns the
-typed `response_too_large` error rather than being silently omitted.
+encoder. Without the tool declaration, successful responses retain
+`tools: []`, `tool_choice: "none"`, and `parallel_tool_calls: false` and have
+no image item. The maintained response schema rejects mismatched tool/output
+combinations. Raw, encoded and complete response budgets are checked; an
+essential PNG that does not fit returns the typed `response_too_large` error
+rather than being silently omitted.
 
 Errors use the bounded OpenAI-shaped form:
 
