@@ -10,6 +10,7 @@ module or helper is not evidence that the live service produces its output.
 
 | Source or output | Current behavior | Service classification |
 |---|---|---|
+| OpenAI Responses facade | Narrow inline-data JSON adapter over the same typed pipeline; optional tool returns the final labelled PNG | Public `zap-it.public.v1` projection only; no masks/RLE/debug/ZIP/runtime facts or token usage |
 | Image decode, RGB conversion, dimensions | JPEG/PNG/WebP, bounded header and pixel decode | Public L0-L3 metadata and input guard |
 | ROI crop and resize | Core preprocessing; masks are remapped to original coordinates | Public L3 stage status/provenance; object coordinates at L2 |
 | SAM2 candidate masks and quality fields | Candidate masks are filtered and ordered | Public L2 fields when produced; bounded L3 counts/status |

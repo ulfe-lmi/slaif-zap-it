@@ -62,6 +62,20 @@ __all__ = [
     "ErrorBody",
     "ErrorEnvelope",
     "HealthStatus",
+    "ResponsesImageInput",
+    "ResponsesFileInput",
+    "ResponsesUserMessage",
+    "ResponsesTool",
+    "ResponsesRequest",
+    "PublicObjectRecord",
+    "PublicSam2Projection",
+    "PublicProjection",
+    "ResponsesOutputText",
+    "ResponsesMessage",
+    "ResponsesImageGenerationCall",
+    "ResponsesResponse",
+    "OpenAIErrorBody",
+    "OpenAIErrorEnvelope",
 ]
 
 
@@ -1035,3 +1049,194 @@ class ErrorEnvelope(BaseModel):
 class HealthStatus(BaseModel):
     status: str
     uptime_s: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Narrow OpenAI Responses-compatible public facade
+# ---------------------------------------------------------------------------
+
+
+class ResponsesImageInput(BaseModel):
+    """The only supported Responses image input: an inline base64 data URL."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["input_image"]
+    detail: Literal["auto"]
+    image_url: str = Field(min_length=1, max_length=64 * 1024 * 1024)
+
+
+class ResponsesFileInput(BaseModel):
+    """The only supported Responses file input: an inline YAML data URL."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["input_file"]
+    filename: str = Field(min_length=1, max_length=128)
+    file_data: str = Field(min_length=1, max_length=2 * 1024 * 1024)
+
+
+class ResponsesUserMessage(BaseModel):
+    """One ordinary user message containing exactly one image and YAML file."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["message"] = "message"
+    role: Literal["user"]
+    content: List[Union[ResponsesImageInput, ResponsesFileInput]] = Field(
+        min_length=2, max_length=2
+    )
+
+
+class ResponsesTool(BaseModel):
+    """The service-specific standard image-generation declaration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["image_generation"]
+
+
+class ResponsesRequest(BaseModel):
+    """Strict OpenAPI description of the accepted request subset."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: Literal[SERVICE_MODEL_ID]
+    input: List[ResponsesUserMessage] = Field(min_length=1, max_length=1)
+    tools: Optional[List[ResponsesTool]] = Field(default=None, max_length=1)
+    store: Optional[bool] = Field(default=None, strict=True)
+    stream: Optional[bool] = Field(default=None, strict=True)
+    background: Optional[bool] = Field(default=None, strict=True)
+
+    @model_validator(mode="after")
+    def validate_disabled_options(self) -> "ResponsesRequest":
+        for field_name in ("store", "stream", "background"):
+            if getattr(self, field_name) is True:
+                raise ValueError(f"{field_name}=true is unsupported")
+        return self
+
+
+class PublicObjectRecord(BaseModel):
+    """Public projection of the private L2 object record, without mask/RLE."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    instance_id: int = Field(ge=1)
+    source_candidate_id: int = Field(ge=1)
+    filtered_index: int = Field(ge=0)
+    class_id: int = Field(ge=0)
+    label: Optional[str] = None
+    bbox_xyxy: List[int]
+    bbox_normalized: List[float]
+    area_px: int = Field(ge=0)
+    centroid_rc: List[float]
+    predicted_iou: Optional[float] = None
+    stability_score: Optional[float] = None
+    clip_score: Optional[float] = None
+    clip_scores: Optional[Dict[str, float]] = Field(default=None, max_length=32)
+    clip_routing: Optional[ClipRoutingDiagnostic] = None
+    blip3_answer: Optional[str] = None
+    blip3_verification: Optional[Blip3VerificationRecord] = None
+    blip3_verifications: Optional[List[Blip3VerificationRecord]] = None
+    geometry: Optional[Dict[str, Any]] = None
+    warnings: Optional[List[str]] = None
+
+
+class PublicSam2Projection(BaseModel):
+    """Bounded SAM2 facts retained in the public deterministic projection."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    requested: Dict[str, Any]
+    effective: Dict[str, Any]
+    sources: Dict[str, str]
+    selected_profile: Optional[str] = None
+    estimated_prompt_count: int = Field(ge=0)
+    estimated_mask_prediction_count: int = Field(ge=0)
+    actual_candidate_count: int = Field(ge=0)
+    resource_warnings: List[str] = Field(max_length=32)
+
+
+class PublicProjection(BaseModel):
+    """Versioned, deterministic result projection for the Responses facade."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    schema_version: Literal["zap-it.public.v1"]
+    model: str
+    config_digest: str = Field(min_length=64, max_length=64)
+    image: Dict[str, int]
+    class_mapping: Dict[str, int]
+    sam2: PublicSam2Projection
+    candidate_counts: Dict[str, int]
+    candidate_views: Dict[str, Any]
+    clip_routing: Dict[str, Any]
+    clip_prompts: Optional[ClipPromptMetadata] = None
+    objects: List[PublicObjectRecord] = Field(max_length=256)
+    warnings: List[str] = Field(max_length=32)
+
+
+class ResponsesOutputText(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["output_text"]
+    text: str
+    annotations: List[Any] = Field(default_factory=list, max_length=0)
+
+
+class ResponsesMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(pattern=r"^msg_[A-Za-z0-9_-]{8,64}$")
+    type: Literal["message"]
+    status: Literal["completed"]
+    role: Literal["assistant"]
+    content: List[ResponsesOutputText] = Field(min_length=1, max_length=1)
+
+
+class ResponsesImageGenerationCall(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(pattern=r"^ig_[A-Za-z0-9_-]{8,64}$")
+    type: Literal["image_generation_call"]
+    status: Literal["completed"]
+    result: str = Field(min_length=1)
+
+
+class ResponsesResponse(BaseModel):
+    """Successful response shape accepted by the official OpenAI SDK."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    id: str = Field(pattern=r"^resp_[A-Za-z0-9_-]{8,64}$")
+    object: Literal["response"]
+    created_at: float = Field(ge=0)
+    completed_at: float = Field(ge=0)
+    status: Literal["completed"]
+    error: None = None
+    incomplete_details: None = None
+    instructions: None = None
+    model: str
+    output: List[Union[ResponsesMessage, ResponsesImageGenerationCall]] = Field(
+        min_length=1, max_length=2
+    )
+    parallel_tool_calls: Literal[False] = False
+    tool_choice: Literal["none"] = "none"
+    tools: List[Any] = Field(default_factory=list, max_length=0)
+
+
+class OpenAIErrorBody(BaseModel):
+    """Bounded OpenAI-shaped error body for the Responses facade."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(min_length=1, max_length=256)
+    type: Literal["invalid_request_error", "authentication_error", "server_error"]
+    param: Optional[str] = Field(default=None, max_length=128)
+    code: str = Field(min_length=1, max_length=64)
+
+
+class OpenAIErrorEnvelope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    error: OpenAIErrorBody

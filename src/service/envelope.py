@@ -37,6 +37,8 @@ __all__ = [
     "build_completion_json",
     "build_completion_zip",
     "bound_json_size",
+    "build_object_record",
+    "encode_png",
 ]
 
 SCHEMA_VERSION = "zap-it.v1"
@@ -111,12 +113,17 @@ def _artifact(
     return descriptor
 
 
-def _encode_png(array: np.ndarray) -> bytes:
+def encode_png(array: np.ndarray) -> bytes:
     if Image is None:  # pragma: no cover
         raise RuntimeError("Pillow is required to encode PNG artifacts.")
     buffer = io.BytesIO()
     Image.fromarray(array).save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+# Existing CPU tests and compatibility adapters import this private name;
+# retain the alias while exposing the shared encoder to the new facade.
+_encode_png = encode_png
 
 
 def _check_absolute_deadline(deadline_monotonic: Optional[float]) -> None:
@@ -128,7 +135,7 @@ def _check_deadline(context: ResponseContext) -> None:
     _check_absolute_deadline(context.deadline_monotonic)
 
 
-def _object_record(
+def build_object_record(
     obj: ObjectResult,
     width: int,
     height: int,
@@ -226,7 +233,7 @@ def _stored_sink_artifact(stored: StoredArtifact) -> _RawArtifact:
             return _RawArtifact(
                 stored.name,
                 "image/png",
-                _encode_png(stored.array),
+                encode_png(stored.array),
                 stored.visualization_id,
             )
         if stored.kind == "record":
@@ -314,7 +321,7 @@ def _collect_raw_artifacts(
                 if context.service_safe_artifact_names
                 else str(key).replace("\\", "_").strip("/.") or "stream"
             )
-            payload = _encode_png(array)
+            payload = encode_png(array)
             name = f"visualization/{safe_key}.png"
             visualization_id = str(key) if context.service_safe_artifact_names else None
             status = ledger.offer(
@@ -430,7 +437,7 @@ def _prepare(
     if context.verbosity >= 2:
         _check_deadline(context)
         service_meta["objects"] = [
-            _object_record(
+            build_object_record(
                 obj,
                 result.image_width,
                 result.image_height,

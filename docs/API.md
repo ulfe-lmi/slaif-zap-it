@@ -23,6 +23,7 @@ gates remain separate. No persistent listener is started by the package factory.
 | Path | Method | Purpose |
 |---|---|---|
 | `/v1/completions` | POST | one image + one YAML config -> one result |
+| `/v1/responses` | POST | narrow inline-data Responses facade -> public JSON projection and optional annotated PNG |
 | `/v1/capabilities` | GET | authenticated static SAM2/candidate-view policy and schema |
 | `/healthz` | GET | process/event-loop health (always unauthenticated) |
 | `/readyz` | GET | engine readiness via injected provider; honest `not_ready` |
@@ -40,6 +41,11 @@ remains the only inference contract. This deliberately does not claim the
 [KServe V2 inference protocol](https://kserve.github.io/website/docs/concepts/architecture/data-plane/v2-protocol).
 Load and unload return an empty HTTP 200 body only after their lifecycle work
 has completed.
+
+`/v1/responses` is documented in [RESPONSES-FACADE.md](RESPONSES-FACADE.md).
+It is a separate JSON transport over the same inference gate and executor, not
+an HTTP call through `/v1/completions`. The native multipart endpoint and its
+verbosity/JSON/ZIP private diagnostics remain unchanged.
 
 ## Explicit model control
 

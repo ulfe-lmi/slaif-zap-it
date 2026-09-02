@@ -18,7 +18,7 @@ operator cache assets and are never committed or redistributed.
 | pyyaml 6.0.2 | YAML config parsing | MIT |
 | fastapi, python-multipart, uvicorn | service transport | MIT / Apache-2.0 / BSD-3-Clause |
 | prometheus-client 0.21.1 | metrics | Apache-2.0 |
-| pytest, pytest-cov, coverage, ruff, build, detect-secrets | CPU/release tooling | MIT / MIT / Apache-2.0 / MIT / MIT / Apache-2.0 |
+| pytest, pytest-cov, coverage, ruff, build, detect-secrets, openai 3.7.0 | CPU/release tooling and official Responses qualification client; SDK is dev-only | MIT / MIT / Apache-2.0 / MIT / MIT / Apache-2.0 / MIT |
 
 ### GPU/runtime stack (operator-managed lock)
 

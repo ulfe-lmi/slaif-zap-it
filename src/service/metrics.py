@@ -27,6 +27,12 @@ class ServiceMetrics:
             ("verbosity", "response_format"),
             registry=self.registry,
         )
+        self.responses = Counter(
+            "zap_it_responses_total",
+            "Responses-facade outcomes by bounded tool dimension.",
+            ("outcome", "image_generation"),
+            registry=self.registry,
+        )
         self.busy = Counter("zap_it_busy_total", "Busy admissions.", registry=self.registry)
         self.not_ready = Counter(
             "zap_it_not_ready_total", "Not-ready responses.", registry=self.registry
@@ -195,6 +201,25 @@ class ServiceMetrics:
         self.response_bytes.observe(response_bytes)
         self.object_count.observe(objects)
         self.artifact_count.observe(artifacts)
+
+    def observe_response_success(
+        self, *, image_generation: bool, response_bytes: int, objects: int
+    ) -> None:
+        """Record one public Responses success without request-derived labels."""
+        self.requests.labels(outcome="responses_success").inc()
+        self.responses.labels(
+            outcome="success", image_generation=str(bool(image_generation)).lower()
+        ).inc()
+        self.response_bytes.observe(response_bytes)
+        self.object_count.observe(objects)
+        self.artifact_count.observe(1 if image_generation else 0)
+
+    def observe_response_error(self, *, image_generation: bool = False) -> None:
+        """Record one public Responses failure with a finite tool dimension."""
+        self.requests.labels(outcome="responses_error").inc()
+        self.responses.labels(
+            outcome="error", image_generation=str(bool(image_generation)).lower()
+        ).inc()
 
     def reset_gpu_peaks(self) -> None:
         """Start a per-request logical CUDA peak window when available."""

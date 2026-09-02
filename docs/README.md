@@ -16,13 +16,14 @@ not represented as memory-blocked work.
 | New users | [Project README](../README.md) | Capabilities, status, and quickstarts |
 | Installers | [Installation](../INSTALL.md) | CPU tooling, GPU runtime, models, and service install |
 | Batch users | [Configuration reference](CONFIG.md) | YAML fields for CLI and service-safe requests |
-| API clients | [HTTP API](API.md) | Multipart request, response levels, limits, and errors |
+| API clients | [HTTP API](API.md) | Native multipart and Responses-facade requests, limits, and errors |
 | Operators | [Runbook](RUNBOOK.md) | Preflight, start, health, smoke, stop, and rollback |
 | Reviewers | [Service datasheet](SERVICE-DATASHEET.md) | Supported scope, measured evidence, and limitations |
 
 ## Design and behavior
 
 - [Architecture](../ARCHITECTURE.md) — current component and trust boundaries.
+- [Responses facade](RESPONSES-FACADE.md) — narrow official-SDK-compatible JSON/image projection.
 - [Core library](CORE.md) — typed single-image pipeline and deterministic outputs.
 - [Algorithms](ALGORITHMS.md) — SAM2, CLIP, BLIP3, filtering, rendering, and YOLO.
 - [Output parity](OUTPUT-PARITY.md) — current service, CLI-only, and unsupported outputs.

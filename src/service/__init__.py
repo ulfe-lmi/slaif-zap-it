@@ -1,10 +1,13 @@
-"""HTTP service contract for ZAP-IT.
+"""HTTP service contracts for ZAP-IT.
 
 The service exposes ``POST /v1/completions`` with strict multipart parsing,
 hostile-input validation, monotonic verbosity levels, JSON/ZIP responses,
 stable sanitized errors, bounded concurrency, optional API-key auth and
-health/readiness endpoints. Explicit model management is a fixed-model
-KServe/Triton repository-extension subset, not V2 tensor inference.
+health/readiness endpoints. ``POST /v1/responses`` is a deliberately narrow,
+stateless OpenAI Responses-compatible JSON facade over the same inference
+authority; it is not a generic OpenAI model or gateway integration. Explicit
+model management is a fixed-model KServe/Triton repository-extension subset,
+not V2 tensor inference.
 """
 
 from .app import ReadyState, create_app, create_default_app
