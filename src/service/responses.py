@@ -415,11 +415,6 @@ def build_public_projection(
             mask_rle=None,
         )
         record.pop("mask_rle", None)
-        routing = record.get("clip_routing")
-        if isinstance(routing, dict):
-            # Candidate-view details have their own private L3 records and
-            # are not part of the public routing projection.
-            routing.pop("crop_metadata", None)
         public_objects.append(record)
     effective_clip_prompt_metadata = (
         getattr(result, "clip_prompt_metadata", None) or clip_prompt_metadata or None
