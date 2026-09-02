@@ -1221,8 +1221,40 @@ class ResponsesResponse(BaseModel):
         min_length=1, max_length=2
     )
     parallel_tool_calls: Literal[False] = False
-    tool_choice: Literal["none"] = "none"
-    tools: List[Any] = Field(default_factory=list, max_length=0)
+    tool_choice: Literal["none", "auto"] = Field(
+        default="none",
+        description=(
+            "Effective tool-selection policy: none for message-only responses, "
+            "auto when the image-generation tool is declared and selected"
+        ),
+    )
+    tools: List[ResponsesTool] = Field(
+        default_factory=list,
+        max_length=1,
+        description="The optional, bounded image-generation tool declaration echoed by the service",
+    )
+
+    @model_validator(mode="after")
+    def validate_tool_output_consistency(self) -> "ResponsesResponse":
+        assistant_messages = [item for item in self.output if isinstance(item, ResponsesMessage)]
+        image_calls = [
+            item for item in self.output if isinstance(item, ResponsesImageGenerationCall)
+        ]
+        if len(assistant_messages) != 1:
+            raise ValueError("successful responses require exactly one assistant message")
+        declared_image_tools = [tool for tool in self.tools if tool.type == "image_generation"]
+        if len(image_calls) > 1:
+            raise ValueError("at most one image-generation output call is supported")
+        if self.tool_choice == "none":
+            if self.tools or image_calls:
+                raise ValueError("tool_choice=none requires no tools or image-generation call")
+        elif len(declared_image_tools) != 1 or len(image_calls) != 1:
+            raise ValueError("tool_choice=auto requires one image-generation tool and output call")
+        if self.tools and len(declared_image_tools) != len(self.tools):
+            raise ValueError("only the image-generation tool is supported")
+        if bool(self.tools) != bool(image_calls):
+            raise ValueError("declared image-generation tool and output call must agree")
+        return self
 
 
 class OpenAIErrorBody(BaseModel):

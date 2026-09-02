@@ -54,6 +54,11 @@ has completed.
 It is a separate JSON transport over the same inference gate and executor, not
 an HTTP call through `/v1/completions`. The native multipart endpoint and its
 verbosity/JSON/ZIP private diagnostics remain unchanged.
+Successful Responses metadata is conditional: a declared
+`image_generation` tool is echoed with `tool_choice: "auto"` and exactly one
+completed image-generation call, while a response without that declaration
+uses `tools: []` and `tool_choice: "none"`; both retain
+`parallel_tool_calls: false`.
 
 The native multipart endpoint is private operator/research/debug behavior and
 does not route through the gateway or define the general-public SLAIF contract.

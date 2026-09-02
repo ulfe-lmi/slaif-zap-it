@@ -99,8 +99,13 @@ def qualify(host: str, port: int, evidence_root: str, output_png: str | None) ->
     projection = json.loads(response.output_text)
     if projection.get("schema_version") != "zap-it.public.v1":
         raise RuntimeError("public projection version mismatch")
+    if response.tool_choice != "auto":
+        raise RuntimeError("effective tool-choice metadata mismatch")
+    response_tools = list(response.tools)
+    if len(response_tools) != 1 or response_tools[0].type != "image_generation":
+        raise RuntimeError("echoed image-generation tool metadata mismatch")
     image_calls = [item for item in response.output if item.type == "image_generation_call"]
-    if len(image_calls) != 1 or not image_calls[0].result:
+    if len(image_calls) != 1 or image_calls[0].status != "completed" or not image_calls[0].result:
         raise RuntimeError("expected exactly one completed image-generation output item")
     png_bytes = base64.b64decode(image_calls[0].result, validate=True)
     with Image.open(io.BytesIO(png_bytes)) as decoded:
@@ -111,6 +116,9 @@ def qualify(host: str, port: int, evidence_root: str, output_png: str | None) ->
         "sdk_version": "3.7.0",
         "response_object": response.object,
         "response_status": response.status,
+        "tool_choice": response.tool_choice,
+        "response_tool_count": len(response_tools),
+        "response_tool_types": [tool.type for tool in response_tools],
         "object_count": len(projection.get("objects", [])),
         "image_call_count": len(image_calls),
         "projection_bytes": len(response.output_text.encode("utf-8")),

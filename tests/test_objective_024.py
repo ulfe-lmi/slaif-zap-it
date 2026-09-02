@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from openai import OpenAI
 from openai.types.responses import Response as SDKResponse
 from PIL import Image
+from pydantic import ValidationError
 
 from modules.visualizer import render_annotated_labelled
 from src.core.config import CoreConfig
@@ -162,10 +163,16 @@ def test_success_envelopes_have_bounded_unique_protocol_ids_and_timestamps():
     assert first["created_at"] <= first["completed_at"]
 
 
-def test_tool_controls_exactly_one_canonical_png_output_and_no_tool_has_none():
+def test_tool_controls_exactly_one_canonical_png_output_and_truthful_metadata():
     client, _ = _client()
     no_tool = _post(client).json()
     with_tool = _post(client, tool=True).json()
+    assert no_tool["tools"] == []
+    assert no_tool["tool_choice"] == "none"
+    assert no_tool["parallel_tool_calls"] is False
+    assert with_tool["tools"] == [{"type": "image_generation"}]
+    assert with_tool["tool_choice"] == "auto"
+    assert with_tool["parallel_tool_calls"] is False
     assert [item["type"] for item in no_tool["output"]] == ["message"]
     assert [item["type"] for item in with_tool["output"]] == [
         "message",
@@ -179,6 +186,27 @@ def test_tool_controls_exactly_one_canonical_png_output_and_no_tool_has_none():
     with Image.open(io.BytesIO(png)) as decoded:
         assert decoded.format == "PNG"
         assert decoded.size == (32, 24)
+
+
+def test_response_schema_rejects_mismatched_tool_and_output_metadata():
+    client, _ = _client()
+    no_tool = _post(client).json()
+    with_tool = _post(client, tool=True).json()
+
+    image_call_with_no_tool_metadata = json.loads(json.dumps(with_tool))
+    image_call_with_no_tool_metadata["tool_choice"] = "none"
+    image_call_with_no_tool_metadata["tools"] = []
+    with pytest.raises(ValidationError):
+        ResponsesResponse.model_validate(image_call_with_no_tool_metadata)
+
+    declared_tool_without_image_call = json.loads(json.dumps(no_tool))
+    declared_tool_without_image_call["tool_choice"] = "auto"
+    declared_tool_without_image_call["tools"] = [{"type": "image_generation"}]
+    with pytest.raises(ValidationError):
+        ResponsesResponse.model_validate(declared_tool_without_image_call)
+
+    ResponsesResponse.model_validate(no_tool)
+    ResponsesResponse.model_validate(with_tool)
 
 
 def test_tool_png_matches_existing_renderer_and_shared_encoder():
@@ -576,6 +604,12 @@ def test_openapi_and_capabilities_describe_both_distinct_surfaces():
     assert "ResponsesRequest" in openapi["components"]["schemas"]
     assert "ResponsesResponse" in openapi["components"]["schemas"]
     assert "OpenAIErrorEnvelope" in openapi["components"]["schemas"]
+    response_schema = openapi["components"]["schemas"]["ResponsesResponse"]
+    assert response_schema["properties"]["tool_choice"]["enum"] == ["none", "auto"]
+    assert response_schema["properties"]["tools"]["maxItems"] == 1
+    assert response_schema["properties"]["tools"]["items"] == {
+        "$ref": "#/components/schemas/ResponsesTool"
+    }
     response_schema = openapi["paths"]["/v1/responses"]["post"]
     assert response_schema["requestBody"]["content"]["application/json"]
     capabilities = client.get("/v1/capabilities", headers={"authorization": "Bearer " + "k" * 32})
@@ -620,6 +654,9 @@ def test_official_sdk_serializes_request_and_parses_typed_response_and_png():
     assert isinstance(response, SDKResponse)
     assert response.object == "response"
     assert response.status == "completed"
+    assert response.tool_choice == "auto"
+    assert len(response.tools) == 1
+    assert response.tools[0].type == "image_generation"
     projection = json.loads(response.output_text)
     assert projection["schema_version"] == PUBLIC_SCHEMA_VERSION
     calls = [item for item in response.output if item.type == "image_generation_call"]

@@ -538,8 +538,8 @@ def build_responses_response(
         "model": model_id,
         "output": output,
         "parallel_tool_calls": False,
-        "tool_choice": "none",
-        "tools": [],
+        "tool_choice": "auto" if image_generation else "none",
+        "tools": ([{"type": "image_generation"}] if image_generation else []),
     }
     ResponsesResponse.model_validate(response)
     encoded_size = len(
