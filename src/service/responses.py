@@ -368,7 +368,7 @@ def parse_responses_request(value: Any, settings: ServiceSettings) -> ParsedResp
 
 def _bounded_warning(value: Any) -> str:
     text = str(value)
-    text = " ".join(character if ord(character) >= 32 else " " for character in text)
+    text = "".join(character if ord(character) >= 32 else " " for character in text)
     return text[:256]
 
 

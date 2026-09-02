@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from dataclasses import replace
 import hashlib
 import io
 import json
@@ -20,12 +21,14 @@ from PIL import Image
 from pydantic import ValidationError
 
 from modules.visualizer import render_annotated_labelled
-from src.core.config import CoreConfig
+from src.core.config import CoreConfig, config_digest
 from src.service import ReadyState, ServiceSettings, create_app
 from src.service.envelope import encode_png
 from src.service.fake_engine import FakeEngine
 from src.service.responses import (
     PUBLIC_SCHEMA_VERSION,
+    _bounded_warning,
+    build_public_projection,
     parse_responses_request,
     responses_request_body_limit,
 )
@@ -90,6 +93,66 @@ def _client(engine: FakeEngine | None = None, settings: ServiceSettings | None =
 
 def _post(client: TestClient, *, tool: bool = False, config: bytes = CONFIG_BYTES):
     return client.post("/v1/responses", json=_body(tool=tool, config=config))
+
+
+def test_bounded_warning_preserves_printable_controls_and_limit():
+    assert _bounded_warning("normal warning: A/B 123") == "normal warning: A/B 123"
+    assert _bounded_warning("left\nmiddle\ttab\x00nul\x1funit") == ("left middle tab nul unit")
+    assert _bounded_warning(123) == "123"
+    long_warning = "a" * 300
+    assert _bounded_warning(long_warning) == long_warning[:256]
+    assert len(_bounded_warning(long_warning)) == 256
+
+
+def test_public_projection_sanitizes_top_level_and_sam2_resource_warnings():
+    validated = parse_hostile_config(CONFIG_BYTES, verbosity=2, settings=ServiceSettings())
+    config = CoreConfig.from_mapping(validated.effective_mapping)
+    outcome = FakeEngine()(
+        np.array(Image.open(io.BytesIO(IMAGE_BYTES)).convert("RGB"), dtype=np.uint8),
+        config,
+        verbosity=2,
+        class_labels=list(validated.class_labels),
+    )
+    outcome = replace(
+        outcome,
+        result=replace(
+            outcome.result,
+            warnings=("top\nlevel",),
+            sam2_metadata={"resource_warnings": ["resource\twarning"]},
+        ),
+    )
+    projection = build_public_projection(
+        outcome,
+        model_id="zap-it-1",
+        config_digest=config_digest(config),
+        class_mapping={"goat": 0},
+        candidate_views={},
+        clip_routing={},
+    )
+    assert projection["warnings"] == ["top level"]
+    assert projection["sam2"]["resource_warnings"] == ["resource warning"]
+
+
+@pytest.mark.parametrize(
+    ("config", "expected_warning"),
+    [
+        (
+            CONFIG_BYTES + b"postsam2processing:\n  debug: true\n",
+            "debug flag postsam2processing.debug ignored at verbosity below 3",
+        ),
+        (
+            CONFIG_BYTES + b"diagnostic_artifacts:\n  stages: [sam2]\n",
+            "diagnostic_artifacts selection is valid but not applied below verbosity 3",
+        ),
+    ],
+)
+def test_responses_warning_projection_preserves_complete_config_warning(config, expected_warning):
+    client, _ = _client()
+    response = _post(client, config=config)
+    assert response.status_code == 200, response.text
+    projection = json.loads(response.json()["output"][0]["content"][0]["text"])
+    assert expected_warning in projection["warnings"]
+    assert " ".join(expected_warning) not in projection["warnings"]
 
 
 def test_canonical_request_uses_shared_engine_path_and_fixed_service_policy():
