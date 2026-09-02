@@ -257,7 +257,7 @@ def parse_responses_request(value: Any, settings: ServiceSettings) -> ParsedResp
     if message.get("role") != "user":
         raise _invalid("input message role must be 'user'", param="input[0].role")
     content = message.get("content")
-    if type(content) is not list or len(content) != 2:
+    if type(content) is not list:
         raise _invalid(
             "user content must contain exactly one image and one YAML file",
             param="input[0].content",
@@ -559,6 +559,10 @@ _ERROR_MESSAGES = {
     "unauthorized": "authentication failed",
     "responses_invalid_json": "request body is malformed JSON",
     "invalid_config": "request configuration is invalid",
+    "missing_image": "one input image is required",
+    "duplicate_image": "only one input image is supported",
+    "missing_config": "one input YAML file is required",
+    "duplicate_config": "only one input YAML file is supported",
     "unsupported_field": "request contains an unsupported field",
     "unsupported_tool": "requested tool is unsupported",
     "unsupported_model": "requested model is unsupported",

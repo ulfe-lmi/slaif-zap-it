@@ -94,6 +94,13 @@ class _InferenceRun:
     class_labels: List[str]
 
 
+@dataclass(frozen=True)
+class _ResourceAdmission:
+    """Proof that the route completed its one pre-body resource check."""
+
+    settings: ServiceSettings
+
+
 def default_readiness_provider() -> ReadyState:
     return ReadyState(ready=False, detail="no readiness provider configured")
 
@@ -108,6 +115,12 @@ def _request_id_for(request: Request) -> str:
         cached = _new_request_id()
         request.state.request_id = cached
     return cached
+
+
+def _admit_request_resources(settings: ServiceSettings) -> _ResourceAdmission:
+    """Perform the route-owned pre-body check and return its explicit token."""
+    check_request_resources(settings)
+    return _ResourceAdmission(settings=settings)
 
 
 def _error_response(request: Request, exc: ServiceError) -> JSONResponse:
@@ -341,6 +354,7 @@ def create_app(
     async def run_shared_inference(
         request: Request,
         *,
+        resource_admission: _ResourceAdmission,
         image_bytes: bytes,
         config_bytes: bytes,
         verbosity: int,
@@ -350,19 +364,19 @@ def create_app(
     ) -> _InferenceRun:
         """Decode, validate and execute one request through the shared path.
 
-        Both HTTP surfaces enter here with bounded bytes.  Keeping readiness,
-        CLIP preflight, gate admission and the executor in one helper prevents
-        a compatibility adapter from creating a second model or concurrency
-        authority.
+        Both HTTP surfaces enter here with bounded bytes and an explicit token
+        from their one pre-body resource admission. Keeping readiness, CLIP
+        preflight, gate admission and the executor in one helper prevents a
+        compatibility adapter from creating a second model or concurrency
+        authority without re-reading host capacity.
         """
 
-        settings_local = resolved_settings
+        settings_local = resource_admission.settings
 
         def check_deadline() -> None:
             if time.monotonic() >= deadline_monotonic:
                 raise ServiceError("request deadline exceeded", code="timeout")
 
-        check_request_resources(settings_local)
         check_deadline()
         image_rgb = decode_image_safely(
             image_bytes,
@@ -719,13 +733,13 @@ def create_app(
             )
 
         try:
+            resource_admission = _admit_request_resources(settings_local)
             if request.query_params:
                 raise ServiceError("query parameters are not supported", code="unsupported_field")
             if request.headers.get("content-type", "").strip().lower() != "application/json":
                 raise ServiceError(
                     "Content-Type must be application/json", code="unsupported_media_type"
                 )
-            check_request_resources(settings_local)
             body_limit = responses_request_body_limit(settings_local)
             content_length = request.headers.get("content-length")
             if content_length and content_length.isdigit() and int(content_length) > body_limit:
@@ -767,6 +781,7 @@ def create_app(
             check_deadline()
             run = await run_shared_inference(
                 request,
+                resource_admission=resource_admission,
                 image_bytes=parsed.image_bytes,
                 config_bytes=parsed.config_bytes,
                 verbosity=2,
@@ -893,15 +908,12 @@ def create_app(
         settings_local = resolved_settings
         deadline_monotonic = started + settings_local.request_deadline_seconds
 
-        def remaining_budget() -> float:
-            return deadline_monotonic - time.monotonic()
-
         def check_deadline() -> None:
             if time.monotonic() >= deadline_monotonic:
                 raise ServiceError("request deadline exceeded", code="timeout")
 
         content_length = request.headers.get("content-length")
-        check_request_resources(settings_local)
+        resource_admission = _admit_request_resources(settings_local)
         if content_length and content_length.isdigit():
             if int(content_length) > settings_local.max_request_bytes:
                 raise ServiceError(
@@ -932,6 +944,7 @@ def create_app(
 
         run = await run_shared_inference(
             request,
+            resource_admission=resource_admission,
             image_bytes=parsed.image_bytes,
             config_bytes=parsed.config_bytes,
             verbosity=parsed.verbosity,

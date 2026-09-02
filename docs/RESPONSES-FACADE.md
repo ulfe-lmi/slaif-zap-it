@@ -49,6 +49,13 @@ bytes, timeout and shared one-request admission use the existing service
 policies. Authentication is the existing fixed deployment bearer; strict
 loopback development retains the key-optional behavior.
 
+Cardinality is classified before image or YAML decoding. An empty or file-only
+content list returns `missing_image`; an image-only list returns `missing_config`;
+the second image or YAML file returns `duplicate_image` or `duplicate_config`.
+Unsupported content types retain the explicit `unsupported_field` rejection.
+The accepted shape remains exactly two content parts: one image and one YAML
+file.
+
 ## Successful output
 
 The completed response follows the current official Responses shape: `id` is

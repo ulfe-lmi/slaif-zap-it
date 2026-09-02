@@ -34,6 +34,7 @@ from src.service.schemas import (
     ResponsesRequest,
     ResponsesResponse,
 )
+from src.service.errors import ServiceError
 from src.service.yaml_input import parse_hostile_config
 
 
@@ -318,49 +319,153 @@ def test_unsupported_top_level_controls_and_tools_are_explicit(mutate, code):
 
 
 @pytest.mark.parametrize(
-    "content",
+    ("content", "code"),
     [
-        [
-            {
-                "type": "input_file",
-                "filename": "task.yaml",
-                "file_data": _data_url("application/yaml", CONFIG_BYTES),
-            }
-        ],
-        [
-            {
-                "type": "input_image",
-                "detail": "auto",
-                "image_url": _data_url("image/png", IMAGE_BYTES),
-            },
-            {
-                "type": "input_image",
-                "detail": "auto",
-                "image_url": _data_url("image/png", IMAGE_BYTES),
-            },
-        ],
-        [
-            {
-                "type": "input_file",
-                "filename": "task.yaml",
-                "file_data": _data_url("application/yaml", CONFIG_BYTES),
-            },
-            {
-                "type": "input_file",
-                "filename": "other.yaml",
-                "file_data": _data_url("application/yaml", CONFIG_BYTES),
-            },
-        ],
+        (
+            [
+                {
+                    "type": "input_file",
+                    "filename": "task.yaml",
+                    "file_data": _data_url("application/yaml", CONFIG_BYTES),
+                }
+            ],
+            "missing_image",
+        ),
+        (
+            [
+                {
+                    "type": "input_image",
+                    "detail": "auto",
+                    "image_url": _data_url("image/png", IMAGE_BYTES),
+                }
+            ],
+            "missing_config",
+        ),
+        ([], "missing_image"),
+        (
+            [
+                {
+                    "type": "input_text",
+                    "text": "not supported",
+                }
+            ],
+            "unsupported_field",
+        ),
+        (
+            [
+                {
+                    "type": "input_image",
+                    "detail": "auto",
+                    "image_url": _data_url("image/png", IMAGE_BYTES),
+                },
+                {
+                    "type": "input_image",
+                    "detail": "auto",
+                    "image_url": _data_url("image/png", IMAGE_BYTES),
+                },
+            ],
+            "duplicate_image",
+        ),
+        (
+            [
+                {
+                    "type": "input_file",
+                    "filename": "task.yaml",
+                    "file_data": _data_url("application/yaml", CONFIG_BYTES),
+                },
+                {
+                    "type": "input_file",
+                    "filename": "other.yaml",
+                    "file_data": _data_url("application/yaml", CONFIG_BYTES),
+                },
+            ],
+            "duplicate_config",
+        ),
     ],
 )
-def test_image_and_yaml_cardinality_fails_before_inference(content):
+def test_image_and_yaml_cardinality_fails_before_inference(content, code):
     engine = FakeEngine()
     client, _ = _client(engine)
     body = _body()
     body["input"][0]["content"] = content
     response = client.post("/v1/responses", json=body)
     assert response.status_code == 400
-    assert response.json()["error"]["type"] == "invalid_request_error"
+    error = response.json()["error"]
+    assert error["code"] == code
+    assert error["type"] == "invalid_request_error"
+    if code in {"missing_image", "missing_config", "duplicate_image", "duplicate_config"}:
+        assert error["param"] == "input[0].content"
+    else:
+        assert error["param"] == "input[0].content[0].type"
+    assert set(error) == {"message", "type", "param", "code"}
+    assert "input[0].content" not in error["message"]
+    assert engine.calls == []
+
+
+def test_invalid_yaml_is_typed_before_engine():
+    engine = FakeEngine()
+    client, _ = _client(engine)
+    response = _post(client, config=b"not: [valid")
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == "invalid_config"
+    assert error["type"] == "invalid_request_error"
+    assert set(error) == {"message", "type", "param", "code"}
+    assert engine.calls == []
+
+
+def test_each_http_surface_admits_resources_exactly_once(monkeypatch):
+    admissions = []
+
+    def record_admission(settings):
+        admissions.append(settings)
+
+    monkeypatch.setattr("src.service.app.check_request_resources", record_admission)
+    engine = FakeEngine()
+    client, _ = _client(engine)
+    native = client.post(
+        "/v1/completions",
+        files={
+            "image": ("frame.png", IMAGE_BYTES, "image/png"),
+            "config": ("task.yaml", CONFIG_BYTES, "application/yaml"),
+        },
+    )
+    assert native.status_code == 200, native.text
+    assert len(admissions) == 1
+    responses = _post(client)
+    assert responses.status_code == 200, responses.text
+    assert len(admissions) == 2
+    assert len(engine.calls) == 2
+
+
+def test_first_resource_admission_failure_precedes_body_parsing_on_both_surfaces(monkeypatch):
+    calls = []
+
+    def fail_admission(settings):
+        calls.append(settings)
+        raise ServiceError("resource floor", code="insufficient_memory")
+
+    monkeypatch.setattr("src.service.app.check_request_resources", fail_admission)
+    engine = FakeEngine()
+    client, _ = _client(engine)
+    native = client.post(
+        "/v1/completions",
+        content=b"not-multipart",
+        headers={"content-type": "application/octet-stream"},
+    )
+    assert native.status_code == 507
+    assert native.json()["error"]["code"] == "insufficient_memory"
+    response = client.post(
+        "/v1/responses",
+        content=b"not-json",
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 507
+    error = response.json()["error"]
+    assert error["code"] == "insufficient_memory"
+    assert error["type"] == "server_error"
+    assert set(error) == {"message", "type", "param", "code"}
+    assert len(calls) == 2
     assert engine.calls == []
 
 
