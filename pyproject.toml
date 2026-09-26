@@ -42,7 +42,7 @@ dev = [
     "openai==3.7.0",
     "pytest==8.3.3",
     "pytest-cov==5.0.0",
-    "ruff==0.16.4",
+    "ruff==0.16.5",
     "twine==7.0.0",
 ]
 # HTTP service contract (objective 002): FastAPI/Pydantic/Uvicorn transport.
